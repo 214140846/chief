@@ -35,6 +35,7 @@ import { fileURLToPath } from "node:url";
 import { archiveOld, archivedEvent } from "./archive";
 import { Engine, SECRET } from "./engine";
 import { KEY, keysOf } from "./keys";
+import { type ChildProcess, spawn } from "node:child_process";
 import { LABEL, bootout, bootstrap, kickstart, plistPath, renderPlist, serviceState } from "./launchd";
 import { KeychainStore, isStorableSecret } from "./secrets";
 import { findPeople, parsePermalink } from "./slack/people";
@@ -46,8 +47,8 @@ import { JiraSource, acliRunner, findAcli } from "./sources/jira";
 import { NotionSource } from "./sources/notion";
 import {
   AUDIENCE_LABELS, HANDLE_LABELS, SCENARIOS, appendDecision, readEvents, expectOf, isTrusted, loadDecisions, appendEvent, ensureHome, loadCursor, loadDispatch, loadEnabled, loadPolicy, loadReplies, loadReviews, loadRoutes, loadThings,
-  loadState, paths, workspaceDir, readJson, saveState, scenarioOf, updateJson, updateReplies, withLock, writeJson,
-  type Ask, type Decision, type Dispatch, type Enabled, type EventSource, type Handle, type Policy, type ChiefEvent, type RepliesFile,
+  loadSettings, loadState, paths, workspaceDir, readJson, saveState, scenarioOf, updateJson, updateReplies, withLock, writeJson,
+  type Ask, type Settings, type Decision, type Dispatch, type Enabled, type EventSource, type Handle, type Policy, type ChiefEvent, type RepliesFile,
   type Audience, type CustomScenario, type EvalCase, type EvalRun, type EvalsFile, type Expect, type Placement, type Reply, type ReplyMode, type Reviews, type ScenarioRule, type Routes, type Scenario, type Thing, type ThingsFile,
 } from "./store";
 
@@ -1305,9 +1306,36 @@ async function doctor(): Promise<void> {
       notion: { enabled: enabled.notion === true, ready: await secrets.has(SECRET.notion) },
     },
     hub: hubAlive(),
+    awake: loadSettings().awake,
     workspace: { path: workspaceDir(), ready: existsSync(join(workspaceDir(), "CLAUDE.md")) },
   };
   process.stdout.write(`${JSON.stringify(out)}\n`);
+}
+
+// 插电时不让电脑睡：开关开着就挂一个 caffeinate -s -w <引擎>，引擎退出它也跟着退。每分钟看一次开关，改了不用重启引擎。
+function keepAwake(): void {
+  let child: ChildProcess | null = null;
+  const check = () => {
+    const want = loadSettings().awake;
+    if (want && child === null) {
+      const c = spawn("/usr/bin/caffeinate", ["-s", "-w", String(process.pid)], { stdio: "ignore" });
+      c.on("exit", () => { if (child === c) child = null; });
+      c.on("error", () => { if (child === c) child = null; });
+      child = c;
+    } else if (!want && child !== null) {
+      child.kill();
+      child = null;
+    }
+  };
+  check();
+  setInterval(check, 60_000).unref();
+}
+
+// chief awake [on|off]：插电时不让电脑睡（引擎一分钟内跟上）。不带参数只看现在是开是关。
+function awake(arg: string | undefined): void {
+  if (arg === "on" || arg === "off") updateJson<Partial<Settings>, void>(paths().settings, {}, (s) => { s.awake = arg === "on"; });
+  else if (arg !== undefined) fail("chief awake [on|off]");
+  process.stdout.write(loadSettings().awake ? "插电时不让电脑睡：开\n" : "插电时不让电脑睡：关\n");
 }
 
 function logs(): void {
@@ -1326,6 +1354,7 @@ async function main(argv: string[]): Promise<void> {
     case "run": {
       const engine = new Engine();
       await engine.start();
+      keepAwake();
       const quit = () => void engine.stop().then(() => process.exit(0));
       process.on("SIGTERM", quit);
       process.on("SIGINT", quit);
@@ -1337,6 +1366,7 @@ async function main(argv: string[]): Promise<void> {
     case "logs": return logs();
     case "connect": return connect(args[0], args.slice(1));
     case "doctor": return doctor();
+    case "awake": return awake(args[0]);
     case "disconnect": return disconnect(args[0]);
     case "events": return events(args);
     case "watch": return watchHome();

@@ -89,6 +89,10 @@ function connect($: Engine, source: 'github' | 'jira') {
   return step($, source, () => chief($, ['connect', source]))
 }
 
+function setAwake($: Engine, on: boolean) {
+  return step($, 'awake', () => chief($, ['awake', on ? 'on' : 'off']))
+}
+
 function recheck($: Engine) {
   return step($, 'check', async () => null)
 }
@@ -179,6 +183,14 @@ export function setupTab($: Engine, ui: Els, s: Setup) {
       {tool('github', 'GitHub', 'brew install gh', 'gh auth login')}
       {tool('jira', 'Jira', 'brew install acli', 'acli jira auth login --web')}
       {row('setup-hub-row', hubOk, '3. 开消息中心', hubBody)}
+      {d !== null && row('setup-awake-row', d.awake, '插电时不让电脑睡', (
+        <Box flexDirection="column" gap="xs">
+          {note(d.awake
+            ? '开着：插着电时电脑不会自己睡，屏幕照样会关、会锁，消息照收照办。没插电、合上盖子还是会睡，醒了再接着处理。'
+            : '关着：电脑睡着时收不到消息，醒了才接着处理。')}
+          {button('setup-awake', s.busy === 'awake' ? '…' : d.awake ? '关掉' : '打开', !busy, () => void setAwake($, !d.awake), false)}
+        </Box>
+      ), true)}
       {s.said !== '' && <Text size="footnote" color="error" wrap="wrap">上一步没成：{s.said}</Text>}
       <Box flexDirection="row" gap="sm">
         {button('setup-recheck', s.busy === 'check' ? '检查中…' : '重新检查', !busy, () => void recheck($), false)}
