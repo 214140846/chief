@@ -6,7 +6,7 @@
 //   测评：最近 7 天判断了多少、打扰你几次、准不准、稿子能不能原样用；每条判断能标对错。
 //   控制：主会话、引擎、来源的开关，看日志，发测试消息。
 //   设置：装引擎、登录 Slack、连 GitHub / Jira、开消息中心（setup.tsx）。引擎还没装时面板只有这一页。
-// 数据直接读 ~/chief-home/data 里的文件（data.ts，每 3 秒一次）；动作在 actions.ts；画法在 views.tsx。
+// 数据直接读 ~/chief/data 里的文件（data.ts，每 3 秒一次）；动作在 actions.ts；画法在 views.tsx。
 import { atom, read } from 'claude-code'
 import type { EngineInterface as Engine, Register } from 'claude-code'
 
@@ -31,7 +31,7 @@ let ticking = false
 let watching = false
 
 // 开始跟着数据刷新（插件重新加载、会话重启以后，面板还开着但监听没了，画的时候补上）。
-// 挂一个 chief watch：~/chief-home/data 里有文件一变它就打一行，面板马上重读；不用一直去读。保底每分钟读一次。
+// 挂一个 chief watch：~/chief/data 里有文件一变它就打一行，面板马上重读；不用一直去读。保底每分钟读一次。
 async function startRefresh($: Engine) {
   if (!ticking) {
     ticking = true

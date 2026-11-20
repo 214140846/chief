@@ -1,5 +1,5 @@
 // 设置页：第一次装好插件后一步步打勾。装引擎、登录 Slack、连 GitHub / Jira、开消息中心。
-// 引擎还没装时 ~/chief-home/data/bin/chief 不存在，面板只画这一页；装好以后它是最后一个页签「设置」。
+// 引擎还没装时 ~/chief/data/bin/chief 不存在，面板只画这一页；装好以后它是最后一个页签「设置」。
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface as Engine } from 'claude-code'
 
@@ -132,7 +132,7 @@ export function setupTab($: Engine, ui: Els, s: Setup) {
     )
     : (
       <Box flexDirection="column" gap="xs">
-        {note(!s.installed ? '把收消息的后台程序装到这台电脑上，开机自动跑。chief 的东西都放在工作目录 ~/chief-home 里。要先装好 Node 24 以上。'
+        {note(!s.installed ? '把收消息的后台程序装到这台电脑上，开机自动跑。chief 的东西都放在工作目录 ~/chief 里。要先装好 Node 24 以上。'
           : d?.version !== wanted ? `插件是 ${wanted ?? '?'}，引擎还是 ${d?.version ?? '旧版'}，更新一下。`
           : '装了但没在跑，重装一下。')}
         {button('setup-engine', s.installed ? '更新引擎' : '装引擎', !busy, () => void installEngine($))}

@@ -1,4 +1,4 @@
-// 读 ~/chief-home/data 里的文件（规矩在 ~/chief-home/rules.json），算出面板要的一份。只读文件，不起进程（除了第一次问一下 HOME）。
+// 读 ~/chief/data 里的文件（规矩在 ~/chief/rules.json），算出面板要的一份。只读文件，不起进程（除了第一次问一下 HOME）。
 import { atom, update } from 'claude-code'
 import type { EngineInterface as Engine } from 'claude-code'
 
@@ -15,15 +15,15 @@ export const EVAL_DAYS = 7
 let dir: string | null = null
 let rules: string | null = null
 
-// chief 的数据目录：CHIEF_HOME，没设就是 ~/chief-home/data（和 chief 自己的规则一样）。chief 命令在它下面的 bin/chief。
+// chief 的数据目录：CHIEF_HOME，没设就是 ~/chief/data（和 chief 自己的规则一样）。chief 命令在它下面的 bin/chief。
 export async function chiefDir($: Engine): Promise<string> {
   if (dir === null) {
     const env = (await $.process.run(['/usr/bin/env'])).stdout.split('\n')
     const get = (k: string) => env.find(l => l.startsWith(`${k}=`))?.slice(k.length + 1).trim() ?? ''
     const custom = get('CHIEF_HOME')
-    dir = custom.startsWith('/') ? custom : `${get('HOME')}/chief-home/data`
+    dir = custom.startsWith('/') ? custom : `${get('HOME')}/chief/data`
     // 规矩放在工作目录最上层（data 的上一层）；CHIEF_HOME 指到别处时和数据放一起。
-    rules = custom.startsWith('/') ? `${custom}/rules.json` : `${get('HOME')}/chief-home/rules.json`
+    rules = custom.startsWith('/') ? `${custom}/rules.json` : `${get('HOME')}/chief/rules.json`
   }
   return dir
 }
