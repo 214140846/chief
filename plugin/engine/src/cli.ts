@@ -2,7 +2,7 @@
 //   chief run                          前台跑引擎（launchd 里跑的也是它）
 //   chief install | uninstall          装进 / 卸掉 launchd，并装好 chief 命令（消息中心 skill 和面板在 chief 插件里）
 //   chief status | logs                看引擎、来源、进度；看最近的日志
-//   chief connect <来源> | disconnect <来源>   slack 默认开浏览器窗口让你登录（--stdin 改从标准输入读 Cookie）；notion 从标准输入读令牌；
+//   chief connect <来源> | disconnect <来源>   slack 默认开浏览器窗口让你登录（--workspace acme 从工作区地址登，公司要 SSO 时必须给；--stdin 改从标准输入读 Cookie）；notion 从标准输入读令牌；
 //                                      github / jira 用本机登录的 gh、acli
 //   chief doctor                       设置页用：引擎、各来源、主会话的状态（JSON）
 //   chief events [--after N] [--follow [--take-over]]  打出编号大于 N 的事件，一行一条；--follow 一直等新的（主会话的 Monitor 用，顺便报「在听」；
@@ -42,7 +42,7 @@ import { findPeople, parsePermalink } from "./slack/people";
 import { SlackPlugin, SLACK_COOKIE_D } from "./slack/plugin";
 import type { SecretCheck } from "./slack/types";
 import { GitHubSource, findGh, ghRunner } from "./sources/github";
-import { browserLogin, findChrome } from "./slack/login";
+import { browserLogin, findChrome, workspaceUrl } from "./slack/login";
 import { JiraSource, acliRunner, findAcli } from "./sources/jira";
 import { NotionSource } from "./sources/notion";
 import {
@@ -1205,12 +1205,26 @@ async function connect(source: string | undefined, args: string[] = []): Promise
   let ok: boolean;
   if (id === "slack") {
     // 默认开一个独立的 Chrome 窗口让你自己登录，拿到 Cookie 直接存进钥匙串，不经过剪贴板和聊天。
+    // --workspace acme：从工作区地址登（公司 SSO 要这样）；不给就用上次登录成功时记下的。
+    const given = flag(args, "--workspace");
+    const workspace = given ?? loadSettings().slackWorkspace;
+    if (given !== null) {
+      try {
+        workspaceUrl(given);
+      } catch (error) {
+        fail(error instanceof Error ? error.message : String(error));
+      }
+    }
     const cookie = args.includes("--stdin")
       ? await readSecret("Slack 会话 Cookie（xoxd-…，输入不显示）：")
-      : await browserLogin({ log: (line) => process.stdout.write(`${line}\n`) }).catch((error: unknown) => fail(error instanceof Error ? error.message : String(error)));
+      : await browserLogin({ log: (line) => process.stdout.write(`${line}\n`), ...(workspace ? { workspace } : {}) }).catch((error: unknown) => fail(error instanceof Error ? error.message : String(error)));
     if (!isStorableSecret(cookie)) fail("Cookie 里有不支持的字符");
     ok = printChecks(await new SlackPlugin().test({ [SLACK_COOKIE_D]: cookie }));
     if (ok) await secrets.set(SECRET.slack, cookie);
+    if (ok && given !== null) {
+      const name = new URL(workspaceUrl(given)).hostname.split(".")[0]!;
+      updateJson<Partial<Settings>, void>(paths().settings, {}, (s) => { s.slackWorkspace = name; });
+    }
   } else if (id === "notion") {
     const token = await readSecret("Notion 集成令牌（输入不显示）：");
     if (!isStorableSecret(token)) fail("令牌里有不支持的字符");
@@ -1334,6 +1348,7 @@ async function doctor(): Promise<void> {
     },
     hub: hubAlive(),
     awake: loadSettings().awake,
+    slackWorkspace: loadSettings().slackWorkspace ?? null,
     workspace: { path: workspaceDir(), ready: existsSync(join(workspaceDir(), "CLAUDE.md")) },
   };
   process.stdout.write(`${JSON.stringify(out)}\n`);

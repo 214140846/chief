@@ -149,11 +149,13 @@ export function loadEnabled(): Enabled {
 // 这台电脑上的开关。awake：引擎跑着时挂一个 caffeinate -s，插电时电脑不会自己睡（屏幕照样关、照样锁）；没插电照常睡。
 export interface Settings {
   awake: boolean;
+  // 你的 Slack 工作区（子域名，比如 acme）：登录窗口从这里打开，公司 SSO 才走得通。登录成功时记下，下次重新登录不用再给。
+  slackWorkspace?: string;
 }
 
 export function loadSettings(): Settings {
   const s = readJson<Partial<Settings>>(paths().settings, {});
-  return { awake: s.awake ?? true };
+  return { awake: s.awake ?? true, ...(s.slackWorkspace ? { slackWorkspace: s.slackWorkspace } : {}) };
 }
 
 export function saveState(s: EngineState): void {

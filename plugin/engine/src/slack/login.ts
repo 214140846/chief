@@ -1,6 +1,7 @@
 // Slack 浏览器登录：开一个独立的 Chrome 窗口（全新的临时配置），你在里面自己登录；
-// 等窗口真的进了 Slack（看得到消息列表）、d Cookie 稳定几秒不再变、并且确实能用，才关窗口、删临时配置，把 Cookie 交回去。
-// 不能一拿到能用的 Cookie 就关：公司 SSO、新设备确认还没走完时 Slack 会先发一个临时的，走完前关窗口，它过一会儿就作废了。Cookie 不打印。
+// 等 d Cookie 真的能用（换得到 token，并且调接口不被拒），才关窗口、删临时配置，把 Cookie 交回去。Cookie 不打印。
+// 要公司 SSO 的工作区，得从工作区地址（<工作区>.slack.com）登：从 slack.com/signin 登只登上了 Slack 账号，
+// 工作区那步「Authenticate」在这个窗口里起不来；那样拿到的 Cookie 换得到 token，一调接口就 403、实时连接也连不上。
 // 思路和 gabriel-slack 的 browserLogin 一样（它没导出），这里只用 Node 自带的 fetch / WebSocket，不加依赖。
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
@@ -16,8 +17,8 @@ const CHROME = [
 ];
 const SIGNIN_URL = "https://slack.com/signin";
 const TIMEOUT_MS = 5 * 60_000;
-// 进了 Slack 以后 Cookie 要连着这么久不变才算登好。
-const STABLE_MS = 5_000;
+// 同一个 Cookie 验不过（多半是 SSO 还没走完），隔这么久再验一次，不每秒都去问 Slack。
+const RECHECK_MS = 5_000;
 
 interface Cookie {
   name: string;
@@ -39,20 +40,21 @@ async function usable(cookie: string): Promise<boolean> {
   }
 }
 
-// 窗口里的页面是不是已经进了 Slack：网页版主界面（app.slack.com/client/…、<工作区>.slack.com/client|messages|archives/…），
-// 或者「在浏览器里打开 / 打开桌面版」那一页（ssb/redirect）。登录页、SSO 页、确认新设备的页面都不算。
-export function signedIn(url: string): boolean {
-  return /^https:\/\/app\.slack\.com\/client\//.test(url)
-    || /^https:\/\/[a-z0-9-]+(\.enterprise)?\.slack\.com\/(client|messages|archives|ssb\/redirect)(\/|\?|$)/i.test(url);
-}
-
 function slackCookie(cookies: Cookie[]): string | null {
   const d = cookies.find((c) => c.name === "d" && /(^|\.)slack\.com$/.test(c.domain.replace(/^\./, "")) && c.value.startsWith("xoxd-"));
   return d?.value ?? null;
 }
 
-export async function browserLogin(opts: { log?: (line: string) => void; timeoutMs?: number } = {}): Promise<string> {
+// 工作区：acme、acme.slack.com 或 https://acme.slack.com/ 都行，取出子域名。
+export function workspaceUrl(workspace: string): string {
+  const name = workspace.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/\.slack\.com\/?$/, "").replace(/\/$/, "");
+  if (!/^[a-z0-9][a-z0-9-]{0,62}$/.test(name)) throw new Error("工作区写成 acme 或 acme.slack.com 这样");
+  return `https://${name}.slack.com/`;
+}
+
+export async function browserLogin(opts: { log?: (line: string) => void; timeoutMs?: number; workspace?: string } = {}): Promise<string> {
   const log = opts.log ?? (() => {});
+  const url = opts.workspace ? workspaceUrl(opts.workspace) : SIGNIN_URL;
   const chrome = findChrome();
   if (!chrome) throw new Error("没找到 Chrome：装一个 Google Chrome 再来，或者用 chief connect slack --stdin 手动贴 Cookie");
   // 临时配置也放在 chief 的数据目录里，用完就删。
@@ -61,32 +63,32 @@ export async function browserLogin(opts: { log?: (line: string) => void; timeout
   // 端口给 0，让 Chrome 自己挑一个空的，再从配置目录里的 DevToolsActivePort 读出来；只听本机。
   const proc = spawn(chrome, [
     "--remote-debugging-port=0", "--remote-debugging-address=127.0.0.1", `--user-data-dir=${profile}`,
-    "--no-first-run", "--no-default-browser-check", `--app=${SIGNIN_URL}`,
+    "--no-first-run", "--no-default-browser-check", `--app=${url}`,
   ], { stdio: "ignore" });
   const closed = new Promise<void>((resolve) => proc.once("exit", () => resolve()));
   let ws: WebSocket | null = null;
   try {
-    log("开了一个 Slack 登录窗口：在里面登录，一直登到看得到 Slack 的消息列表（要确认新设备的照做），窗口会自己关掉。");
+    log("开了一个 Slack 登录窗口：在里面登录（公司 SSO、确认新设备都照做），登好窗口会自己关掉。");
     const url = await debuggerUrl(profile, proc);
     ws = await open(url);
     const call = rpc(ws);
     const deadline = Date.now() + (opts.timeoutMs ?? TIMEOUT_MS);
-    let seen = "";
-    let since = 0;
+    let checked = "";
+    let checkedAt = 0;
+    let warned = false;
     while (Date.now() < deadline) {
       if (proc.exitCode !== null || proc.signalCode !== null) throw new Error("登录窗口被关掉了，没登上");
-      const { targetInfos } = await call<{ targetInfos?: { type: string; url: string }[] }>("Target.getTargets");
-      const inSlack = (targetInfos ?? []).some((t) => t.type === "page" && signedIn(t.url));
       const { cookies } = await call<{ cookies?: Cookie[] }>("Storage.getCookies");
-      const cookie = inSlack ? slackCookie(cookies ?? []) : null;
-      if (cookie === null) {
-        seen = "";
-      } else if (cookie !== seen) {
-        // 进了 Slack 又换了 Cookie：从头等它稳下来。
-        seen = cookie;
-        since = Date.now();
-      } else if (Date.now() - since >= STABLE_MS && (await usable(cookie))) {
-        return cookie;
+      const cookie = slackCookie(cookies ?? []);
+      if (cookie && (cookie !== checked || Date.now() - checkedAt >= RECHECK_MS)) {
+        checked = cookie;
+        checkedAt = Date.now();
+        const ok = await usable(cookie);
+        if (ok) return cookie;
+        if (!warned && !opts.workspace) {
+          warned = true;
+          log("登上了 Slack 账号，但工作区还用不了：要是公司要求 SSO、点「Authenticate」没反应，关掉窗口，带上工作区再登（chief connect slack --workspace <你的工作区>）。");
+        }
       }
       await sleep(1000);
     }
