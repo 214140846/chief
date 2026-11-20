@@ -23,7 +23,7 @@ Slack（推送） / GitHub、Jira、Notion（每 5 分钟拉一次）
    claude plugin install chief@chief --scope user
    ```
 
-2. 在 Claude App 里新建一个会话（权限模式选 auto），输入 `/chief` 打开面板，在「设置」页按顺序点：
+2. 在 Claude App 里新建一个会话（权限模式选 bypass permissions），输入 `/chief` 打开面板，在「设置」页按顺序点：
    - **装引擎**：建工作目录 `~/chief`，把引擎放到 `~/chief/data/app`，装依赖，装进 launchd（开机自动跑）。
    - **登录 Slack**：弹出一个单独的 Chrome 窗口，你在里面正常登录，登好自己关掉。登录凭证直接存进钥匙串。
    - **连上 GitHub / Jira**（可选）：用本机已经登录的 `gh`、`acli`。
