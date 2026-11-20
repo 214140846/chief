@@ -82,9 +82,9 @@ async function chief($: Engine, args: string[], timeoutMs = 60_000) {
   return $.process.run([`${await chiefDir($)}/bin/chief`, ...args], { timeoutMs })
 }
 
-// workspace：第一次登时在设置页填的工作区；之后不给，用 chief 记下的。
-function loginSlack($: Engine, workspace?: string) {
-  return step($, 'slack', () => chief($, ['connect', 'slack', ...(workspace ? ['--workspace', workspace] : [])], LOGIN_MS))
+// 工作区不用给：要公司 SSO 的，登录窗口自己跳到工作区地址；登过一次 chief 就记下了。
+function loginSlack($: Engine) {
+  return step($, 'slack', () => chief($, ['connect', 'slack'], LOGIN_MS))
 }
 
 function connect($: Engine, source: 'github' | 'jira') {
@@ -207,18 +207,9 @@ export function setupTab($: Engine, ui: Els, st: Setup, s: Snapshot | null, logT
   const sources = (
     <Box flexDirection="column" gap="xs">
       {line('slack',
-        st.busy === 'slack' || !d?.slackWorkspace ? null : button('setup-slack', on('slack') || slackReady ? '重新登录' : '登录 Slack', !busy && st.installed && d.chrome !== false, () => void loginSlack($), !(on('slack') || slackReady)),
+        st.busy === 'slack' ? null : button('setup-slack', on('slack') || slackReady ? '重新登录' : '登录 Slack', !busy && st.installed && d?.chrome !== false, () => void loginSlack($), !(on('slack') || slackReady)),
         off('slack'))}
-      {/* 还没记过工作区：先填工作区再登。从工作区地址登，公司 SSO 才走得通。 */}
-      {st.busy !== 'slack' && st.installed && d !== null && !d.slackWorkspace && 'Input' in ui && (
-        <Box flexDirection="column" gap="xs">
-          {note('先填你的 Slack 工作区（浏览器里打开 Slack 时地址栏 xxx.slack.com 的 xxx），会弹出窗口从工作区地址登录，公司 SSO 照常走。')}
-          <ui.Input key="slack-workspace" placeholder="比如 acme 或 acme.slack.com" submitLabel={on('slack') || slackReady ? '重新登录' : '登录 Slack'} onSubmit={(v: string) => {
-            if (v.trim() && !busy && d.chrome !== false) void loginSlack($, v.trim())
-          }} />
-        </Box>
-      )}
-      {d?.slackWorkspace && note(`工作区：${d.slackWorkspace}.slack.com。换工作区：在终端跑 chief connect slack --workspace <新的工作区>。`)}
+      {d?.slackWorkspace && note(`工作区：${d.slackWorkspace}.slack.com`)}
       {st.busy === 'slack' && note('在弹出的 Chrome 窗口里登录 Slack（公司 SSO、确认新设备都照做），登好窗口会自己关掉。')}
       {d?.chrome === false && note('登录 Slack 要用 Google Chrome：先装一个 Chrome。')}
       {tool('github', 'brew install gh', 'gh auth login')}

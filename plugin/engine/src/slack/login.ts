@@ -2,13 +2,14 @@
 // 等 d Cookie 真的能用（换得到 token，并且调接口不被拒），才关窗口、删临时配置，把 Cookie 交回去。Cookie 不打印。
 // 要公司 SSO 的工作区，得从工作区地址（<工作区>.slack.com）登：从 slack.com/signin 登只登上了 Slack 账号，
 // 工作区那步「Authenticate」在这个窗口里起不来；那样拿到的 Cookie 换得到 token，一调接口就 403、实时连接也连不上。
+// 所以没给工作区时：先在 slack.com/signin 登账号，换 token 时看出是哪个工作区，再开一个工作区地址的窗口接着走 SSO。
 // 思路和 gabriel-slack 的 browserLogin 一样（它没导出），这里只用 Node 自带的 fetch / WebSocket，不加依赖。
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 
 import { paths } from "../store";
-import { SlackPlugin, SLACK_COOKIE_D } from "./plugin";
+import { checkSlackCookie } from "./plugin";
 
 const CHROME = [
   "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
@@ -30,13 +31,13 @@ export function findChrome(): string | null {
   return CHROME.find((p) => existsSync(p)) ?? null;
 }
 
-// 一个 Cookie 能不能用：交给 Slack 换一次登录，能换到才算。
-async function usable(cookie: string): Promise<boolean> {
+// 一个 Cookie 能不能用：交给 Slack 换 token、再真调一次接口，都过了才算；顺带拿到它登的工作区。
+async function usable(cookie: string): Promise<{ ok: boolean; domain?: string }> {
   try {
-    const checks = await new SlackPlugin().test({ [SLACK_COOKIE_D]: cookie });
-    return checks.every((c) => c.pass);
+    const r = await checkSlackCookie(cookie);
+    return { ok: r.valid, ...(r.domain ? { domain: r.domain } : {}) };
   } catch {
-    return false;
+    return { ok: false };
   }
 }
 
@@ -52,7 +53,8 @@ export function workspaceUrl(workspace: string): string {
   return `https://${name}.slack.com/`;
 }
 
-export async function browserLogin(opts: { log?: (line: string) => void; timeoutMs?: number; workspace?: string } = {}): Promise<string> {
+// 交回 Cookie 和它登的工作区（子域名，知道的话），工作区记下来下次直接从那登。
+export async function browserLogin(opts: { log?: (line: string) => void; timeoutMs?: number; workspace?: string } = {}): Promise<{ cookie: string; workspace?: string }> {
   const log = opts.log ?? (() => {});
   const url = opts.workspace ? workspaceUrl(opts.workspace) : SIGNIN_URL;
   const chrome = findChrome();
@@ -75,7 +77,7 @@ export async function browserLogin(opts: { log?: (line: string) => void; timeout
     const deadline = Date.now() + (opts.timeoutMs ?? TIMEOUT_MS);
     let checked = "";
     let checkedAt = 0;
-    let warned = false;
+    let jumped = opts.workspace !== undefined;
     while (Date.now() < deadline) {
       if (proc.exitCode !== null || proc.signalCode !== null) throw new Error("登录窗口被关掉了，没登上");
       const { cookies } = await call<{ cookies?: Cookie[] }>("Storage.getCookies");
@@ -83,11 +85,13 @@ export async function browserLogin(opts: { log?: (line: string) => void; timeout
       if (cookie && (cookie !== checked || Date.now() - checkedAt >= RECHECK_MS)) {
         checked = cookie;
         checkedAt = Date.now();
-        const ok = await usable(cookie);
-        if (ok) return cookie;
-        if (!warned && !opts.workspace) {
-          warned = true;
-          log("登上了 Slack 账号，但工作区还用不了：要是公司要求 SSO、点「Authenticate」没反应，关掉窗口，带上工作区再登（chief connect slack --workspace <你的工作区>）。");
+        const r = await usable(cookie);
+        if (r.ok) return { cookie, ...(r.domain ? { workspace: r.domain } : {}) };
+        // 账号登上了、工作区还用不了（多半要公司 SSO）：开一个工作区地址的窗口，SSO 在那边整页跳转走得通。只跳一次。
+        if (!jumped && r.domain) {
+          jumped = true;
+          log(`登上了 Slack 账号，工作区 ${r.domain} 还要走公司 SSO：开了一个 ${r.domain}.slack.com 的窗口，在那里接着登。`);
+          await call("Target.createTarget", { url: workspaceUrl(r.domain) });
         }
       }
       await sleep(1000);
@@ -122,7 +126,7 @@ function open(url: string): Promise<WebSocket> {
   });
 }
 
-function rpc(ws: WebSocket): <T>(method: string) => Promise<T> {
+function rpc(ws: WebSocket): <T>(method: string, params?: Record<string, unknown>) => Promise<T> {
   let seq = 0;
   const waiting = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
   ws.addEventListener("message", (ev) => {
@@ -138,10 +142,10 @@ function rpc(ws: WebSocket): <T>(method: string) => Promise<T> {
     if (msg.error) w.reject(new Error(msg.error.message ?? "登录窗口出错"));
     else w.resolve(msg.result ?? {});
   });
-  return <T>(method: string) => new Promise<T>((resolve, reject) => {
+  return <T>(method: string, params?: Record<string, unknown>) => new Promise<T>((resolve, reject) => {
     const id = ++seq;
     waiting.set(id, { resolve: resolve as (v: unknown) => void, reject });
-    ws.send(JSON.stringify({ id, method }));
+    ws.send(JSON.stringify({ id, method, ...(params ? { params } : {}) }));
   });
 }
 

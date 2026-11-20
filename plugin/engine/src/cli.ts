@@ -2,7 +2,7 @@
 //   chief run                          前台跑引擎（launchd 里跑的也是它）
 //   chief install | uninstall          装进 / 卸掉 launchd，并装好 chief 命令（消息中心 skill 和面板在 chief 插件里）
 //   chief status | logs                看引擎、来源、进度；看最近的日志
-//   chief connect <来源> | disconnect <来源>   slack 默认开浏览器窗口让你登录（--workspace acme 从工作区地址登，公司要 SSO 时必须给；--stdin 改从标准输入读 Cookie）；notion 从标准输入读令牌；
+//   chief connect <来源> | disconnect <来源>   slack 默认开浏览器窗口让你登录（要公司 SSO 的会自己跳到工作区地址；--workspace acme 直接从那登；--stdin 改从标准输入读 Cookie）；notion 从标准输入读令牌；
 //                                      github / jira 用本机登录的 gh、acli
 //   chief doctor                       设置页用：引擎、各来源、主会话的状态（JSON）
 //   chief events [--after N] [--follow [--take-over]]  打出编号大于 N 的事件，一行一条；--follow 一直等新的（主会话的 Monitor 用，顺便报「在听」；
@@ -1215,14 +1215,17 @@ async function connect(source: string | undefined, args: string[] = []): Promise
         fail(error instanceof Error ? error.message : String(error));
       }
     }
-    const cookie = args.includes("--stdin")
-      ? await readSecret("Slack 会话 Cookie（xoxd-…，输入不显示）：")
+    const login = args.includes("--stdin")
+      ? { cookie: await readSecret("Slack 会话 Cookie（xoxd-…，输入不显示）：") }
       : await browserLogin({ log: (line) => process.stdout.write(`${line}\n`), ...(workspace ? { workspace } : {}) }).catch((error: unknown) => fail(error instanceof Error ? error.message : String(error)));
+    const cookie = login.cookie;
     if (!isStorableSecret(cookie)) fail("Cookie 里有不支持的字符");
     ok = printChecks(await new SlackPlugin().test({ [SLACK_COOKIE_D]: cookie }));
     if (ok) await secrets.set(SECRET.slack, cookie);
-    if (ok && given !== null) {
-      const name = new URL(workspaceUrl(given)).hostname.split(".")[0]!;
+    // 记下这次登的工作区（你给的，或登录时看出来的），下次重新登录直接从工作区地址打开。
+    const seen = given ?? ("workspace" in login ? login.workspace : undefined);
+    if (ok && seen) {
+      const name = new URL(workspaceUrl(seen)).hostname.split(".")[0]!;
       updateJson<Partial<Settings>, void>(paths().settings, {}, (s) => { s.slackWorkspace = name; });
     }
   } else if (id === "notion") {
