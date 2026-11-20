@@ -1,9 +1,9 @@
 #!/bin/sh
-# chief 设置页的「装引擎 / 更新引擎」：建工作目录 ~/chief，把插件里的引擎代码放到 ~/chief/data/app，装依赖，装进 launchd。
+# chief 设置页的「装引擎 / 更新引擎」：建工作目录 ~/chief-home，把插件里的引擎代码放到 ~/chief-home/data/app，装依赖，装进 launchd。
 # 放到插件外面，是因为插件每升一版目录就换一个，launchd 要一个不变的位置。
 set -eu
 PLUGIN=$(cd "$(dirname "$0")" && pwd)
-WS=$HOME/chief
+WS=$HOME/chief-home
 DATA=${CHIEF_HOME:-$WS/data}
 APP=$DATA/app
 

@@ -1,4 +1,4 @@
-// chief 的东西都在工作目录 ~/chief 里：你的规矩在 ~/chief/rules.json，其余数据在 ~/chief/data（可用 CHIEF_HOME 改成别的绝对路径，
+// chief 的东西都在工作目录 ~/chief-home 里：你的规矩在 ~/chief-home/rules.json，其余数据在 ~/chief-home/data（可用 CHIEF_HOME 改成别的绝对路径，
 // 那时规矩也放那里）。全是本机文件，不含密钥（密钥在钥匙串）：
 //   events.jsonl  引擎收到的、要交给消息中心的事件，一行一条，只追加。
 //   state.json    引擎自己的：下一个事件编号、每个来源拉到哪了、收过的编号、你在的 Slack thread。
@@ -24,7 +24,7 @@ import { isAbsolute, join } from "node:path";
 
 // 工作目录：消息中心开在这里；你的交代、规矩、笔记、skill 和 chief 的数据都放在里面。
 export function workspaceDir(): string {
-  return join(homedir(), "chief");
+  return join(homedir(), "chief-home");
 }
 
 export function chiefHome(): string {

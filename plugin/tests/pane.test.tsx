@@ -9,33 +9,33 @@ const PANE = {
 
 const now = new Date().toISOString()
 const FILES: Record<string, string> = {
-  '/Users/me/chief/data/alive.json': JSON.stringify({ at: now }),
-  '/Users/me/chief/data/engine.json': JSON.stringify({ at: now, health: { slack: { ok: true, at: now, fails: 0 }, github: { ok: false, at: now, fails: 1, error: 'gh 出错了：check your internet connection' } } }),
-  '/Users/me/chief/data/state.json': JSON.stringify({ nextId: 11 }),
-  '/Users/me/chief/data/dispatch.json': JSON.stringify({ 1: {}, 2: {}, 3: {}, 4: {}, 5: {}, 6: {}, 7: {}, 8: {} }),
-  '/Users/me/chief/data/things.json': JSON.stringify({
+  '/Users/me/chief-home/data/alive.json': JSON.stringify({ at: now }),
+  '/Users/me/chief-home/data/engine.json': JSON.stringify({ at: now, health: { slack: { ok: true, at: now, fails: 0 }, github: { ok: false, at: now, fails: 1, error: 'gh 出错了：check your internet connection' } } }),
+  '/Users/me/chief-home/data/state.json': JSON.stringify({ nextId: 11 }),
+  '/Users/me/chief-home/data/dispatch.json': JSON.stringify({ 1: {}, 2: {}, 3: {}, 4: {}, 5: {}, 6: {}, 7: {}, 8: {} }),
+  '/Users/me/chief-home/data/things.json': JSON.stringify({
     things: [
       { id: 1, title: 'PROJ-479 接口改造', session: 'local_abc', status: 'waiting_you', progress: '改完了，等你定上线时间', next: '等你定了就提测', blocker: '等后端接口', results: ['[PR #12](https://github.com/o/r/pull/12)'], due: new Date().toISOString().slice(0, 10), events: [9], updatedAt: now, log: [{ at: now, text: '开了会话' }, { at: now, text: '改完了，等你定上线时间' }] },
       { id: 2, title: 'o/r#3 review', session: 'local_def', status: 'done', progress: '已批准', events: [10], updatedAt: now, log: [] },
     ],
     asks: [{ id: 3, thing: 1, question: 'Joe 问能不能本周上线', suggest: '回复下周二上线', status: 'open', at: now }],
   }),
-  '/Users/me/chief/data/replies.json': JSON.stringify({
+  '/Users/me/chief-home/data/replies.json': JSON.stringify({
     items: [
       { id: 5, event: 9, thing: 1, source: 'slack', target: { channel: 'D1', ts: '1.0' }, context: { who: 'Bob Chen', where: 'Bob Chen 的私信', said: '压测那个你处理了吗', url: null }, body: '处理了，报告在 thread 里', status: 'pending', at: now },
       { id: 7, kind: 'approve', event: 11, source: 'github', target: { ref: 'o/r#44' }, context: { who: 'Alice', where: '#proj', said: '帮忙看下 PR', url: 'https://github.com/o/r/pull/44' }, body: '', status: 'pending', at: now },
       { id: 6, event: 10, source: 'github', target: { ref: 'o/r#3' }, context: { who: null, where: 'o/r#3 修 bug', said: 'PR o/r#3', url: null }, body: 'LGTM', status: 'sent', by: 'you', sentAt: now, at: now },
     ],
   }),
-  '/Users/me/chief/data/decisions.jsonl': [
+  '/Users/me/chief-home/data/decisions.jsonl': [
     { at: now, event: 1, scenario: 'slack_dm', verdict: 'forwarded', reason: 'Bob 问压测进度，送进了压测会话', what: { source: 'slack', title: '私信', from: 'Bob Chen', text: '压测那个你处理了吗' } },
     { at: now, event: 2, scenario: 'slack_thread', verdict: 'noted', reason: 'Alice 只是同步看板 ready', what: { source: 'slack', title: '#proj', from: 'Alice', text: '看板 ready 了' } },
     { at: now, event: 3, scenario: 'slack_thread', verdict: 'ignored', reason: '没点你名的闲聊' },
   ].map(d => JSON.stringify(d)).join('\n'),
-  '/Users/me/chief/data/reviews.json': JSON.stringify({ 3: { ok: true, at: now } }),
-  '/Users/me/chief/data/sources.json': JSON.stringify({ slack: true, github: true }),
-  '/Users/me/chief/data/activity.json': JSON.stringify({ local_abc: { at: new Date(Date.now() + 1000).toISOString(), title: 'x', last: '接口联调完了，在等后端发版', permissionMode: 'bypassPermissions', archived: false }, _hub: { permissionMode: 'auto' } }),
-  '/Users/me/chief/rules.json': JSON.stringify({
+  '/Users/me/chief-home/data/reviews.json': JSON.stringify({ 3: { ok: true, at: now } }),
+  '/Users/me/chief-home/data/sources.json': JSON.stringify({ slack: true, github: true }),
+  '/Users/me/chief-home/data/activity.json': JSON.stringify({ local_abc: { at: new Date(Date.now() + 1000).toISOString(), title: 'x', last: '接口联调完了，在等后端发版', permissionMode: 'bypassPermissions', archived: false }, _hub: { permissionMode: 'auto' } }),
+  '/Users/me/chief-home/rules.json': JSON.stringify({
     scenarios: { slack_self: { handle: 'command', reply: 'auto' }, slack_dm: { handle: 'dispatch', reply: 'ask' }, slack_thread: { handle: 'note', reply: 'ask' } },
     custom: [{ id: 1, when: 'Slack 里有人发 PR 链接让我看', handle: 'approve', reply: 'auto' }],
     notes: ['涉及排期的都要问我'],
@@ -51,7 +51,7 @@ test('面板：主会话状态、要你定、待发出；按钮各做各的', as
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('clock.every', () => ({ value: { cancel: () => {} } }))
   on('fs.read', (_, e) => {
-    if (e.path === '/Users/me/chief/data/bin/chief') return { value: '#!/bin/sh' }
+    if (e.path === '/Users/me/chief-home/data/bin/chief') return { value: '#!/bin/sh' }
     const text = FILES[e.path]
     if (text === undefined) throw new Error('missing')
     return { value: text }
@@ -215,7 +215,7 @@ test('主会话没在听：说清楚怎么办，积多了能一键跳过', async
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('clock.every', () => ({ value: { cancel: () => {} } }))
   on('fs.read', (_, e) => {
-    if (e.path === '/Users/me/chief/data/bin/chief') return { value: '#!/bin/sh' }
+    if (e.path === '/Users/me/chief-home/data/bin/chief') return { value: '#!/bin/sh' }
     if (e.path.endsWith('state.json')) return { value: JSON.stringify({ nextId: 88 }) }
     if (e.path.endsWith('alive.json')) return { value: JSON.stringify({ at: '2026-01-01T00:00:00Z' }) }
     throw new Error('missing')
@@ -233,8 +233,8 @@ test('主会话没在听：说清楚怎么办，积多了能一键跳过', async
   expect(await ui.find({ type: 'Text', text: /引擎没在跑/ })).toBeTruthy()
   expect(await ui.find({ type: 'Text', text: /新消息现在没人判断/ })).toBeTruthy()
   await ui.press({ key: 'skip-old' })
-  expect(runs).toContain('/Users/me/chief/data/bin/chief mark --upto 87 ignored')
-  expect(runs).toContain('/Users/me/chief/data/bin/chief cursor 87')
+  expect(runs).toContain('/Users/me/chief-home/data/bin/chief mark --upto 87 ignored')
+  expect(runs).toContain('/Users/me/chief-home/data/bin/chief cursor 87')
   await ui.unmount()
 })
 
