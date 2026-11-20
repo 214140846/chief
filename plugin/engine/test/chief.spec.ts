@@ -576,17 +576,16 @@ describe("插电时不让电脑睡", () => {
 });
 
 describe("Slack 登录窗口", () => {
-  it("进了 Slack 才算登好；登录页、SSO、确认新设备都不算", async () => {
-    const { signedIn } = await import("../src/slack/login");
-    expect(signedIn("https://app.slack.com/client/T0123/C0456")).toBe(true);
-    expect(signedIn("https://acme.slack.com/messages/C0456")).toBe(true);
-    expect(signedIn("https://acme.slack.com/ssb/redirect")).toBe(true);
-    expect(signedIn("https://acme.enterprise.slack.com/archives/C0456/p1")).toBe(true);
-    expect(signedIn("https://slack.com/signin")).toBe(false);
-    expect(signedIn("https://acme.slack.com/sso/saml/start")).toBe(false);
-    expect(signedIn("https://slack.com/workspace-signin")).toBe(false);
-    expect(signedIn("https://acme.slack.com/checkcookie?redir=https://app.slack.com/client")).toBe(false);
-    expect(signedIn("https://evil.com/?u=https://app.slack.com/client/T1")).toBe(false);
+  it("从工作区地址登：几种写法都认，乱写的拒收", async () => {
+    const { workspaceUrl } = await import("../src/slack/login");
+    expect(workspaceUrl("acme")).toBe("https://acme.slack.com/");
+    expect(workspaceUrl("Acme.slack.com")).toBe("https://acme.slack.com/");
+    expect(workspaceUrl("https://acme-eng.slack.com/")).toBe("https://acme-eng.slack.com/");
+    expect(() => workspaceUrl("evil.com/?x=")).toThrow();
+    expect(() => workspaceUrl("a b")).toThrow();
+  });
+  it("chief connect slack --workspace 写得不对：不开窗口，直接说怎么写", () => {
+    expect(chiefFails(home(), "connect", "slack", "--workspace", "evil.com/?x=")).toContain("工作区写成 acme");
   });
 });
 

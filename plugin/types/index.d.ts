@@ -124,6 +124,8 @@ export type Doctor = {
   hub: { listening: boolean; lastAt: string | null }
   // 插电时不让电脑睡（引擎挂着 caffeinate -s）
   awake: boolean
+  // 记下的 Slack 工作区（子域名），登录窗口从这里打开；没记过是 null
+  slackWorkspace: string | null
   // 工作目录 ~/chief：消息中心开在这里（ready：CLAUDE.md 在）
   workspace: { path: string; ready: boolean }
 }

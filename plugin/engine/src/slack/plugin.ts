@@ -73,6 +73,16 @@ const defaultCheckCookie = async (cookieD: string): Promise<CheckCookieResult> =
     const { GabrielCore, silentLogger } = await import("gabriel-slack");
     const core = new GabrielCore({ auth: { cookieD }, logger: silentLogger });
     const session = await core.initialize();
+    // 换得到 token 不等于能用：工作区要公司 SSO、SSO 又没走完时，换出来的 token 一调接口就 403，实时连接也连不上。
+    // 真调一个接口：HTTP 401 / 403 就是没走完；接口自己回的错（比如这个工作区不让看用户组）说明登录是好的。
+    try {
+      await core.callWebApi("usergroups.list", {});
+    } catch (error) {
+      if (/HTTP 40[13]\b/.test(error instanceof Error ? error.message : String(error))) {
+        void core.disconnect();
+        return { valid: false, detail: "登上了 Slack，但工作区的 SSO 还没走完：从工作区地址登录（chief connect slack --workspace <你的工作区>），走完公司 SSO 再试" };
+      }
+    }
     void core.disconnect();
     return { valid: true, detail: `${session.teamName ?? session.teamId}，用户 ${session.userId}` };
   } catch {
