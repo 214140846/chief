@@ -25,7 +25,7 @@ Slack（推送） / GitHub、Jira、Notion（每 5 分钟拉一次）
 
 2. 在 Claude App 里新建一个会话（权限模式选 bypass permissions），输入 `/chief` 打开面板，在「设置」页按顺序点：
    - **装引擎**：建工作目录 `~/chief`，把引擎放到 `~/chief/data/app`，装依赖，装进 launchd（开机自动跑）。
-   - **登录 Slack**：先填你的 Slack 工作区（地址栏 `xxx.slack.com` 的 `xxx`），弹出一个单独的 Chrome 窗口从工作区地址打开，你在里面正常登录（公司 SSO 照常走），登好自己关掉。登录凭证直接存进钥匙串。
+   - **登录 Slack**：弹出一个单独的 Chrome 窗口，你在里面正常登录。工作区要公司 SSO 的，登上账号后会自动再开一个工作区地址的窗口，在那里走完 SSO。登好窗口自己关掉，登录凭证直接存进钥匙串。
    - **连上 GitHub / Jira**（可选）：用本机已经登录的 `gh`、`acli`。
    - **开消息中心**：这个会话就成了主会话，之后一直开着。
 
@@ -65,7 +65,7 @@ chief 的东西都在 `~/chief` 里。不在里面的只有三样，都是系统
 ```bash
 chief status            # 引擎、来源、进度
 chief doctor            # 设置页用的检查（JSON）
-chief connect slack --workspace acme   # 开浏览器窗口从工作区地址登录（之后重新登录可以不带）；--stdin 改成从标准输入贴 Cookie
+chief connect slack     # 开浏览器窗口登录（要 SSO 的会自己跳到工作区地址）；--workspace acme 直接从工作区登；--stdin 改成从标准输入贴 Cookie
 chief connect github    # 用本机登录的 gh
 chief logs
 chief uninstall         # 从 launchd 卸掉（~/chief 的数据不删）
