@@ -810,6 +810,9 @@ export function evalTab($: Engine, ui: Els, s: Snapshot, opened: string[]) {
 
 // ── 控制：常用的 chief 命令都在这点 ──
 
+// 「重读规则」发给主会话的话：写全怎么做，主会话手上还是旧规则也看得懂。
+const RELOAD_SKILL = 'chief：重读规则。插件更新过：用 Skill 工具重新调用 chief:hub，读到最新的规则。不用重新开张，也不用重挂 Monitor（监听一直挂着）。读完只回一句「规则重读好了」，有什么和之前不一样的顺带说一句。'
+
 export function controlTab($: Engine, ui: Els, s: Snapshot, logText: string) {
   const { Box, Text, Button } = ui
   const section = (title: string, children: RenderChildren) => (
@@ -822,9 +825,10 @@ export function controlTab($: Engine, ui: Els, s: Snapshot, logText: string) {
     <Box flexDirection="column" marginTop="sm">
       {section('主会话', (
         <Box flexDirection="column" gap="xs">
-          <Text wrap="wrap">{s.hub.listening ? '在听。停下以后新消息先攒着，在任何会话发 /chief:hub 接着处理。' : '没在听。在想让它当主会话的会话里发 /chief:hub。'}</Text>
+          <Text wrap="wrap">{s.hub.listening ? '在听。停下以后新消息先攒着，在任何会话发 /chief:hub 接着处理。插件更新过的话点「重读规则」，主会话会读到新的做事方式，不用重新开张。' : '没在听。在想让它当主会话的会话里发 /chief:hub。'}</Text>
           <Box flexDirection="row" gap="sm">
             {s.hub.listening && <Button key="hub-stop" onPress={() => hubStop($)}>停下主会话</Button>}
+            {s.hub.listening && <Button key="hub-reload" onPress={() => tell($, RELOAD_SKILL, '重读规则')}>重读规则</Button>}
             {s.unhandled > 0 && <Button key="skip-old2" onPress={() => skipOld($, s.maxEvent)}>跳过积下的 {s.unhandled} 条</Button>}
           </Box>
         </Box>

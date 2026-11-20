@@ -199,6 +199,8 @@ test('面板：主会话状态、要你定、待发出；按钮各做各的', as
   expect(await ui.find({ type: 'Text', text: /check your internet connection/ })).toBeTruthy()
   await ui.press({ key: 'eng-restart' })
   expect(runs.at(-1)?.argv.slice(1).join(' ')).toBe('engine restart')
+  await ui.press({ key: 'hub-reload' })
+  expect(prompts.at(-1)).toMatch(/^chief：重读规则。.*重新调用 chief:hub.*不用重新开张/)
   await ui.press({ key: 'hub-stop' })
   expect(runs.at(-1)?.argv.slice(1).join(' ')).toBe('hub stop')
   await ui.input({ key: 'test-msg', text: 'OPS-35121 的报告今天能给吗' })
