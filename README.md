@@ -6,7 +6,7 @@
 
 ```
 Slack（推送） / GitHub、Jira、Notion（每 5 分钟拉一次）
-  → chief 引擎（launchd 常驻，~/.chief/app）：只把「有人找你」的写进 ~/.chief/events.jsonl
+  → chief 引擎（launchd 常驻，~/chief/data/app）：只把「有人找你」的写进 ~/chief/data/events.jsonl
   → 「chief 消息中心」会话用 Monitor 盯着，来了按你的规矩判断：派给工作会话 / 只记下 / 问你
   → 工作会话干活，向主会话汇报进展 / 要你定 / 回复稿
   → 回复放进「待发出」，你在面板上确认（或规矩允许直接发），引擎以你的身份发出，5 秒内可撤回
@@ -24,7 +24,7 @@ Slack（推送） / GitHub、Jira、Notion（每 5 分钟拉一次）
    ```
 
 2. 在 Claude App 里新建一个会话（权限模式选 auto），输入 `/chief` 打开面板，在「设置」页按顺序点：
-   - **装引擎**：把引擎放到 `~/.chief/app`，装依赖，装进 launchd（开机自动跑）。
+   - **装引擎**：建工作目录 `~/chief`，把引擎放到 `~/chief/data/app`，装依赖，装进 launchd（开机自动跑）。
    - **登录 Slack**：弹出一个单独的 Chrome 窗口，你在里面正常登录，登好自己关掉。登录凭证直接存进钥匙串。
    - **连上 GitHub / Jira**（可选）：用本机已经登录的 `gh`、`acli`。
    - **开消息中心**：这个会话就成了主会话，之后一直开着。
@@ -33,15 +33,17 @@ Slack（推送） / GitHub、Jira、Notion（每 5 分钟拉一次）
 
 ## 工作目录 ~/chief
 
-装引擎时会建一个 `~/chief`，消息中心就开在这里（新建会话时文件夹选它）：
+装引擎时会建一个 `~/chief`，chief 的东西全在这里，消息中心也开在这里（新建会话时文件夹选它）：
 
 | 路径 | 是什么 |
 | --- | --- |
 | `CLAUDE.md` | 你写给助理的长期交代：你是谁、常用仓库、说话习惯、别碰的事 |
+| `rules.json` | 规矩：每类消息怎么办、回复要不要你确认（面板「策略」页改，或跟消息中心说） |
 | `notes/` | 助理记下的东西：谁是谁（`people.md`）、哪类事在哪个目录办（`projects.md`） |
 | `.claude/skills/` | 只给消息中心用的 skill |
+| `data/` | 进展、收到的消息、待发回复、日志、引擎程序（有别人的原话，`.gitignore` 已忽略） |
 
-会话固定开在这里，Claude 自带的记忆也跟着固定下来。这些文件都归你，插件更新只补缺的，不覆盖。
+模板文件插件更新只补缺的，不覆盖你改过的。
 
 ## 目录
 
@@ -54,11 +56,11 @@ Slack（推送） / GitHub、Jira、Notion（每 5 分钟拉一次）
 | `plugin/setup.sh` | 设置页「装引擎」跑的脚本 |
 | `plugin/workspace/` | 工作目录 `~/chief` 的初始文件 |
 
-数据都在 `~/.chief`，密钥在 macOS 钥匙串（`chief:slack.cookie_d`、`chief:notion.token`）。
+chief 的东西都在 `~/chief` 里。不在里面的只有三样，都是系统规定的位置：密钥在 macOS 钥匙串（`chief:slack.cookie_d`、`chief:notion.token`），开机自启的配置在 `~/Library/LaunchAgents/dev.chief.engine.plist`，插件本身装在 Claude 的插件目录。
 
 ## 命令行
 
-装好引擎后有 `~/.chief/bin/chief`（`~/.local/bin` 存在时也链一份过去）：
+装好引擎后有 `~/chief/data/bin/chief`（想在终端直接打 `chief`，自己加个 alias）：
 
 ```bash
 chief status            # 引擎、来源、进度
@@ -66,7 +68,7 @@ chief doctor            # 设置页用的检查（JSON）
 chief connect slack     # 开浏览器窗口登录；--stdin 改成从标准输入贴 Cookie
 chief connect github    # 用本机登录的 gh
 chief logs
-chief uninstall         # 从 launchd 卸掉（~/.chief 的数据不删）
+chief uninstall         # 从 launchd 卸掉（~/chief 的数据不删）
 ```
 
 ## 开发

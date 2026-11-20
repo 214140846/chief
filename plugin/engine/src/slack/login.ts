@@ -2,10 +2,10 @@
 // 等 .slack.com 的 d Cookie 出现、并且确实能用，就关窗口、删临时配置，把 Cookie 交回去。Cookie 不打印。
 // 思路和 gabriel-slack 的 browserLogin 一样（它没导出），这里只用 Node 自带的 fetch / WebSocket，不加依赖。
 import { spawn } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 
+import { paths } from "../store";
 import { SlackPlugin, SLACK_COOKIE_D } from "./plugin";
 
 const CHROME = [
@@ -45,7 +45,9 @@ export async function browserLogin(opts: { log?: (line: string) => void; timeout
   const log = opts.log ?? (() => {});
   const chrome = findChrome();
   if (!chrome) throw new Error("没找到 Chrome：装一个 Google Chrome 再来，或者用 chief connect slack --stdin 手动贴 Cookie");
-  const profile = mkdtempSync(join(tmpdir(), "chief-login-"));
+  // 临时配置也放在 chief 的数据目录里，用完就删。
+  mkdirSync(paths().home, { recursive: true, mode: 0o700 });
+  const profile = mkdtempSync(join(paths().home, "login-"));
   // 端口给 0，让 Chrome 自己挑一个空的，再从配置目录里的 DevToolsActivePort 读出来；只听本机。
   const proc = spawn(chrome, [
     "--remote-debugging-port=0", "--remote-debugging-address=127.0.0.1", `--user-data-dir=${profile}`,

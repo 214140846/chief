@@ -7,6 +7,7 @@ import { eventOfItem, eventOfSlack, hubDown, missedEvents } from "../src/engine"
 import { keysOf } from "../src/keys";
 import { parsePermalink } from "../src/slack/people";
 import type { InboundMessage } from "../src/slack/types";
+import { paths, workspaceDir } from "../src/store";
 
 const ROOT = resolve(import.meta.dirname, "..");
 const TSX = join(ROOT, "node_modules", "tsx", "dist", "esm", "index.mjs");
@@ -532,5 +533,14 @@ describe("归档", () => {
     expect(readFileSync(join(h, "archive", "events-2026-10.jsonl"), "utf8")).toContain("消息 1");
     expect(chief(h, "show", "1")).toContain("消息 1");
     expect(chief(h, "archive")).toContain("事件 0、判断 0、事情 0、问题 0、回复 0");
+  });
+});
+
+describe("放在哪", () => {
+  it("默认都在工作目录：数据在 data/，规矩在最上层的 rules.json；数据指到别处时规矩跟着数据", () => {
+    const ws = workspaceDir();
+    expect(paths(join(ws, "data")).events).toBe(join(ws, "data", "events.jsonl"));
+    expect(paths(join(ws, "data")).policy).toBe(join(ws, "rules.json"));
+    expect(paths("/tmp/x").policy).toBe("/tmp/x/rules.json");
   });
 });

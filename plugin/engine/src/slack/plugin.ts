@@ -15,7 +15,7 @@ const SECRETS: readonly SecretSpec[] = [
     name: SLACK_COOKIE_D,
     label: "Slack 会话 Cookie",
     prefix: "xoxd-",
-    hint: "从 Slack 网页版获取，或运行 npx gabriel auth login your-workspace",
+    hint: "运行 chief connect slack，在弹出的窗口里登录",
   },
 ];
 
@@ -104,7 +104,7 @@ export class SlackPlugin implements ChannelPlugin {
     checks.push({
       label: "Cookie 的格式",
       pass: formatOk,
-      detail: scrub(formatOk ? "以 xoxd- 开头" : "应该以 xoxd- 开头（从 Slack 网页版获取，或运行 npx gabriel auth login）"),
+      detail: scrub(formatOk ? "以 xoxd- 开头" : "应该以 xoxd- 开头（运行 chief connect slack 重新登录）"),
     });
 
     if (formatOk) {
