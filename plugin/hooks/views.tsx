@@ -10,7 +10,7 @@ import { EVAL_DAYS, MINUTES, chartSvg, statsOf } from './data'
 
 export type Els = ReturnType<Engine['ui']['resolve']>
 
-const SOURCE: Record<ReplyRow['source'], string> = { slack: 'Slack', github: 'GitHub', jira: 'Jira', notion: 'Notion', session: '会话' }
+export const SOURCE: Record<ReplyRow['source'], string> = { slack: 'Slack', github: 'GitHub', jira: 'Jira', notion: 'Notion', session: '会话' }
 const STATUS: Record<ThingRow['status'], string> = {
   waiting_you: '等你定', doing: '在做', waiting_others: '等别人', done: '办完了', dropped: '不做了',
 }
@@ -31,7 +31,6 @@ const HANDLES: { value: Handle; label: string }[] = [
 const MODES: { value: ReplyMode; label: string }[] = [
   { value: 'ask', label: '对外先问我' }, { value: 'auto', label: '对外直接发' },
 ]
-const SOURCES = ['slack', 'github', 'jira', 'notion'] as const
 const DEFAULT_PLACEMENT = { direct: 'inline', group: 'inline', channel: 'thread', self: 'thread' } as const
 
 // 和 chief 的 placementOf 一样：这条 Slack 回复会放在 thread 里，还是直接回在对话里。
@@ -126,13 +125,12 @@ export function header($: Engine, ui: Els, s: Snapshot, said: string, current: s
   // 提示是「时间|文字」：只显示最近 8 秒的。
   const bar = said.indexOf('|')
   const noteText = bar > 0 && Date.now() - Number(said.slice(0, bar)) < 8000 ? said.slice(bar + 1) : ''
-  const tabs: { key: 'now' | 'outbox' | 'things' | 'policy' | 'eval' | 'control' | 'setup'; label: string; n: number }[] = [
+  const tabs: { key: 'now' | 'outbox' | 'things' | 'policy' | 'eval' | 'setup'; label: string; n: number }[] = [
     { key: 'now', label: '现在要你', n: asks },
     { key: 'outbox', label: '待发出', n: toSend },
     { key: 'things', label: '进度', n: 0 },
     { key: 'policy', label: '策略', n: proposals },
     { key: 'eval', label: '测评', n: 0 },
-    { key: 'control', label: '控制', n: 0 },
     { key: 'setup', label: '设置', n: setupMissing },
   ]
   // 连着失败两次以上的来源：一次可能只是网络抖了一下。
@@ -808,68 +806,6 @@ export function evalTab($: Engine, ui: Els, s: Snapshot, opened: string[]) {
   )
 }
 
-// ── 控制：常用的 chief 命令都在这点 ──
 
-export function controlTab($: Engine, ui: Els, s: Snapshot, logText: string) {
-  const { Box, Text, Button } = ui
-  const section = (title: string, children: RenderChildren) => (
-    <Box key={`cs-${title}`} flexDirection="column" borderStyle="round" borderColor="inactive" paddingX="md" paddingY="sm" gap="xs" marginTop="sm">
-      <Text weight="semibold">{title}</Text>
-      {children}
-    </Box>
-  )
-  return (
-    <Box flexDirection="column" marginTop="sm">
-      {section('主会话', (
-        <Box flexDirection="column" gap="xs">
-          <Text wrap="wrap">{s.hub.listening ? '在听。停下以后新消息先攒着，在任何会话发 /chief:hub 接着处理。' : '没在听。在想让它当主会话的会话里发 /chief:hub。'}</Text>
-          <Box flexDirection="row" gap="sm">
-            {s.hub.listening && <Button key="hub-stop" onPress={() => hubStop($)}>停下主会话</Button>}
-            {s.unhandled > 0 && <Button key="skip-old2" onPress={() => skipOld($, s.maxEvent)}>跳过积下的 {s.unhandled} 条</Button>}
-          </Box>
-        </Box>
-      ))}
-      {section('引擎（收消息、发回复）', (
-        <Box flexDirection="column" gap="xs">
-          <Text>{s.engineAt ? `在跑 · ${ago(s.engineAt)}报到` : '没在跑'}</Text>
-          <Box flexDirection="row" gap="sm">
-            {s.engineAt ? <Button key="eng-stop" onPress={() => engineDo($, 'stop')}>停引擎</Button> : <Button key="eng-start" variant="primary" onPress={() => engineDo($, 'start')}>开引擎</Button>}
-            <Button key="eng-restart" onPress={() => engineDo($, 'restart')}>重启引擎</Button>
-            <Button key="logs" onPress={() => showLogs($)}>看日志</Button>
-          </Box>
-          {logText !== '' && ('Code' in ui ? <ui.Code source={logText} language="text" /> : <Text dimColor wrap="wrap">{logText}</Text>)}
-        </Box>
-      ))}
-      {section('来源', (
-        <Box flexDirection="column" gap="xs">
-          {SOURCES.map(src => (
-            <Box key={`src-${src}`} flexDirection="row" gap="sm" alignItems="center">
-              <Text>{SOURCE[src]}</Text>
-              {s.sources[src] && (s.health[src]?.fails ?? 0) > 0
-                ? <Text color="error">连不上（连着 {s.health[src]!.fails} 次）</Text>
-                : <Text color={s.sources[src] ? 'success' : undefined} dimColor={!s.sources[src]}>{s.sources[src] ? '开着' : '没开'}</Text>}
-              {s.sources[src]
-                ? <Button key={`dc-${src}`} onPress={() => act($, `断开 ${SOURCE[src]}`, ['disconnect', src])}>断开</Button>
-                : (src === 'github' || src === 'jira') && <Button key={`cn-${src}`} onPress={() => act($, `连上 ${SOURCE[src]}`, ['connect', src])}>连上</Button>}
-            </Box>
-          ))}
-          {SOURCES.filter(src => s.sources[src] && (s.health[src]?.fails ?? 0) > 0).map(src => (
-            <Text key={`err-${src}`} size="footnote" color="error" wrap="wrap">{SOURCE[src]} {ago(s.health[src]!.at)}：{s.health[src]!.error ?? '没说为什么'}</Text>
-          ))}
-          <Text dimColor size="caption" wrap="wrap">Slack 连不上（比如登录过期）：到「设置」页点「登录 Slack」重新登一次。Notion 要令牌，在终端里连：pbpaste | chief connect notion（先复制好）。</Text>
-        </Box>
-      ))}
-      {section('试一下', (
-        <Box flexDirection="column" gap="xs">
-          <Text dimColor size="caption" wrap="wrap">造一条「同事找你」的消息，看主会话怎么判断、派活、写回复。回复不会真的发出去。</Text>
-          {'Input' in ui && (
-            <ui.Input key="test-msg" placeholder="比如：OPS-35121 的压测报告今天能给吗" submitLabel="发测试消息" onSubmit={(v: string) => {
-              if (v.trim()) void testMessage($, v.trim())
-            }} />
-          )}
-          <Text dimColor size="caption" wrap="wrap">也可以在 Slack 里给自己发私信，那是给主会话的指令（比如「帮我看看现在工作进度」），它办完会回到你和自己的私信里。</Text>
-        </Box>
-      ))}
-    </Box>
-  )
-}
+// 「重读规则」发给主会话的话：写全怎么做，主会话手上还是旧规则也看得懂。
+export const RELOAD_SKILL = 'chief：重读规则。插件更新过：用 Skill 工具重新调用 chief:hub，读到最新的规则。不用重新开张，也不用重挂 Monitor（监听一直挂着）。读完只回一句「规则重读好了」，有什么和之前不一样的顺带说一句。'
