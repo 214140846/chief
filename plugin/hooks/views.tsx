@@ -21,6 +21,7 @@ const VERDICT: Record<DecisionRow['verdict'], string> = {
 const SCENARIO: Record<string, string> = {
   slack_self: '我在 Slack 上给自己发的话', slack_dm: 'Slack 私信', slack_mention: 'Slack 频道里 @我', slack_thread: '我在的 thread 有后续',
   github_review: 'PR 请我 review', github_mention: 'GitHub 上 @我', github_comment: '别人评论了我的 PR / issue', github_assigned: 'GitHub 指派给我',
+  github_approved: '我的 PR 被 approve 了', github_changes: '我的 PR 被要求修改',
   jira_assigned: 'Jira 指派给我', jira_mention: 'Jira 评论里提到我', jira_comment: '别人评论了我的 Jira 单',
   notion_comment: 'Notion 页面有新评论', session_update: '我的会话有新进展', other: '其他',
 }
