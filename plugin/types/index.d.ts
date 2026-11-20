@@ -122,6 +122,8 @@ export type Doctor = {
     notion: { enabled: boolean; ready: boolean }
   }
   hub: { listening: boolean; lastAt: string | null }
+  // 插电时不让电脑睡（引擎挂着 caffeinate -s）
+  awake: boolean
   // 工作目录 ~/chief：消息中心开在这里（ready：CLAUDE.md 在）
   workspace: { path: string; ready: boolean }
 }
@@ -130,7 +132,7 @@ export type Doctor = {
 export type Setup = {
   installed: boolean
   doctor: Doctor | null
-  busy: '' | 'engine' | 'slack' | 'github' | 'jira' | 'check'
+  busy: '' | 'engine' | 'slack' | 'github' | 'jira' | 'awake' | 'check'
   said: string
   // 本会话开在哪个目录：和工作目录对不上时，提醒消息中心换个地方开
   cwd: string

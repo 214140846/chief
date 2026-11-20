@@ -3,6 +3,7 @@
 //   events.jsonl  引擎收到的、要交给消息中心的事件，一行一条，只追加。
 //   state.json    引擎自己的：下一个事件编号、每个来源拉到哪了、收过的编号、你在的 Slack thread。
 //   sources.json  开着哪些来源（chief connect 写，引擎启动时读）。
+//   settings.json 这台电脑上的开关：awake（插电时不让电脑睡，默认开）。
 //   routes.json   消息中心的对应表：事件的键（thread、PR、工单、Notion 页面）→ 工作会话。
 //   hub.json      消息中心处理到第几条事件。
 //   dispatch.json 每条事件怎么处理的：分发到哪个会话、新开了会话、还是忽略了（面板按这个分「新进来的」和「处理中」）。
@@ -40,6 +41,7 @@ export function paths(home = chiefHome()) {
     events: join(home, "events.jsonl"),
     state: join(home, "state.json"),
     sources: join(home, "sources.json"),
+    settings: join(home, "settings.json"),
     routes: join(home, "routes.json"),
     hub: join(home, "hub.json"),
     dispatch: join(home, "dispatch.json"),
@@ -142,6 +144,16 @@ export type Enabled = Partial<Record<EventSource, boolean>>;
 
 export function loadEnabled(): Enabled {
   return readJson<Enabled>(paths().sources, {});
+}
+
+// 这台电脑上的开关。awake：引擎跑着时挂一个 caffeinate -s，插电时电脑不会自己睡（屏幕照样关、照样锁）；没插电照常睡。
+export interface Settings {
+  awake: boolean;
+}
+
+export function loadSettings(): Settings {
+  const s = readJson<Partial<Settings>>(paths().settings, {});
+  return { awake: s.awake ?? true };
 }
 
 export function saveState(s: EngineState): void {

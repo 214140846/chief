@@ -544,3 +544,14 @@ describe("放在哪", () => {
     expect(paths("/tmp/x").policy).toBe("/tmp/x/rules.json");
   });
 });
+
+describe("插电时不让电脑睡", () => {
+  it("默认开；chief awake off / on 切换，doctor 用的设置跟着变", () => {
+    const h = home();
+    expect(chief(h, "awake")).toContain("开");
+    expect(chief(h, "awake", "off")).toContain("关");
+    expect(JSON.parse(readFileSync(join(h, "settings.json"), "utf8"))).toEqual({ awake: false });
+    expect(chief(h, "awake", "on")).toContain("开");
+    expect(chiefFails(h, "awake", "maybe")).toContain("chief awake");
+  });
+});
