@@ -265,3 +265,43 @@ test('引擎还没装：只有设置页，按钮跑插件里的 setup.sh', async
   expect(runs.some(r => r.startsWith('/bin/sh ') && r.endsWith('/setup.sh'))).toBe(true)
   await ui.unmount()
 })
+
+// 引擎跟着插件自动更新：插件一加载就比版本，旧了在后台跑 setup.sh，跑完弹一句；一样就什么都不做。
+function autoUpdateWorld(on: Parameters<Parameters<typeof test>[1]>[1], engineVersion: string) {
+  const runs: string[] = []
+  const toasts: string[] = []
+  on('command.register', () => ({ value: { command: 'chief' } }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('clock.every', () => ({ value: { cancel: () => {} } }))
+  on('ui.toast', (_, e) => {
+    toasts.push(e.text)
+    return { value: undefined }
+  })
+  on('fs.read', (_, e) => {
+    if (e.path.endsWith('/.claude-plugin/plugin.json')) return { value: JSON.stringify({ name: 'chief', version: '0.2.0' }) }
+    if (e.path === '/Users/me/chief/data/app/VERSION') return { value: `${engineVersion}\n` }
+    throw new Error('missing')
+  })
+  on('process.run', (_, e) => {
+    runs.push(e.argv.join(' '))
+    if (e.argv[0] === '/usr/bin/env') return { value: { exitCode: 0, stdout: 'HOME=/Users/me\nPATH=/usr/bin\n', stderr: '' } }
+    return { value: { exitCode: 0, stdout: '装好了', stderr: '' } }
+  })
+  return { runs, toasts }
+}
+
+test('引擎比插件旧：一加载就自动更新，跑完弹一句', async ($, on) => {
+  const w = autoUpdateWorld(on, '0.1.0')
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+  await new Promise(r => setTimeout(r, 50))
+  expect(w.runs.some(r => r.startsWith('/bin/sh ') && r.endsWith('/setup.sh'))).toBe(true)
+  expect(w.toasts).toContain('chief 引擎更新到 0.2.0 了')
+})
+
+test('引擎和插件一样新：什么都不做', async ($, on) => {
+  const w = autoUpdateWorld(on, '0.2.0')
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+  await new Promise(r => setTimeout(r, 50))
+  expect(w.runs.some(r => r.endsWith('/setup.sh'))).toBe(false)
+  expect(w.toasts).toEqual([])
+})

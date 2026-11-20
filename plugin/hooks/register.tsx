@@ -10,7 +10,7 @@ import { atom, read } from 'claude-code'
 import type { EngineInterface as Engine, Register } from 'claude-code'
 
 import { refresh, chiefDir } from './data'
-import { checkSetup, missing, readSetup, setupTab } from './setup'
+import { autoUpdate, checkSetup, missing, readSetup, setupTab } from './setup'
 import { evalTab, header, nowTab, outboxTab, policyTab, thingsTab, type Els } from './views'
 
 const snap = atom({ plugin: 'chief', key: 'snap' } as const, null)
@@ -72,6 +72,8 @@ async function openPane($: Engine) {
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command.register({ name: 'chief', description: '打开 chief 面板：要你定的事、待发出、进度、策略、测评、设置' })
+    // 引擎跟着插件自动更新：放后台跑，不拖慢会话开起来。
+    void autoUpdate($).catch(() => {})
     return next(e)
   })
 

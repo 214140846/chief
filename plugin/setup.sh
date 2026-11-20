@@ -7,6 +7,19 @@ WS=$HOME/chief
 DATA=${CHIEF_HOME:-$WS/data}
 APP=$DATA/app
 
+# 同一时间只跑一个：插件在几个会话里同时加载、都发现引擎旧了，只让第一个更新。锁超过 15 分钟算上次没收尾。
+mkdir -p "$DATA"
+LOCK=$DATA/.updating
+if ! mkdir "$LOCK" 2>/dev/null; then
+  if [ -n "$(find "$LOCK" -maxdepth 0 -mmin +15 2>/dev/null)" ]; then
+    rmdir "$LOCK" && mkdir "$LOCK"
+  else
+    echo "已经有别的会话在更新引擎了"
+    exit 0
+  fi
+fi
+trap 'rmdir "$LOCK" 2>/dev/null' EXIT
+
 # App 起的进程 PATH 不全：先问登录 shell，再看 Homebrew 的常见位置。
 NODE=$(/bin/zsh -lc 'command -v node' 2>/dev/null || true)
 [ -x "${NODE:-}" ] || for c in /opt/homebrew/bin/node /usr/local/bin/node; do
