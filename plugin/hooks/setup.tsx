@@ -100,9 +100,10 @@ async function chief($: Engine, args: string[], timeoutMs = 60_000) {
   return $.process.run([`${await chiefDir($)}/bin/chief`, ...args], { timeoutMs })
 }
 
-// 工作区不用给：要公司 SSO 的，登录窗口自己跳到工作区地址；登过一次 chief 就记下了。
-function loginSlack($: Engine) {
-  return step($, 'slack', () => chief($, ['connect', 'slack'], LOGIN_MS))
+// workspace：第一次登时在设置页填的工作区（可以不填）。填了直接从工作区地址登，要公司 SSO 的只用登一次；
+// 不填的话先登账号、看出工作区再换窗口登一次（会多要一次验证码）。登过一次 chief 就记下了，之后不用给。
+function loginSlack($: Engine, workspace?: string) {
+  return step($, 'slack', () => chief($, ['connect', 'slack', ...(workspace ? ['--workspace', workspace] : [])], LOGIN_MS))
 }
 
 function connect($: Engine, source: 'github' | 'jira') {
@@ -212,6 +213,8 @@ export function setupTab($: Engine, ui: Els, st: Setup, s: Snapshot | null, logT
   )
   const off = (src: 'slack' | 'github' | 'jira' | 'notion') => on(src) ? <Button key={`dc-${src}`} onPress={() => act($, `断开 ${SOURCE[src]}`, ['disconnect', src])}>断开</Button> : null
   const slackReady = d?.sources.slack.ready === true
+  // 还没记过工作区、又不在登录中：Slack 那行给一个填工作区的输入框，代替「登录 Slack」按钮。
+  const askWorkspace = st.busy !== 'slack' && st.installed && d !== null && !d.slackWorkspace && d.chrome !== false
   const slackOk = on('slack') && fails('slack') === 0 && (d === null || slackReady)
   const tool = (id: 'github' | 'jira', install: string, login: string) => {
     const t = d?.sources[id]
@@ -226,9 +229,18 @@ export function setupTab($: Engine, ui: Els, st: Setup, s: Snapshot | null, logT
     <Box flexDirection="column" gap="xs">
       {/* 登录进行中两个按钮都不画：只藏「重新登录」的话「断开」会挪到它的位置，再点一下就把 Slack 断了。 */}
       {line('slack',
-        st.busy === 'slack' ? null : button('setup-slack', on('slack') || slackReady ? '重新登录' : '登录 Slack', !busy && st.installed && d?.chrome !== false, () => void loginSlack($), !(on('slack') || slackReady)),
+        st.busy === 'slack' || askWorkspace ? null : button('setup-slack', on('slack') || slackReady ? '重新登录' : '登录 Slack', !busy && st.installed && d?.chrome !== false, () => void loginSlack($), !(on('slack') || slackReady)),
         st.busy === 'slack' ? null : off('slack'))}
       {d?.slackWorkspace && note(`工作区：${d.slackWorkspace}.slack.com`)}
+      {/* 还没记过工作区：先问一句（可以不填）。填了只用登一次。 */}
+      {askWorkspace && 'Input' in ui && (
+        <Box flexDirection="column" gap="xs">
+          {note('你的 Slack 工作区：浏览器里打开 Slack 时地址栏 xxx.slack.com 的 xxx。公司要 SSO 的一定要填，填了只用登一次；不知道可以留空直接点。')}
+          <ui.Input key="slack-workspace" placeholder="比如 acme（可以留空）" submitLabel={on('slack') || slackReady ? '重新登录' : '登录 Slack'} onSubmit={(v: string) => {
+            if (!busy) void loginSlack($, v.trim() || undefined)
+          }} />
+        </Box>
+      )}
       {st.busy === 'slack' && note('在弹出的 Chrome 窗口里登录 Slack（公司 SSO、确认新设备都照做），登好窗口会自己关掉。')}
       {d?.chrome === false && note('登录 Slack 要用 Google Chrome：先装一个 Chrome。')}
       {tool('github', 'brew install gh', 'gh auth login')}
