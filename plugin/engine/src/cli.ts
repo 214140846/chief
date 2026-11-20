@@ -8,7 +8,7 @@
 //   chief events [--after N] [--follow [--take-over]]  打出编号大于 N 的事件，一行一条；--follow 一直等新的（主会话的 Monitor 用，顺便报「在听」；
 //                                      同时只能有一个，--take-over 让这个会话接手）
 //   chief show <事件号>                 一条事件的全文
-//   chief watch                        ~/chief-home/data 里有文件变了就打一行（面板用它即时刷新）
+//   chief watch                        ~/chief/data 里有文件变了就打一行（面板用它即时刷新）
 //   chief cursor [N]                   主会话处理到第几条
 //   chief hub [stop]                   主会话在不在听；stop 让它停下
 //   chief engine stop|start|restart    停下 / 开起 / 重启引擎
@@ -26,7 +26,7 @@
 //   chief reply add|approve|new|list|edit|queue|undo|drop|redo   回复 / approve / 主动发新消息：加进待发出、改、排队发（5 秒可撤回）、撤回、不发、让它重写
 //                                      new --to 可以是一条 Slack 消息的链接：回到那条帖子的 thread 里
 //   chief slack who <名字>             找 Slack 上的人，拿到 <@U…>（写进稿子才会真的提醒到人）
-//   chief archive                      把办完超过 7 天的事件、判断、事情、回复搬进 ~/chief-home/data/archive（引擎每天自己搬一次）
+//   chief archive                      把办完超过 7 天的事件、判断、事情、回复搬进 ~/chief/data/archive（引擎每天自己搬一次）
 // 从标准输入给的文字（理由、进展、问题、稿子）不经过命令行参数：里面会引用别人的原文，不能让 shell 当成命令。
 import { watch as fsWatch, closeSync, existsSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, realpathSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -200,7 +200,7 @@ function events(args: string[]): void {
   }, ALIVE_MS);
 }
 
-// chief watch：~/chief-home/data 里有文件变了就打一行（面板挂着它，有变化马上刷新，不用一直去读）。
+// chief watch：~/chief/data 里有文件变了就打一行（面板挂着它，有变化马上刷新，不用一直去读）。
 function watchHome(): void {
   let pending: NodeJS.Timeout | null = null;
   const fire = () => process.stdout.write(`changed ${new Date().toISOString()}\n`);
