@@ -28,5 +28,13 @@ cd "$APP"
 PATH="$BIN:$PATH" "$BIN/npm" ci --omit=dev --no-audit --no-fund --loglevel=error
 sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' "$PLUGIN/.claude-plugin/plugin.json" | head -n 1 > VERSION
 
+# 工作目录：消息中心开在这里，放你的交代（CLAUDE.md）、助理记下的东西（notes/）和自己的 skill。
+# 只补没有的文件，已有的一个字都不动。
+WS=$HOME/chief
+echo "工作目录 ${WS}（已有的文件不动）"
+(cd "$PLUGIN/workspace" && find . -type f) | while IFS= read -r f; do
+  if [ ! -e "$WS/$f" ]; then mkdir -p "$WS/$(dirname "$f")"; cp "$PLUGIN/workspace/$f" "$WS/$f"; fi
+done
+
 echo "装进 launchd"
 "$NODE" --import "$APP/node_modules/tsx/dist/esm/index.mjs" "$APP/src/cli.ts" install

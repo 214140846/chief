@@ -7,7 +7,7 @@ import type { Doctor, Setup } from '../types'
 import { chiefDir, refresh } from './data'
 import type { Els } from './views'
 
-const setup = atom({ plugin: 'chief', key: 'setup' } as const, { installed: false, doctor: null, busy: '', said: '' } as Setup)
+const setup = atom({ plugin: 'chief', key: 'setup' } as const, { installed: false, doctor: null, busy: '', said: '', cwd: '' } as Setup)
 
 const INSTALL_MS = 10 * 60_000
 const LOGIN_MS = 6 * 60_000
@@ -44,7 +44,8 @@ export async function checkSetup($: Engine) {
       doctor = null
     }
   }
-  await update($, setup, s => ({ ...s, installed: has, doctor }))
+  const cwd = await $.session.cwd().catch(() => '')
+  await update($, setup, s => ({ ...s, installed: has, doctor, cwd }))
 }
 
 export async function readSetup($: Engine) {
@@ -92,6 +93,10 @@ function recheck($: Engine) {
   return step($, 'check', async () => null)
 }
 
+function openWorkspace($: Engine, path: string) {
+  void $.process.run(['/usr/bin/open', path]).catch(() => {})
+}
+
 function startHub($: Engine) {
   void $.prompt.submit({ text: '开 chief 消息中心' })
 }
@@ -115,7 +120,12 @@ export function setupTab($: Engine, ui: Els, s: Setup) {
   const engineOk = s.installed && d !== null && d.engine === 'running' && d.version === wanted
   const engineBody = s.busy === 'engine'
     ? note('正在装：复制引擎、装依赖、装进后台服务。第一次要一两分钟。')
-    : engineOk ? note(`在后台跑着（${d!.version}，Node ${d!.node}）`)
+    : engineOk ? (
+      <Box flexDirection="column" gap="xs">
+        {note(`在后台跑着（${d!.version}，Node ${d!.node}）。工作目录 ${d!.workspace.path}：在里面的 CLAUDE.md 写你的交代，notes/ 是助理记下的东西。`)}
+        {d!.workspace.ready && button('setup-workspace', '打开工作目录', !busy, () => openWorkspace($, d!.workspace.path), false)}
+      </Box>
+    )
     : (
       <Box flexDirection="column" gap="xs">
         {note(!s.installed ? '把收消息的后台程序装到这台电脑上（放在 ~/.chief，开机自动跑）。要先装好 Node 24 以上。'
@@ -149,11 +159,15 @@ export function setupTab($: Engine, ui: Els, s: Setup) {
   }
 
   const hubOk = d?.hub.listening === true
+  // 消息中心最好开在工作目录里：那样才读得到 CLAUDE.md、notes/ 和那里的 skill。
+  const elsewhere = d !== null && d.workspace.ready && s.cwd !== '' && s.cwd !== d.workspace.path
   const hubBody = hubOk ? note('主会话在听，新消息进来会自动处理')
     : (
       <Box flexDirection="column" gap="xs">
-        {note('用这个会话当主会话：点下面的按钮，它会挂上监听、改名叫「chief 消息中心」。这个会话之后就一直开着，权限模式选 auto。')}
-        {button('setup-hub', engineOk ? '开消息中心' : '开消息中心（先装好引擎）', !busy && engineOk, () => startHub($))}
+        {note(elsewhere
+          ? `这个会话开在 ${s.cwd}。消息中心最好开在工作目录：新建会话时文件夹选 ${d!.workspace.path}（权限模式选 auto），在那个会话里打 /chief 再点这里。`
+          : '用这个会话当主会话：点下面的按钮，它会挂上监听、改名叫「chief 消息中心」。这个会话之后就一直开着，权限模式选 auto。')}
+        {button('setup-hub', !engineOk ? '开消息中心（先装好引擎）' : elsewhere ? '就用这个会话' : '开消息中心', !busy && engineOk, () => startHub($), !elsewhere)}
       </Box>
     )
 
