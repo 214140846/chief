@@ -1,7 +1,7 @@
 // 子会话里的动静：你直接在 Claude App 的会话里推进了，不用它来汇报，面板也知道。
 // Claude App 给每个本地会话存一条记录（~/Library/Application Support/Claude/claude-code-sessions/**/local_<编号>.json），
 // 里面有最后活动时间、权限模式、对应的 Claude Code 会话编号；Claude Code 的对话记录在 ~/.claude/projects/<目录>/<编号>.jsonl。
-// 这里只读不写，结果记在 ~/.chief/activity.json（引擎自己写），面板读它。
+// 这里只读不写，结果记在 ~/chief/data/activity.json（引擎自己写），面板读它。
 import { closeSync, existsSync, openSync, readdirSync, readFileSync, readSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";

@@ -1,5 +1,5 @@
 // 设置页：第一次装好插件后一步步打勾。装引擎、登录 Slack、连 GitHub / Jira、开消息中心。
-// 引擎还没装时 ~/.chief/bin/chief 不存在，面板只画这一页；装好以后它是最后一个页签「设置」。
+// 引擎还没装时 ~/chief/data/bin/chief 不存在，面板只画这一页；装好以后它是最后一个页签「设置」。
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface as Engine } from 'claude-code'
 
@@ -122,13 +122,13 @@ export function setupTab($: Engine, ui: Els, s: Setup) {
     ? note('正在装：复制引擎、装依赖、装进后台服务。第一次要一两分钟。')
     : engineOk ? (
       <Box flexDirection="column" gap="xs">
-        {note(`在后台跑着（${d!.version}，Node ${d!.node}）。工作目录 ${d!.workspace.path}：在里面的 CLAUDE.md 写你的交代，notes/ 是助理记下的东西。`)}
+        {note(`在后台跑着（${d!.version}，Node ${d!.node}）。工作目录 ${d!.workspace.path}：CLAUDE.md 写你的交代，rules.json 是规矩，notes/ 是助理记的，data/ 是进展和消息。`)}
         {d!.workspace.ready && button('setup-workspace', '打开工作目录', !busy, () => openWorkspace($, d!.workspace.path), false)}
       </Box>
     )
     : (
       <Box flexDirection="column" gap="xs">
-        {note(!s.installed ? '把收消息的后台程序装到这台电脑上（放在 ~/.chief，开机自动跑）。要先装好 Node 24 以上。'
+        {note(!s.installed ? '把收消息的后台程序装到这台电脑上，开机自动跑。chief 的东西都放在工作目录 ~/chief 里。要先装好 Node 24 以上。'
           : d?.version !== wanted ? `插件是 ${wanted ?? '?'}，引擎还是 ${d?.version ?? '旧版'}，更新一下。`
           : '装了但没在跑，重装一下。')}
         {button('setup-engine', s.installed ? '更新引擎' : '装引擎', !busy, () => void installEngine($))}

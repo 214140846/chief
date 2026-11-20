@@ -1,4 +1,4 @@
-// 面板直接读 ~/.chief 里的文件（见 src/store.ts），这里是它用到的那部分。
+// 面板直接读 ~/chief/data 里的文件（见 src/store.ts），这里是它用到的那部分。
 export type Source = 'slack' | 'github' | 'jira' | 'notion' | 'session'
 
 export type ReplyRow = {
@@ -126,7 +126,7 @@ export type Doctor = {
   workspace: { path: string; ready: boolean }
 }
 
-// 设置页：引擎装没装（~/.chief/bin/chief 在不在）、doctor 的结果、正在做哪一步、上一步的输出。
+// 设置页：引擎装没装（~/chief/data/bin/chief 在不在）、doctor 的结果、正在做哪一步、上一步的输出。
 export type Setup = {
   installed: boolean
   doctor: Doctor | null

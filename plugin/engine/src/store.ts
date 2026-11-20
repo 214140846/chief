@@ -1,4 +1,5 @@
-// chief 的数据都放在 ~/.chief（可用 CHIEF_HOME 改成别的绝对路径），全是本机文件，不含密钥（密钥在钥匙串）：
+// chief 的东西都在工作目录 ~/chief 里：你的规矩在 ~/chief/rules.json，其余数据在 ~/chief/data（可用 CHIEF_HOME 改成别的绝对路径，
+// 那时规矩也放那里）。全是本机文件，不含密钥（密钥在钥匙串）：
 //   events.jsonl  引擎收到的、要交给消息中心的事件，一行一条，只追加。
 //   state.json    引擎自己的：下一个事件编号、每个来源拉到哪了、收过的编号、你在的 Slack thread。
 //   sources.json  开着哪些来源（chief connect 写，引擎启动时读）。
@@ -12,7 +13,7 @@
 //   alive.json    主会话在不在听：chief events --follow 跑着时每 20 秒写一次。
 //   engine.json   引擎在不在跑：每 20 秒写一次。
 //   activity.json 事情挂着的 Claude App 会话最近的动静（引擎每分钟看一次，见 activity.ts）。
-//   policy.json   你的规矩（结构化）：每个场景怎么处理、回复要不要你确认，加上你写的自由规矩、主会话提议的规矩。
+//   rules.json    你的规矩（结构化）：每个场景怎么处理、回复要不要你确认，加上你写的自由规矩、主会话提议的规矩。
 //   reviews.json  你给主会话的判断标的对错（事件号 → 对 / 错和你说的应该怎样）。
 // 几个进程（引擎、主会话的命令、面板的命令）会同时写的文件（replies、things、policy、dispatch、routes、reviews、hub），都拿着 <文件>.lock 读改写。
 // 引擎只写 events.jsonl、state.json；命令行（消息中心在用）只写另外几个。两边不抢同一个文件。
@@ -20,13 +21,20 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmdirS
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 
+// 工作目录：消息中心开在这里；你的交代、规矩、笔记、skill 和 chief 的数据都放在里面。
+export function workspaceDir(): string {
+  return join(homedir(), "chief");
+}
+
 export function chiefHome(): string {
   const dir = process.env.CHIEF_HOME;
   if (dir && !isAbsolute(dir)) throw new Error("CHIEF_HOME 要是绝对路径");
-  return dir || join(homedir(), ".chief");
+  return dir || join(workspaceDir(), "data");
 }
 
 export function paths(home = chiefHome()) {
+  // 规矩是给你看、给你改的：数据在默认位置时放到工作目录最上层，不然（测试）就和数据放一起。
+  const top = home === join(workspaceDir(), "data") ? workspaceDir() : home;
   return {
     home,
     events: join(home, "events.jsonl"),
@@ -37,7 +45,7 @@ export function paths(home = chiefHome()) {
     dispatch: join(home, "dispatch.json"),
     replies: join(home, "replies.json"),
     things: join(home, "things.json"),
-    policy: join(home, "policy.json"),
+    policy: join(top, "rules.json"),
     decisions: join(home, "decisions.jsonl"),
     reviews: join(home, "reviews.json"),
     evals: join(home, "evals.json"),

@@ -1,4 +1,4 @@
-// 读 ~/.chief 里的文件，算出面板要的一份。只读文件，不起进程（除了第一次问一下 HOME）。
+// 读 ~/chief/data 里的文件（规矩在 ~/chief/rules.json），算出面板要的一份。只读文件，不起进程（除了第一次问一下 HOME）。
 import { atom, update } from 'claude-code'
 import type { EngineInterface as Engine } from 'claude-code'
 
@@ -13,16 +13,24 @@ const STALE_MS = 60_000
 export const EVAL_DAYS = 7
 
 let dir: string | null = null
+let rules: string | null = null
 
-// chief 的数据目录：CHIEF_HOME，没设就是 ~/.chief（和 chief 自己的规则一样）。chief 命令在它下面的 bin/chief。
+// chief 的数据目录：CHIEF_HOME，没设就是 ~/chief/data（和 chief 自己的规则一样）。chief 命令在它下面的 bin/chief。
 export async function chiefDir($: Engine): Promise<string> {
   if (dir === null) {
     const env = (await $.process.run(['/usr/bin/env'])).stdout.split('\n')
     const get = (k: string) => env.find(l => l.startsWith(`${k}=`))?.slice(k.length + 1).trim() ?? ''
     const custom = get('CHIEF_HOME')
-    dir = custom.startsWith('/') ? custom : `${get('HOME')}/.chief`
+    dir = custom.startsWith('/') ? custom : `${get('HOME')}/chief/data`
+    // 规矩放在工作目录最上层（data 的上一层）；CHIEF_HOME 指到别处时和数据放一起。
+    rules = custom.startsWith('/') ? `${custom}/rules.json` : `${get('HOME')}/chief/rules.json`
   }
   return dir
+}
+
+async function rulesFile($: Engine): Promise<string> {
+  await chiefDir($)
+  return rules!
 }
 
 async function readJson<T>($: Engine, path: string, fallback: T): Promise<T> {
@@ -58,7 +66,7 @@ export async function refresh($: Engine) {
     readJson<{ items: ReplyRow[] }>($, `${dir}/replies.json`, { items: [] }),
     readLines<DecisionRow>($, `${dir}/decisions.jsonl`),
     readJson<Reviews>($, `${dir}/reviews.json`, {}),
-    readJson<PolicyFile | null>($, `${dir}/policy.json`, null),
+    readJson<PolicyFile | null>($, await rulesFile($), null),
     readJson<Record<string, boolean>>($, `${dir}/sources.json`, {}),
     readJson<Snapshot['activity']>($, `${dir}/activity.json`, {}),
     readJson<Snapshot['evals']>($, `${dir}/evals.json`, { cases: [], runs: [] }),
@@ -88,9 +96,9 @@ export async function refresh($: Engine) {
   await update($, snap, () => next)
 }
 
-// policy.json 还没写过时，场景表在 chief 里有默认值：问 chief 要一份完整的。
+// rules.json 还没写过时，场景表在 chief 里有默认值：问 chief 要一份完整的。
 async function policyOf($: Engine, p: PolicyFile): Promise<PolicyFile> {
-  // 旧的 policy.json 里没有后来加的场景和「我加的情况」：问 chief 要一份补全的。
+  // 旧的 rules.json 里没有后来加的场景和「我加的情况」：问 chief 要一份补全的。
   if (Object.keys(p.scenarios ?? {}).length > 0 && p.custom !== undefined && 'slack_self' in p.scenarios) return { scenarios: p.scenarios, custom: p.custom, notes: p.notes ?? [], proposals: p.proposals ?? [] }
   return fullPolicy($)
 }

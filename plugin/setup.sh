@@ -1,9 +1,10 @@
 #!/bin/sh
-# chief 设置页的「装引擎 / 更新引擎」：把插件里的引擎代码放到 ~/.chief/app，装依赖，装进 launchd。
+# chief 设置页的「装引擎 / 更新引擎」：建工作目录 ~/chief，把插件里的引擎代码放到 ~/chief/data/app，装依赖，装进 launchd。
 # 放到插件外面，是因为插件每升一版目录就换一个，launchd 要一个不变的位置。
 set -eu
 PLUGIN=$(cd "$(dirname "$0")" && pwd)
-DATA=${CHIEF_HOME:-$HOME/.chief}
+WS=$HOME/chief
+DATA=${CHIEF_HOME:-$WS/data}
 APP=$DATA/app
 
 # App 起的进程 PATH 不全：先问登录 shell，再看 Homebrew 的常见位置。
@@ -30,7 +31,6 @@ sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' "$PLUGIN/.claude-plugin/plugin.json"
 
 # 工作目录：消息中心开在这里，放你的交代（CLAUDE.md）、助理记下的东西（notes/）和自己的 skill。
 # 只补没有的文件，已有的一个字都不动。
-WS=$HOME/chief
 echo "工作目录 ${WS}（已有的文件不动）"
 (cd "$PLUGIN/workspace" && find . -type f) | while IFS= read -r f; do
   if [ ! -e "$WS/$f" ]; then mkdir -p "$WS/$(dirname "$f")"; cp "$PLUGIN/workspace/$f" "$WS/$f"; fi
