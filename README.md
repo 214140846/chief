@@ -19,7 +19,7 @@ Slack（推送） / GitHub、Jira、Notion（每 5 分钟拉一次）
 1. 装插件：
 
    ```bash
-   claude plugin marketplace add <这个仓库的地址或本地目录>
+   claude plugin marketplace add jinjin99/chief
    claude plugin install chief@chief --scope user
    ```
 
@@ -31,6 +31,18 @@ Slack（推送） / GitHub、Jira、Notion（每 5 分钟拉一次）
 
 插件更新后，设置页会提示「更新引擎」，点一下就好。
 
+## 工作目录 ~/chief
+
+装引擎时会建一个 `~/chief`，消息中心就开在这里（新建会话时文件夹选它）：
+
+| 路径 | 是什么 |
+| --- | --- |
+| `CLAUDE.md` | 你写给助理的长期交代：你是谁、常用仓库、说话习惯、别碰的事 |
+| `notes/` | 助理记下的东西：谁是谁（`people.md`）、哪类事在哪个目录办（`projects.md`） |
+| `.claude/skills/` | 只给消息中心用的 skill |
+
+会话固定开在这里，Claude 自带的记忆也跟着固定下来。这些文件都归你，插件更新只补缺的，不覆盖。
+
 ## 目录
 
 | 路径 | 是什么 |
@@ -40,6 +52,7 @@ Slack（推送） / GitHub、Jira、Notion（每 5 分钟拉一次）
 | `plugin/skills/hub/` | 消息中心 skill（`/chief:hub`） |
 | `plugin/engine/` | 后台引擎和 `chief` 命令行（TypeScript，tsx 直接跑） |
 | `plugin/setup.sh` | 设置页「装引擎」跑的脚本 |
+| `plugin/workspace/` | 工作目录 `~/chief` 的初始文件 |
 
 数据都在 `~/.chief`，密钥在 macOS 钥匙串（`chief:slack.cookie_d`、`chief:notion.token`）。
 

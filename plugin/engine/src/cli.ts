@@ -1316,6 +1316,7 @@ async function doctor(): Promise<void> {
       notion: { enabled: enabled.notion === true, ready: await secrets.has(SECRET.notion) },
     },
     hub: hubAlive(),
+    workspace: { path: join(homedir(), "chief"), ready: existsSync(join(homedir(), "chief", "CLAUDE.md")) },
   };
   process.stdout.write(`${JSON.stringify(out)}\n`);
 }
