@@ -4,15 +4,14 @@
 //   进度：每件事做到哪了、下一步、卡在哪、结果、截止日；导入你手上的事、问一遍进展。
 //   策略：每种消息怎么办、回复要不要你确认、你的规矩、主会话提议的规矩。
 //   测评：最近 7 天判断了多少、打扰你几次、准不准、稿子能不能原样用；每条判断能标对错。
-//   控制：主会话、引擎、来源的开关，看日志，发测试消息。
-//   设置：装引擎、登录 Slack、连 GitHub / Jira、开消息中心（setup.tsx）。引擎还没装时面板只有这一页。
+//   设置：主会话、后台引擎、来源（登录 / 连上 / 断开）、插电不睡、试一下（setup.tsx）。引擎还没装时面板只有这一页。
 // 数据直接读 ~/chief/data 里的文件（data.ts，每 3 秒一次）；动作在 actions.ts；画法在 views.tsx。
 import { atom, read } from 'claude-code'
 import type { EngineInterface as Engine, Register } from 'claude-code'
 
 import { refresh, chiefDir } from './data'
 import { checkSetup, missing, readSetup, setupTab } from './setup'
-import { controlTab, evalTab, header, nowTab, outboxTab, policyTab, thingsTab, type Els } from './views'
+import { evalTab, header, nowTab, outboxTab, policyTab, thingsTab, type Els } from './views'
 
 const snap = atom({ plugin: 'chief', key: 'snap' } as const, null)
 const note = atom({ plugin: 'chief', key: 'note' } as const, '')
@@ -72,7 +71,7 @@ async function openPane($: Engine) {
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
-    await $.command.register({ name: 'chief', description: '打开 chief 面板：要你定的事、待发出、进度、策略、测评、控制、设置' })
+    await $.command.register({ name: 'chief', description: '打开 chief 面板：要你定的事、待发出、进度、策略、测评、设置' })
     return next(e)
   })
 
@@ -103,7 +102,7 @@ async function draw($: Engine, ui: Els) {
   {
     void startRefresh($)
     const st = await readSetup($)
-    if (!st.installed) return <Box flexDirection="column" padding="sm">{setupTab($, ui, st)}</Box>
+    if (!st.installed) return <Box flexDirection="column" padding="sm">{setupTab($, ui, st, null)}</Box>
     const s = await read($, snap)
     if (s === null) return <Text dimColor>正在读 chief…</Text>
     const current = await read($, tab)
@@ -113,8 +112,8 @@ async function draw($: Engine, ui: Els) {
       : current === 'things' ? thingsTab($, ui, s, opened)
       : current === 'policy' ? policyTab($, ui, s, opened)
       : current === 'eval' ? evalTab($, ui, s, opened)
-      : current === 'control' ? controlTab($, ui, s, await read($, logs))
-      : current === 'setup' ? setupTab($, ui, st)
+      // 原来的「控制」页并进了「设置」：上次停在控制页的也到设置页。
+      : current === 'setup' || (current as string) === 'control' ? setupTab($, ui, st, s, await read($, logs))
       : nowTab($, ui, s, opened, await read($, edits))
     return (
       <Box flexDirection="column" padding="sm">

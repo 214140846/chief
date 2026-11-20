@@ -192,8 +192,8 @@ test('面板：主会话状态、要你定、待发出；按钮各做各的', as
   expect(runs.some(r => r.argv.slice(1).join(' ') === 'review 2 wrong' && r.stdin === 'Alice 在问我负责的部分，要派活')).toBe(true)
   expect(prompts.at(-1)).toBe('chief：判断 #2 错了：Alice 在问我负责的部分，要派活')
 
-  // 控制：脚本都变成按钮。
-  await ui.press({ key: 'tab-control' })
+  // 设置（原来的控制页也在这）：脚本都变成按钮。
+  await ui.press({ key: 'tab-setup' })
   // 来源连不上：标红，写出为什么。
   expect(await ui.find({ type: 'Text', text: /连不上（连着 1 次）/ })).toBeTruthy()
   expect(await ui.find({ type: 'Text', text: /check your internet connection/ })).toBeTruthy()
@@ -206,7 +206,7 @@ test('面板：主会话状态、要你定、待发出；按钮各做各的', as
   await ui.input({ key: 'test-msg', text: 'OPS-35121 的报告今天能给吗' })
   expect(runs.some(r => r.argv.slice(1).join(' ') === 'test --from 测试同事' && r.stdin === 'OPS-35121 的报告今天能给吗')).toBe(true)
   await ui.press({ key: 'cn-jira' })
-  expect(runs.at(-1)?.argv.slice(1).join(' ')).toBe('connect jira')
+  expect(runs.some(r => r.argv.slice(1).join(' ') === 'connect jira')).toBe(true)
   await ui.unmount()
 })
 

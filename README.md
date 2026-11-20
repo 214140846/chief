@@ -50,7 +50,7 @@ Slack（推送） / GitHub、Jira、Notion（每 5 分钟拉一次）
 | 路径 | 是什么 |
 | --- | --- |
 | `plugin/` | 插件本体 |
-| `plugin/hooks/` | 面板（`/chief`）：现在要你 / 待发出 / 进度 / 策略 / 测评 / 控制 / 设置 |
+| `plugin/hooks/` | 面板（`/chief`）：现在要你 / 待发出 / 进度 / 策略 / 测评 / 设置 |
 | `plugin/skills/hub/` | 消息中心 skill（`/chief:hub`） |
 | `plugin/engine/` | 后台引擎和 `chief` 命令行（TypeScript，tsx 直接跑） |
 | `plugin/setup.sh` | 设置页「装引擎」跑的脚本 |
