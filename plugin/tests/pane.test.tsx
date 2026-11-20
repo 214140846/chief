@@ -305,3 +305,41 @@ test('引擎和插件一样新：什么都不做', async ($, on) => {
   expect(w.runs.some(r => r.endsWith('/setup.sh'))).toBe(false)
   expect(w.toasts).toEqual([])
 })
+
+test('设置页：没记过 Slack 工作区时先问一句，填了从工作区登，留空也能登', async ($, on) => {
+  const runs: string[] = []
+  const doctor = {
+    version: '0.2.0', node: 'v24.0.0', engine: 'running', chrome: true,
+    sources: { slack: { enabled: false, ready: false }, github: { enabled: false, tool: true, ok: true, detail: '' }, jira: { enabled: false, tool: true, ok: true, detail: '' }, notion: { enabled: false, ready: false } },
+    hub: { listening: false, lastAt: null }, awake: true, slackWorkspace: null, workspace: { path: '/Users/me/chief', ready: true },
+  }
+  on('command.register', () => ({ value: { command: 'chief' } }))
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('clock.every', () => ({ value: { cancel: () => {} } }))
+  on('ui.toast', () => ({ value: undefined }))
+  on('fs.read', (_, e) => {
+    if (e.path === '/Users/me/chief/data/bin/chief') return { value: '#!/bin/sh' }
+    if (e.path.endsWith('/.claude-plugin/plugin.json')) return { value: JSON.stringify({ version: '0.2.0' }) }
+    if (e.path === '/Users/me/chief/data/app/VERSION') return { value: '0.2.0' }
+    throw new Error('missing')
+  })
+  on('process.run', (_, e) => {
+    const cmd = e.argv.join(' ')
+    runs.push(cmd)
+    if (e.argv[0] === '/usr/bin/env') return { value: { exitCode: 0, stdout: 'HOME=/Users/me\nPATH=/usr/bin\n', stderr: '' } }
+    if (cmd.endsWith(' doctor')) return { value: { exitCode: 0, stdout: JSON.stringify(doctor), stderr: '' } }
+    return { value: { exitCode: 0, stdout: '', stderr: '' } }
+  })
+
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+  await $.command.run({ command: 'chief', args: '' })
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  await ui.press({ key: 'tab-setup' })
+  expect(await ui.find({ key: 'setup-slack' })).toBeFalsy()
+  await ui.input({ key: 'slack-workspace', text: 'acme' })
+  expect(runs).toContain('/Users/me/chief/data/bin/chief connect slack --workspace acme')
+  await ui.input({ key: 'slack-workspace', text: '' })
+  expect(runs).toContain('/Users/me/chief/data/bin/chief connect slack')
+  await ui.unmount()
+})
