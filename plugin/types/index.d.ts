@@ -10,6 +10,8 @@ export type ReplyRow = {
   target: Record<string, string>
   context: { who: string | null; where: string; said: string; url: string | null }
   body: string
+  // 附的图（只有 Slack）：正文发完发到同一个地方。file 是复制进 drafts/images 后的路径。
+  images?: { file: string; name: string; bytes: number; mime: string }[]
   original?: string
   status: 'pending' | 'queued' | 'sending' | 'sent' | 'failed' | 'dropped' | 'redo'
   by?: 'you' | 'policy'

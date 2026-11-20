@@ -34,6 +34,7 @@ import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { archiveOld, archivedEvent } from "./archive";
 import { Engine, SECRET } from "./engine";
+import { MAX_IMAGES, takeImage, type ReplyImage } from "./images";
 import { KEY, keysOf } from "./keys";
 import { type ChildProcess, spawn } from "node:child_process";
 import { LABEL, bootout, bootstrap, kickstart, plistPath, renderPlist, serviceState } from "./launchd";
@@ -62,6 +63,26 @@ const MAX_TEXT_IN_STREAM = 1500;
 function fail(message: string): never {
   process.stderr.write(`${message}\n`);
   process.exit(1);
+}
+
+// 能写好几次的参数（--image a.png --image b.png）：按顺序全拿出来。
+function flags(args: string[], name: string): string[] {
+  const out: string[] = [];
+  for (let v = flag(args, name); v !== null; v = flag(args, name)) out.push(v);
+  return out;
+}
+
+// --image：检查、复制进 drafts/images，返回记录；不是图片、太大、太多都直接拒收。
+function imagesOf(files: string[]): ReplyImage[] {
+  if (files.length > MAX_IMAGES) fail(`一条回复最多 ${MAX_IMAGES} 张图`);
+  const prefix = `${Date.now()}-${process.pid}`;
+  return files.map((p, i) => {
+    try {
+      return takeImage(resolve(p), join(paths().drafts, "images"), `${prefix}-${i + 1}`);
+    } catch (error) {
+      fail(error instanceof Error ? error.message : String(error));
+    }
+  });
 }
 
 function flag(args: string[], name: string): string | null {
@@ -1017,6 +1038,10 @@ async function reply(args: string[]): Promise<void> {
     // --in thread|inline：这一条要不要放 thread（不写就按规矩里这种对话的默认）。
     const place = flag(args, "--in");
     if (place !== null && place !== "thread" && place !== "inline") fail("--in 是 thread 或 inline");
+    // --image：附图，只有 Slack 能发（GitHub、Jira 的评论 chief 只发文字）。
+    const imagePaths = flags(args, "--image");
+    if (imagePaths.length > 0 && event.source !== "slack") fail(`只有 Slack 的回复能附图；${event.source} 的回复只发文字`);
+    const images = imagesOf(imagePaths);
     const r = updateReplies((all) => {
       // 同一条消息只留一份待确认的稿子：新稿子替掉旧的。
       for (const old of all.items) if (old.event === event.id && old.status === "pending") old.status = "dropped";
@@ -1024,6 +1049,7 @@ async function reply(args: string[]): Promise<void> {
         id: all.nextId++, event: event.id, source: event.source, target: { ...event.reply, ...(place ? { in: place } : {}) }, body, status: "pending", at: new Date().toISOString(),
         context: { who: event.from, where: event.title, said: event.text.slice(0, 2000), url: event.url },
         ...(thingId !== null ? { thing: thingId } : {}),
+        ...(images.length > 0 ? { images } : {}),
       };
       all.items.push(x);
       return x;
@@ -1073,11 +1099,13 @@ async function reply(args: string[]): Promise<void> {
     const thingFlag = flag(args, "--thing");
     const thingId = thingFlag === null ? null : num(thingFlag, "--thing ");
     const body = draftText(flag(args, "--file") ?? fail("要 --file <drafts 里的文件>"));
+    const images = imagesOf(flags(args, "--image"));
     const r = updateReplies((all) => {
       const x: Reply = {
         id: all.nextId++, kind: "message", event: 0, source: "slack", target: { to, ...(thread ? { thread_ts: thread } : {}) }, body, status: "pending", at: new Date().toISOString(),
         context: { who: name, where: thread ? "回到帖子的 thread" : /^[CG]/.test(to) ? "发到频道" : "新私信", said: "", url: link ? raw : null },
         ...(thingId !== null ? { thing: thingId } : {}),
+        ...(images.length > 0 ? { images } : {}),
       };
       all.items.push(x);
       return x;

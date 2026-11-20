@@ -21,6 +21,7 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmdirSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
+import type { ReplyImage } from "./images";
 
 // 工作目录：消息中心开在这里；你的交代、规矩、笔记、skill 和 chief 的数据都放在里面。
 export function workspaceDir(): string {
@@ -231,6 +232,8 @@ export interface Reply {
   // 给你看的：回谁、在哪、对方原话（发出前你要知道在回什么）。
   context: { who: string | null; where: string; said: string; url: string | null };
   body: string;
+  // 附的图（只有 Slack）：先发正文，再把图发到同一个地方。收下时已经复制进 drafts/images（见 images.ts）。
+  images?: ReplyImage[];
   // 工作会话最初写的稿子（你改过才有，测评看你改了多少）。
   original?: string;
   // pending：等你确认；queued：你点了发送，sendAt 之前还能撤回；sending：引擎正在发；sent：发出去了；failed：没发出去（error）；
