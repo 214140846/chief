@@ -1,5 +1,6 @@
 // Slack 浏览器登录：开一个独立的 Chrome 窗口（全新的临时配置），你在里面自己登录；
-// 等 .slack.com 的 d Cookie 出现、并且确实能用，就关窗口、删临时配置，把 Cookie 交回去。Cookie 不打印。
+// 等窗口真的进了 Slack（看得到消息列表）、d Cookie 稳定几秒不再变、并且确实能用，才关窗口、删临时配置，把 Cookie 交回去。
+// 不能一拿到能用的 Cookie 就关：公司 SSO、新设备确认还没走完时 Slack 会先发一个临时的，走完前关窗口，它过一会儿就作废了。Cookie 不打印。
 // 思路和 gabriel-slack 的 browserLogin 一样（它没导出），这里只用 Node 自带的 fetch / WebSocket，不加依赖。
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
@@ -15,6 +16,8 @@ const CHROME = [
 ];
 const SIGNIN_URL = "https://slack.com/signin";
 const TIMEOUT_MS = 5 * 60_000;
+// 进了 Slack 以后 Cookie 要连着这么久不变才算登好。
+const STABLE_MS = 5_000;
 
 interface Cookie {
   name: string;
@@ -34,6 +37,13 @@ async function usable(cookie: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+// 窗口里的页面是不是已经进了 Slack：网页版主界面（app.slack.com/client/…、<工作区>.slack.com/client|messages|archives/…），
+// 或者「在浏览器里打开 / 打开桌面版」那一页（ssb/redirect）。登录页、SSO 页、确认新设备的页面都不算。
+export function signedIn(url: string): boolean {
+  return /^https:\/\/app\.slack\.com\/client\//.test(url)
+    || /^https:\/\/[a-z0-9-]+(\.enterprise)?\.slack\.com\/(client|messages|archives|ssb\/redirect)(\/|\?|$)/i.test(url);
 }
 
 function slackCookie(cookies: Cookie[]): string | null {
@@ -56,20 +66,27 @@ export async function browserLogin(opts: { log?: (line: string) => void; timeout
   const closed = new Promise<void>((resolve) => proc.once("exit", () => resolve()));
   let ws: WebSocket | null = null;
   try {
-    log("开了一个 Slack 登录窗口：在里面登录，登好会自己关掉。");
+    log("开了一个 Slack 登录窗口：在里面登录，一直登到看得到 Slack 的消息列表（要确认新设备的照做），窗口会自己关掉。");
     const url = await debuggerUrl(profile, proc);
     ws = await open(url);
     const call = rpc(ws);
     const deadline = Date.now() + (opts.timeoutMs ?? TIMEOUT_MS);
-    let tried = "";
+    let seen = "";
+    let since = 0;
     while (Date.now() < deadline) {
       if (proc.exitCode !== null || proc.signalCode !== null) throw new Error("登录窗口被关掉了，没登上");
+      const { targetInfos } = await call<{ targetInfos?: { type: string; url: string }[] }>("Target.getTargets");
+      const inSlack = (targetInfos ?? []).some((t) => t.type === "page" && signedIn(t.url));
       const { cookies } = await call<{ cookies?: Cookie[] }>("Storage.getCookies");
-      const cookie = slackCookie(cookies ?? []);
-      // 同一个 Cookie 只验一次；SSO 跳转中途可能先出现一个还不能用的。
-      if (cookie && cookie !== tried) {
-        tried = cookie;
-        if (await usable(cookie)) return cookie;
+      const cookie = inSlack ? slackCookie(cookies ?? []) : null;
+      if (cookie === null) {
+        seen = "";
+      } else if (cookie !== seen) {
+        // 进了 Slack 又换了 Cookie：从头等它稳下来。
+        seen = cookie;
+        since = Date.now();
+      } else if (Date.now() - since >= STABLE_MS && (await usable(cookie))) {
+        return cookie;
       }
       await sleep(1000);
     }

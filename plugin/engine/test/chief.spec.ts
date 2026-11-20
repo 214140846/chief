@@ -555,3 +555,18 @@ describe("插电时不让电脑睡", () => {
     expect(chiefFails(h, "awake", "maybe")).toContain("chief awake");
   });
 });
+
+describe("Slack 登录窗口", () => {
+  it("进了 Slack 才算登好；登录页、SSO、确认新设备都不算", async () => {
+    const { signedIn } = await import("../src/slack/login");
+    expect(signedIn("https://app.slack.com/client/T0123/C0456")).toBe(true);
+    expect(signedIn("https://acme.slack.com/messages/C0456")).toBe(true);
+    expect(signedIn("https://acme.slack.com/ssb/redirect")).toBe(true);
+    expect(signedIn("https://acme.enterprise.slack.com/archives/C0456/p1")).toBe(true);
+    expect(signedIn("https://slack.com/signin")).toBe(false);
+    expect(signedIn("https://acme.slack.com/sso/saml/start")).toBe(false);
+    expect(signedIn("https://slack.com/workspace-signin")).toBe(false);
+    expect(signedIn("https://acme.slack.com/checkcookie?redir=https://app.slack.com/client")).toBe(false);
+    expect(signedIn("https://evil.com/?u=https://app.slack.com/client/T1")).toBe(false);
+  });
+});
