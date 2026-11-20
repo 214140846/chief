@@ -155,6 +155,7 @@ description: chief 消息中心，用户的私人助理主会话。在 Claude Ap
      3. GitHub 事件按 `reply.ref` 的仓库名找本地的目录；Jira 和 Slack 按原文里提到的仓库、PR 链接、服务名找；也可以参考同一工单前缀以前开在哪个目录（`chief thing list --all` 和对应表）。
      4. 还拿不准：`chief ask add` 问用户「#N 开在哪个目录」（列出你觉得最像的两三个），先 `chief mark N asked`；用户答了再开会话，并在 `notes/projects.md` 补一行「<这类事> → <目录>」，下次同类的不用再问。
    - 会话标题：一句话说清这件事，比如「PROJ-479 接口加字段」。
+   - **开好马上 `detach_session`**（会话编号用 `start_session` 返回的那个），把它移到侧边栏顶层，和用户自己开的会话平铺在一起，不挂在本会话下面；本会话以后归档也不会连带它。移走以后 App 不再在它每轮结束时通知你，进度照旧靠它用 `send_message` 发来的「chief 进展 / 要你定 / 回复 / 完成」。`detach_session` 失败或看不到这个工具，不影响派活，照常往下走，只在汇报里提一句「会话挂在消息中心下面了」。
 
 送出去用 `send_message`，开新会话时作为第一句话。内容照下面的「转交内容」写。送完：
 
