@@ -270,6 +270,25 @@ describe("停下和交代", () => {
   });
 });
 
+describe("后来加的场景", () => {
+  it("老的 rules.json 没有 PR 被 approve / 要求修改：chief rules 补上，原来改过的不动", () => {
+    const h = home();
+    chief(h, "rules", "set", "github_comment", "handle=note");
+    const file = join(h, "rules.json");
+    const old = JSON.parse(readFileSync(file, "utf8")) as { scenarios: Record<string, unknown> };
+    delete old.scenarios.github_approved;
+    delete old.scenarios.github_changes;
+    writeFileSync(file, JSON.stringify(old));
+    const p = JSON.parse(chief(h, "rules", "json")) as { scenarios: Record<string, { handle: string; brief?: string }> };
+    expect(p.scenarios.github_approved).toMatchObject({ handle: "dispatch" });
+    expect(p.scenarios.github_comment?.handle).toBe("note");
+    const onDisk = JSON.parse(readFileSync(file, "utf8")) as { scenarios: Record<string, { handle: string }> };
+    expect(onDisk.scenarios.github_changes).toMatchObject({ handle: "dispatch" });
+    expect(onDisk.scenarios.github_comment?.handle).toBe("note");
+    expect(chief(h, "rules")).toContain("我的 PR 被 approve 了（github_approved）：派人去办");
+  });
+});
+
 describe("导入", () => {
   it("导入的事情带键，按键能找到；办完的找不到", () => {
     const h = home();
@@ -568,5 +587,19 @@ describe("Slack 登录窗口", () => {
     expect(signedIn("https://slack.com/workspace-signin")).toBe(false);
     expect(signedIn("https://acme.slack.com/checkcookie?redir=https://app.slack.com/client")).toBe(false);
     expect(signedIn("https://evil.com/?u=https://app.slack.com/client/T1")).toBe(false);
+  });
+});
+
+describe("GitHub 上不报的机器人", () => {
+  const run = (h: string, input: string, ...args: string[]) =>
+    execFileSync(process.execPath, ["--import", TSX, CLI, ...args], { env: { ...process.env, CHIEF_HOME: h }, encoding: "utf8", input, stdio: ["pipe", "pipe", "pipe"] });
+  it("chief rules bot add / remove：名单记在规矩里，登录名不对拒收", () => {
+    const h = home();
+    expect(run(h, "Acme-Review", "rules", "bot", "add")).toContain("acme-review");
+    expect((JSON.parse(chief(h, "rules", "json")) as { bots: string[] }).bots).toEqual(["acme-review"]);
+    expect(chief(h, "rules")).toContain("- acme-review");
+    expect(() => run(h, "not a login; rm -rf", "rules", "bot", "add")).toThrow();
+    run(h, "acme-review", "rules", "bot", "remove");
+    expect((JSON.parse(chief(h, "rules", "json")) as { bots: string[] }).bots).toEqual([]);
   });
 });

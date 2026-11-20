@@ -71,7 +71,7 @@ export async function buildSources(enabled: Enabled, secrets: SecretStore): Prom
   const out: Source[] = [];
   if (enabled.github) {
     const gh = findGh();
-    if (gh) out.push(new GitHubSource(ghRunner(gh)));
+    if (gh) out.push(new GitHubSource(ghRunner(gh), () => loadPolicy().bots));
     else log("[github] 没找到 gh，跳过");
   }
   if (enabled.jira) {

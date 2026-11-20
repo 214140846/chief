@@ -1,6 +1,7 @@
 // 照搬 aide 的 engine/src/sources/github.ts（只留拉动态和评论）。
 // GitHub：用你本机已经登录的 gh（chief 不存任何 GitHub 令牌）。
-// 拉跟你有关的 PR 和 issue（involves:@me，加上请你 review 的）在 since 之后的变化：状态、合并、新评论。拉动态只发 GET。
+// 拉跟你有关的 PR 和 issue（involves:@me，加上请你 review 的）在 since 之后的变化：状态、合并、新评论；
+// PR 还要另外拉 review（approve / 要求修改 / review 总评）和代码行上的评论，这些不在 issue 评论里。拉动态只发 GET。
 // 写（PR / issue 上评论）只在你对消息中心说了「发 N」之后由 `chief reply send` 调用。
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
@@ -11,6 +12,12 @@ import { SourceError, escapeRe, plain, type Ask, type Source, type SourceItem } 
 const GH_PATHS = ["/opt/homebrew/bin/gh", "/usr/local/bin/gh", "/usr/bin/gh"];
 const MAX_ITEMS = 50;
 const MAX_COMMENTS = 5;
+// PR 的 review 按时间从旧到新给、不能按时间筛：一页 100 条，最多翻这么多页（每条代码行评论的回复也算一个 review）。
+const MAX_REVIEW_PAGES = 5;
+// 报过的 review、代码行评论记这么多条（引擎重启就清空，靠 since 兜底）。
+const MAX_REPORTED = 5000;
+// 算数的 review：PENDING 是没提交的草稿，DISMISSED 是作废了的。
+const REVIEW_STATES = new Set(["APPROVED", "CHANGES_REQUESTED", "COMMENTED"]);
 // owner/repo#123 或 GitHub 上 PR / issue 的地址。
 const REF = /^(?:https?:\/\/github\.com\/)?([\w.-]{1,100})\/([\w.-]{1,100})(?:\/(?:pull|issues)\/|#)(\d{1,9})\/?$/;
 
@@ -46,11 +53,40 @@ interface SearchItem {
   repository_url: string; user?: { login?: string }; pull_request?: { merged_at?: string | null };
   assignees?: { login?: string }[];
 }
-interface Comment { user?: { login?: string; type?: string }; body?: string; created_at?: string }
+interface Who { user?: { login?: string; type?: string } }
+interface Comment extends Who { body?: string; created_at?: string }
+interface Review extends Who { id?: number; body?: string; state?: string; submitted_at?: string }
+interface LineComment extends Comment { id?: number; path?: string; line?: number | null; original_line?: number | null }
 
-// 机器人（sonarqube、CI、dependabot……）的评论不算动态。
-function isBot(c: Comment): boolean {
-  return c.user?.type === "Bot" || /\[bot\]$|-bot$|^bot-/i.test(c.user?.login ?? "");
+// 机器人（sonarqube、CI、dependabot、AI 代码评审……）的评论、review 不算动态。
+// 注册成普通用户（type 是 User）的机器人账号（比如公司的 AI 代码评审）认不出来：写在你的规矩里（chief rules bot add），bots 是小写的登录名。
+function isBot(c: Who, bots: ReadonlySet<string>): boolean {
+  const login = c.user?.login ?? "";
+  return c.user?.type === "Bot" || /\[bot\]$|-bot$|^bot-/i.test(login) || bots.has(login.toLowerCase());
+}
+
+// 一条拿不到（GitHub 偶尔回 422、没权限）不影响别的：拿不到就当没有。
+async function orNone<T>(signal: AbortSignal, get: () => Promise<T[]>): Promise<T[]> {
+  try {
+    return await get();
+  } catch (error) {
+    if (signal.aborted) throw error;
+    return [];
+  }
+}
+
+// 一个 review 给人看的一句：谁 approve 了 / 要求修改 / 留了 review。
+function reviewLine(r: Review): string {
+  const who = r.user?.login ?? "某人";
+  const body = plain(r.body ?? "", 200);
+  if (r.state === "APPROVED") return `${who} approve 了${body ? `：${body}` : ""}`;
+  if (r.state === "CHANGES_REQUESTED") return `${who} 要求修改${body ? `：${body}` : ""}`;
+  return `${who} 留了 review：${body}`;
+}
+
+function lineCommentLine(c: LineComment): string {
+  const line = c.line ?? c.original_line;
+  return `${c.user?.login ?? "某人"} 在 ${plain(c.path ?? "?", 120)}${line ? `:${line}` : ""}：${plain(c.body ?? "", 200)}`;
 }
 
 export class GitHubSource implements Source {
@@ -60,10 +96,14 @@ export class GitHubSource implements Source {
   // 每个 PR / issue 上次报过的状态：没变、又只有机器人评论的，不再报。
   private readonly seen = new Map<string, string>();
 
+  // 报过的 review、代码行评论（review:编号 / line:编号）：since 有重叠、PR 又有别的动静时，同一个不再报。
+  private readonly reported = new Set<string>();
+
   // 你在 GitHub 上的账号（检查、第一次拉取时记下）。主会话用它认出哪些 PR 是你的。
   private login: string | null = null;
 
-  constructor(private readonly gh: GhRunner) {}
+  // bots：每次拉的时候现问一遍你规矩里的机器人名单，改了不用重启。
+  constructor(private readonly gh: GhRunner, private readonly bots: () => readonly string[] = () => []) {}
 
   whoami(): string | null {
     return this.login;
@@ -81,6 +121,7 @@ export class GitHubSource implements Source {
 
   async poll(since: Date, signal: AbortSignal): Promise<SourceItem[]> {
     if (!this.login) await this.check(signal);
+    const bots = new Set(this.bots().map((b) => b.toLowerCase()));
     const day = since.toISOString().replace(/\.\d{3}Z$/, "Z");
     const found = new Map<string, SearchItem>();
     // 两个搜索分开算：一个偶尔被 GitHub 拒（11/16 遇到过一次 422），另一个照样拉；都失败才算这次拉取出错。
@@ -105,45 +146,88 @@ export class GitHubSource implements Source {
     for (const it of [...found.values()].sort((a, b) => a.updated_at.localeCompare(b.updated_at))) {
       const repo = it.repository_url.split("/repos/")[1] ?? "?";
       const pr = it.pull_request !== undefined;
-      let comments: Comment[] = [];
-      if (it.comments > 0) {
-        // 一条拿不到评论（GitHub 偶尔回 422、没权限）不影响别的：这条先不带评论。
-        try {
-          const raw = await this.gh(["api", "-X", "GET", `repos/${repo}/issues/${it.number}/comments`, "-f", `since=${day}`, "-f", "per_page=30"], signal);
-          comments = (JSON.parse(raw) as Comment[]).filter((c) => !isBot(c)).slice(-MAX_COMMENTS);
-        } catch (error) {
-          if (signal.aborted) throw error;
-        }
-      }
+      // 一条拿不到评论不影响别的：这条先不带评论。
+      const comments = it.comments > 0
+        ? (await orNone(signal, async () => JSON.parse(await this.gh(["api", "-X", "GET", `repos/${repo}/issues/${it.number}/comments`, "-f", `since=${day}`, "-f", "per_page=30"], signal)) as Comment[]))
+          .filter((c) => !isBot(c, bots)).slice(-MAX_COMMENTS)
+        : [];
+      const me = this.login;
+      const byMe = (x: Who): boolean => me !== null && x.user?.login === me;
+      const fresh = (t: string | undefined): boolean => t !== undefined && Date.parse(t) >= since.getTime();
+      // PR 上 since 之后提交的 review、新写的代码行评论（不算机器人的）。
+      const allReviews = pr
+        ? (await orNone(signal, () => this.reviewsOf(repo, it.number, signal))).filter((r) => fresh(r.submitted_at) && REVIEW_STATES.has(r.state ?? "") && !isBot(r, bots))
+        : [];
+      const allLines = pr
+        ? (await orNone(signal, async () => JSON.parse(await this.gh(["api", "-X", "GET", `repos/${repo}/pulls/${it.number}/comments`, "-f", `since=${day}`, "-f", "per_page=100"], signal)) as LineComment[]))
+          .filter((c) => fresh(c.created_at) && !isBot(c, bots))
+        : [];
+      // 报的只是别人的、没报过的。只有代码行评论、没写总评的 review（COMMENTED 又没正文）不单算，它的评论在 lines 里。
+      const reviews = allReviews.filter((r) => !byMe(r) && (r.state !== "COMMENTED" || (r.body ?? "").trim() !== "") && this.firstTime(`review:${r.id}`));
+      const lines = allLines.filter((c) => !byMe(c) && this.firstTime(`line:${c.id}`));
       const state = pr ? (it.pull_request?.merged_at ? "已合并" : it.state === "open" ? "开着" : "已关闭（没合并）") : it.state === "open" ? "开着" : "已关闭";
-      // 状态没变、也没有人（不是机器人）的新评论：只是 CI、机器人、推了新提交，不报。第一次见到的照报。
+      // 状态没变、也没有人（不是机器人）的新评论、新 review：只是 CI、机器人、推了新提交，不报。第一次见到的照报。
       const before = this.seen.get(it.html_url);
       this.seen.set(it.html_url, state);
-      if (before === state && comments.length === 0) continue;
+      if (before === state && comments.length === 0 && reviews.length === 0 && lines.length === 0) continue;
       const said = comments.map((c) => `${c.user?.login ?? "某人"}：${plain(c.body ?? "", 200)}`).join("；");
-      const me = this.login;
+      const reviewed = reviews.slice(-MAX_COMMENTS).map(reviewLine).join("；");
+      const onLines = lines.slice(-MAX_COMMENTS).map(lineCommentLine).join("；");
       const atMe = me !== null ? new RegExp(`@${escapeRe(me)}\\b`, "i") : null;
+      // 别人说的话：issue 评论、review、代码行评论。
+      const others = me === null ? [] : [...comments.filter((c) => !byMe(c)), ...reviews, ...lines];
       const mine = me !== null && (it.user?.login === me
-        || comments.some((c) => c.user?.login === me || atMe!.test(c.body ?? "")));
-      // 有人找你：请你 review（第一次见到时）、别人的评论里 @ 了你、别人评论了你开的。
-      const others = me === null ? [] : comments.filter((c) => c.user?.login !== me);
+        || comments.some((c) => byMe(c) || atMe!.test(c.body ?? ""))
+        || allReviews.some(byMe) || allLines.some(byMe) || others.some((c) => atMe!.test(c.body ?? "")));
+      // 有人找你：请你 review（第一次见到时）、别人 @ 了你；你开的 PR 被要求修改、被 approve、有人评论。
       const asks: Ask[] = [];
       if (requested.has(it.html_url) && it.state === "open" && before === undefined) asks.push("review");
-      if (others.some((c) => atMe?.test(c.body ?? ""))) asks.push("mention");
-      else if (me !== null && it.user?.login === me && others.length > 0) asks.push("comment");
+      const mention = others.some((c) => atMe?.test(c.body ?? ""));
+      if (mention) asks.push("mention");
+      if (me !== null && it.user?.login === me) {
+        // 每个人看他这次最后的表态：先要求修改、后来 approve 了的，算 approve。
+        const verdict = new Map<string, string>();
+        for (const r of reviews) if (r.state !== "COMMENTED") verdict.set(r.user?.login ?? "?", r.state!);
+        if ([...verdict.values()].includes("CHANGES_REQUESTED")) asks.push("changes");
+        if ([...verdict.values()].includes("APPROVED")) asks.push("approved");
+        const talked = comments.some((c) => !byMe(c)) || lines.length > 0 || reviews.some((r) => r.state === "COMMENTED");
+        if (!mention && talked) asks.push("comment");
+      }
       items.push({
         externalId: `${it.html_url}@${it.updated_at}`,
         kind: pr ? "github.pr" : "github.issue",
         title: `${repo}#${it.number} ${plain(it.title, 120)}`,
         url: it.html_url,
-        summary: `${pr ? "PR" : "issue"} ${repo}#${it.number}「${plain(it.title, 120)}」${state}${it.user?.login ? `，作者 ${it.user.login}` : ""}${said ? `；新评论：${said}` : ""}`,
+        summary: `${pr ? "PR" : "issue"} ${repo}#${it.number}「${plain(it.title, 120)}」${state}${it.user?.login ? `，作者 ${it.user.login}` : ""}${said ? `；新评论：${said}` : ""}${reviewed ? `；新 review：${reviewed}` : ""}${onLines ? `；代码行上的新评论：${onLines}` : ""}`,
         at: it.updated_at,
-        payload: { repo, number: it.number, state: it.state, merged: Boolean(it.pull_request?.merged_at), mergedAt: it.pull_request?.merged_at ?? null, author: it.user?.login ?? null, comments: comments.length },
+        payload: {
+          repo, number: it.number, state: it.state, merged: Boolean(it.pull_request?.merged_at), mergedAt: it.pull_request?.merged_at ?? null, author: it.user?.login ?? null, comments: comments.length,
+          ...(pr ? { reviews: reviews.length, lineComments: lines.length } : {}),
+        },
         mine,
         asks,
       });
     }
     return items;
+  }
+
+  // 一个 PR 的全部 review（旧的在前）。
+  private async reviewsOf(repo: string, n: number, signal: AbortSignal): Promise<Review[]> {
+    const all: Review[] = [];
+    for (let page = 1; page <= MAX_REVIEW_PAGES; page++) {
+      const got = JSON.parse(await this.gh(["api", "-X", "GET", `repos/${repo}/pulls/${n}/reviews`, "-f", "per_page=100", "-f", `page=${page}`], signal)) as Review[];
+      all.push(...got);
+      if (got.length < 100) break;
+    }
+    return all;
+  }
+
+  // 这个 review / 代码行评论第一次报：记下，太多了丢掉最早的。
+  private firstTime(key: string): boolean {
+    if (this.reported.has(key)) return false;
+    this.reported.add(key);
+    if (this.reported.size > MAX_REPORTED) this.reported.delete(this.reported.values().next().value!);
+    return true;
   }
 
   // 导入用：你开着的 PR、等你 review 的 PR（查询写死）。

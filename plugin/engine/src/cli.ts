@@ -733,7 +733,8 @@ async function rules(args: string[]): Promise<void> {
   const p = loadPolicy();
   // 第一次看规矩时把默认的写下来；老的文件缺后来加的东西（我加的情况、新场景）就补上。面板直接读这个文件。
   const onDisk = readJson<Partial<Policy>>(paths().policy, {});
-  if (!existsSync(paths().policy) || onDisk.custom === undefined || !("slack_self" in (onDisk.scenarios ?? {})) || onDisk.placement === undefined || onDisk.style === undefined || onDisk.trusted === undefined) updatePolicy(() => undefined);
+  const missing = Object.keys(SCENARIOS).some((k) => !(k in (onDisk.scenarios ?? {})));
+  if (!existsSync(paths().policy) || onDisk.custom === undefined || missing || onDisk.placement === undefined || onDisk.style === undefined || onDisk.trusted === undefined || onDisk.bots === undefined) updatePolicy(() => undefined);
   if (sub === undefined || sub === "show") {
     const lines = ["# 我的规矩（chief rules）", "", "## 我加的情况（先对这些，对上了就照它办，比下面的场景表优先）", ""];
     if (p.custom.length === 0) lines.push("（没有）");
@@ -746,6 +747,8 @@ async function rules(args: string[]): Promise<void> {
     p.notes.forEach((n, i) => lines.push(`${i + 1}. ${n}`));
     lines.push("", "## 白名单：回这些人的话直接发，不用我确认（我写的「一定问我」的规矩照样优先）", "");
     lines.push(p.trusted.length > 0 ? p.trusted.map((x) => `- ${x}`).join("\n") : "（没有）");
+    lines.push("", "## GitHub 上不报的机器人（它们的 review、评论不算有人找我；名字带 bot 的本来就不报）", "");
+    lines.push(p.bots.length > 0 ? p.bots.map((x) => `- ${x}`).join("\n") : "（没有）");
     lines.push("", "## 回复写法（替我写的话都照这个写）", "");
     p.style.forEach((x, i) => lines.push(`${i + 1}. ${x}`));
     lines.push("", `Slack 回复放哪（对方本来在 thread 里说的总是回 thread）：${(Object.keys(p.placement) as Audience[]).map((k) => `${AUDIENCE_LABELS[k]} ${p.placement[k] === "thread" ? "回到 thread" : "直接回在对话里"}`).join("，")}。个别回复要不一样，reply add 时加 --in thread|inline。`);
@@ -833,6 +836,30 @@ async function rules(args: string[]): Promise<void> {
       return;
     }
     fail("chief rules trust add|remove");
+  }
+  // chief rules bot add|remove（标准输入一个 GitHub 登录名）：GitHub 上不报的机器人
+  if (sub === "bot") {
+    const what = args.shift();
+    const login = (await stdinText()).trim().toLowerCase();
+    // GitHub 登录名：字母、数字、连字符，最多 39 个字；机器人账号可能带 [bot]。
+    if (!/^[a-z0-9](?:[a-z0-9-]{0,38})(?:\[bot\])?$/.test(login)) fail("从标准输入给一个 GitHub 登录名，比如 acme-review-bot");
+    if (what === "add") {
+      updatePolicy((pp) => {
+        if (!pp.bots.includes(login)) pp.bots.push(login);
+      });
+      process.stdout.write(`加好了：${login} 的 review 和评论以后不报\n`);
+      return;
+    }
+    if (what === "remove") {
+      const gone = updatePolicy((pp) => {
+        const before = pp.bots.length;
+        pp.bots = pp.bots.filter((x) => x !== login);
+        return before !== pp.bots.length;
+      });
+      if (!gone) fail("机器人名单里没有这个");
+      return;
+    }
+    fail("chief rules bot add|remove");
   }
   // chief rules style add（标准输入一句）| style remove（标准输入那一条的原文）：回复写法
   if (sub === "style") {
