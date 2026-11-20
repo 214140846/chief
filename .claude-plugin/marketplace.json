@@ -1,0 +1,7 @@
+{
+  "name": "chief",
+  "owner": { "name": "jinjin99" },
+  "plugins": [
+    { "name": "chief", "source": "./plugin", "description": "私人助理：找你的消息派给对应的 Claude 会话去办" }
+  ]
+}

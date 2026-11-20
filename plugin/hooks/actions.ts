@@ -1,0 +1,246 @@
+// 面板上的动作。
+// 不用动脑子的（发送、撤回、不发、改规矩、标对错、标办完）直接跑 chief 命令，文字从标准输入给；
+// 要用到 App 会话工具或要动脑子的（转告工作会话、打开会话、让它重写、根据纠正提议规矩），交给主会话去做。
+import { atom, read, update } from 'claude-code'
+import type { EngineInterface as Engine } from 'claude-code'
+
+import type { Handle, ReplyMode, ReplyRow, Tab, ThingRow } from '../types'
+import { refresh, chiefDir } from './data'
+
+const note = atom({ plugin: 'chief', key: 'note' } as const, '')
+const tab = atom({ plugin: 'chief', key: 'tab' } as const, 'now')
+const edits = atom({ plugin: 'chief', key: 'edits' } as const, {})
+const open = atom({ plugin: 'chief', key: 'open' } as const, [])
+const logs = atom({ plugin: 'chief', key: 'logs' } as const, '')
+const basket = atom({ plugin: 'chief', key: 'basket' } as const, [])
+
+// 面板顶上那句提示带着时间（「时间|文字」），过几秒就不再显示。
+function stamp(text: string): string {
+  return `${Date.now()}|${text}`
+}
+
+function short(text: string, max: number): string {
+  const one = text.replace(/\s+/g, ' ').trim()
+  return one.length > max ? `${one.slice(0, max)}…` : one
+}
+
+// 跑一个 chief 命令，把结果写在面板顶上，再刷新。
+export async function act($: Engine, label: string, args: readonly string[], stdin?: string) {
+  const bin = `${await chiefDir($)}/bin/chief`
+  const out = await $.process.run([bin, ...args], stdin === undefined ? undefined : { stdin })
+  const said = (out.exitCode === 0 ? out.stdout : out.stderr).trim()
+  await update($, note, () => stamp((out.exitCode === 0 ? `${label}：好了` : `${label}没成功：${short(said || '没说为什么', 160)}`)))
+  await refresh($)
+  return out.exitCode === 0
+}
+
+// 直接跳到某个 Claude App 会话：App 认 claude://code/continue?session=local_<编号> 这个链接。
+// 编号不像 App 的会话编号（比如别的地方来的），就退回让主会话给你一个能点的链接。
+const APP_SESSION = /^local_[A-Za-z0-9-]{1,100}$/
+
+export async function openSession($: Engine, session: string, title: string) {
+  if (APP_SESSION.test(session)) {
+    const out = await $.process.run(['/usr/bin/open', `claude://code/continue?session=${session}`])
+    if (out.exitCode === 0) {
+      await update($, note, () => stamp(`跳到「${short(title, 20)}」`))
+      return
+    }
+  }
+  await tell($, `chief：打开会话 ${session}（${title}）`, '去会话')
+}
+
+// ── 批注：在各处写几句，攒着一起发给主会话 ──
+
+// 加一条批注（不发送）。同一处再批，就接在后面。
+export async function annotate($: Engine, key: string, label: string, text: string) {
+  await update($, basket, list => {
+    const old = list.find(x => x.key === key && key !== 'note')
+    return old ? list.map(x => (x === old ? { ...x, text: `${x.text}；${text}` } : x)) : [...list, { key, label, text }]
+  })
+  await update($, note, () => stamp('记下了，攒好了在顶上一起发给主会话'))
+}
+
+export async function unannotate($: Engine, index: number) {
+  await update($, basket, list => list.filter((_, i) => i !== index))
+}
+
+export async function clearBasket($: Engine) {
+  await update($, basket, () => [])
+}
+
+// 把攒的批注一次发给主会话：每条写明批在哪（带 chief 里的编号），主会话拆开分别去办、去转。
+export async function sendBasket($: Engine) {
+  const list = await read($, basket)
+  if (list.length === 0) return
+  const lines = list.map((x, i) => `${i + 1}. ${x.key === 'note' ? '' : `关于${x.label}：`}${x.text}`)
+  void $.prompt.submit({ text: `chief：批注（${list.length} 条）\n${lines.join('\n')}` })
+  await update($, basket, () => [])
+  await update($, note, () => stamp(`${list.length} 条批注发给主会话了`))
+}
+
+// 交给主会话（hub skill 认这几句话）。
+export async function tell($: Engine, text: string, label: string) {
+  await update($, note, () => stamp(`${label}：已交给主会话`))
+  void $.prompt.submit({ text })
+}
+
+export async function setTab($: Engine, to: Tab) {
+  await update($, tab, () => to)
+}
+
+export async function toggle($: Engine, key: string) {
+  await update($, open, list => (list.includes(key) ? list.filter(k => k !== key) : [...list, key]))
+}
+
+export async function skipOld($: Engine, upto: number) {
+  if (await act($, '跳过旧消息', ['mark', '--upto', String(upto), 'ignored'])) await act($, '记进度', ['cursor', String(upto)])
+}
+
+// ── 待发出 ──
+
+export async function setEdit($: Engine, id: number, text: string) {
+  await update($, edits, x => ({ ...x, [String(id)]: text }))
+}
+
+// 发送：改过就先存改后的稿子，再排队（5 秒后引擎发出，之前能撤回）。
+// typed 是输入框回车时交来的当前文字（最准）；点按钮时用记下的修改；都没有就是原稿。
+export async function send($: Engine, r: ReplyRow, typed?: string) {
+  if (r.kind === 'approve') {
+    if (await act($, `approve ${r.target.ref ?? 'PR'}`, ['reply', 'queue', String(r.id)])) {
+      await update($, note, () => stamp(`5 秒后 approve ${r.target.ref ?? 'PR'}，现在还能撤回`))
+    }
+    return
+  }
+  const text = (typed ?? (await read($, edits))[String(r.id)] ?? r.body).trim()
+  if (text === '') {
+    await update($, note, () => stamp('要发的话是空的：写点什么，或者点「不发」'))
+    return
+  }
+  const edited = text !== r.body.trim()
+  if (edited) {
+    if (!(await act($, '保存修改', ['reply', 'edit', String(r.id)], text))) return
+  }
+  if (await act($, `回 ${r.context.who ?? r.context.where}`, ['reply', 'queue', String(r.id)])) {
+    await update($, edits, e => {
+      const rest = { ...e }
+      delete rest[String(r.id)]
+      return rest
+    })
+    await update($, note, () => stamp(`5 秒后发给 ${r.context.who ?? r.context.where}，现在还能撤回`))
+    // 你改过稿子才发：让主会话看看你改了什么，提议一条写法规矩，下次写得更像你。
+    if (edited) void $.prompt.submit({ text: `chief：回复 #${r.id} 你改过再发的` })
+  }
+}
+
+export async function redo($: Engine, r: ReplyRow, feedback: string) {
+  if (!(await act($, '让它重写', ['reply', 'redo', String(r.id)], feedback))) return
+  await tell($, `chief：回复 #${r.id} 重写：${feedback}`, '重写意见')
+}
+
+// ── 事情 ──
+
+export async function finish($: Engine, t: ThingRow, how: 'done' | 'dropped') {
+  if (how === 'done') {
+    await act($, `「${short(t.title, 20)}」办完了`, ['thing', 'update', String(t.id), '--status', 'done'], '你标了办完')
+    return
+  }
+  // 不做了：会话里可能还在干，让主会话去叫停。
+  await tell($, `chief：事情 #${t.id} 不做了（${t.title}）`, '不做了')
+}
+
+// ── 策略 ──
+
+// target：内置场景名（slack_dm），或你加的情况 custom:<号>。
+export async function setScenario($: Engine, target: string, field: 'handle' | 'reply', value: Handle | ReplyMode) {
+  await act($, '改规矩', ['rules', 'set', target, `${field}=${value}`])
+}
+
+export async function addCustom($: Engine, when: string) {
+  await act($, '加情况', ['rules', 'custom', 'add'], when)
+}
+
+export async function removeCustom($: Engine, id: number) {
+  await act($, '删情况', ['rules', 'custom', 'remove', String(id)])
+}
+
+// ── 控制 ──
+
+export async function engineDo($: Engine, what: 'stop' | 'start' | 'restart') {
+  await act($, what === 'stop' ? '停引擎' : what === 'start' ? '开引擎' : '重启引擎', ['engine', what])
+}
+
+export async function hubStop($: Engine) {
+  await act($, '停主会话', ['hub', 'stop'])
+}
+
+export async function testMessage($: Engine, text: string) {
+  await act($, '测试消息', ['test', '--from', '测试同事'], text)
+}
+
+export async function showLogs($: Engine) {
+  const bin = `${await chiefDir($)}/bin/chief`
+  const out = await $.process.run([bin, 'logs'])
+  await update($, logs, () => (out.exitCode === 0 ? out.stdout : out.stderr).trim().split('\n').slice(-25).join('\n'))
+}
+
+export async function setBrief($: Engine, scenario: string, text: string) {
+  await act($, '改交代', ['rules', 'brief', scenario], text)
+}
+
+export async function trust($: Engine, who: string, add: boolean) {
+  await act($, add ? '加白名单' : '移出白名单', ['rules', 'trust', add ? 'add' : 'remove'], who)
+}
+
+export async function addStyle($: Engine, text: string) {
+  await act($, '加写法', ['rules', 'style', 'add'], text)
+}
+
+export async function removeStyle($: Engine, text: string) {
+  await act($, '删写法', ['rules', 'style', 'remove'], text)
+}
+
+export async function setPlacement($: Engine, audience: string, place: 'inline' | 'thread') {
+  await act($, '改回复位置', ['rules', 'place', `${audience}=${place}`])
+}
+
+export async function setSignature($: Engine, text: string) {
+  await act($, '改署名', ['rules', 'sign'], text)
+}
+
+export async function addRule($: Engine, text: string) {
+  await act($, '加规矩', ['rules', 'add'], text)
+}
+
+export async function removeRule($: Engine, text: string) {
+  await act($, '删规矩', ['rules', 'remove'], text)
+}
+
+export async function decideProposal($: Engine, id: number, accept: boolean) {
+  await act($, accept ? '采纳' : '不要', ['rules', accept ? 'accept' : 'reject', String(id)])
+}
+
+// ── 测评 ──
+
+// ── 演练 ──
+
+export async function runEvals($: Engine) {
+  await act($, '演练', ['eval', 'run'])
+}
+
+export async function saveCase($: Engine, event: number, expect: string) {
+  await act($, '存成例子', ['eval', 'from-event', String(event), expect])
+}
+
+export async function removeCase($: Engine, id: number) {
+  await act($, '删例子', ['eval', 'remove', String(id)])
+}
+
+export async function markRight($: Engine, event: number) {
+  await act($, `判断 #${event}`, ['review', String(event), 'ok'])
+}
+
+// 标错：记下你说的应该怎样，再让主会话据此提议一条规矩（在策略页等你采纳）。
+export async function markWrong($: Engine, event: number, should: string) {
+  if (!(await act($, `判断 #${event}`, ['review', String(event), 'wrong'], should))) return
+  await tell($, `chief：判断 #${event} 错了：${should}`, '纠正')
+}

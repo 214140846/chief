@@ -1,0 +1,264 @@
+import { expect, test } from 'claude-code/testing'
+
+const PANE = {
+  plugin: 'chief',
+  component: 'Pane',
+  requestId: 'chief',
+  props: { title: 'chief', isFocused: false, bodyColumns: 70, placement: 'dock', scroll: { offset: 0, bodyRows: 60 }, view: {} },
+} as const
+
+const now = new Date().toISOString()
+const FILES: Record<string, string> = {
+  '/Users/me/.chief/alive.json': JSON.stringify({ at: now }),
+  '/Users/me/.chief/engine.json': JSON.stringify({ at: now, health: { slack: { ok: true, at: now, fails: 0 }, github: { ok: false, at: now, fails: 1, error: 'gh 出错了：check your internet connection' } } }),
+  '/Users/me/.chief/state.json': JSON.stringify({ nextId: 11 }),
+  '/Users/me/.chief/dispatch.json': JSON.stringify({ 1: {}, 2: {}, 3: {}, 4: {}, 5: {}, 6: {}, 7: {}, 8: {} }),
+  '/Users/me/.chief/things.json': JSON.stringify({
+    things: [
+      { id: 1, title: 'PROJ-479 接口改造', session: 'local_abc', status: 'waiting_you', progress: '改完了，等你定上线时间', next: '等你定了就提测', blocker: '等后端接口', results: ['[PR #12](https://github.com/o/r/pull/12)'], due: new Date().toISOString().slice(0, 10), events: [9], updatedAt: now, log: [{ at: now, text: '开了会话' }, { at: now, text: '改完了，等你定上线时间' }] },
+      { id: 2, title: 'o/r#3 review', session: 'local_def', status: 'done', progress: '已批准', events: [10], updatedAt: now, log: [] },
+    ],
+    asks: [{ id: 3, thing: 1, question: 'Joe 问能不能本周上线', suggest: '回复下周二上线', status: 'open', at: now }],
+  }),
+  '/Users/me/.chief/replies.json': JSON.stringify({
+    items: [
+      { id: 5, event: 9, thing: 1, source: 'slack', target: { channel: 'D1', ts: '1.0' }, context: { who: 'Bob Chen', where: 'Bob Chen 的私信', said: '压测那个你处理了吗', url: null }, body: '处理了，报告在 thread 里', status: 'pending', at: now },
+      { id: 7, kind: 'approve', event: 11, source: 'github', target: { ref: 'o/r#44' }, context: { who: 'Alice', where: '#proj', said: '帮忙看下 PR', url: 'https://github.com/o/r/pull/44' }, body: '', status: 'pending', at: now },
+      { id: 6, event: 10, source: 'github', target: { ref: 'o/r#3' }, context: { who: null, where: 'o/r#3 修 bug', said: 'PR o/r#3', url: null }, body: 'LGTM', status: 'sent', by: 'you', sentAt: now, at: now },
+    ],
+  }),
+  '/Users/me/.chief/decisions.jsonl': [
+    { at: now, event: 1, scenario: 'slack_dm', verdict: 'forwarded', reason: 'Bob 问压测进度，送进了压测会话', what: { source: 'slack', title: '私信', from: 'Bob Chen', text: '压测那个你处理了吗' } },
+    { at: now, event: 2, scenario: 'slack_thread', verdict: 'noted', reason: 'Alice 只是同步看板 ready', what: { source: 'slack', title: '#proj', from: 'Alice', text: '看板 ready 了' } },
+    { at: now, event: 3, scenario: 'slack_thread', verdict: 'ignored', reason: '没点你名的闲聊' },
+  ].map(d => JSON.stringify(d)).join('\n'),
+  '/Users/me/.chief/reviews.json': JSON.stringify({ 3: { ok: true, at: now } }),
+  '/Users/me/.chief/sources.json': JSON.stringify({ slack: true, github: true }),
+  '/Users/me/.chief/activity.json': JSON.stringify({ local_abc: { at: new Date(Date.now() + 1000).toISOString(), title: 'x', last: '接口联调完了，在等后端发版', permissionMode: 'bypassPermissions', archived: false }, _hub: { permissionMode: 'auto' } }),
+  '/Users/me/.chief/policy.json': JSON.stringify({
+    scenarios: { slack_self: { handle: 'command', reply: 'auto' }, slack_dm: { handle: 'dispatch', reply: 'ask' }, slack_thread: { handle: 'note', reply: 'ask' } },
+    custom: [{ id: 1, when: 'Slack 里有人发 PR 链接让我看', handle: 'approve', reply: 'auto' }],
+    notes: ['涉及排期的都要问我'],
+    proposals: [{ id: 1, text: 'Alice 在项目频道问进度时派活', basis: '你标错了 #2', at: now }],
+  }),
+}
+
+test('面板：主会话状态、要你定、待发出；按钮各做各的', async ($, on) => {
+  const runs: { argv: string[]; stdin?: string }[] = []
+  const prompts: string[] = []
+  on('command.register', () => ({ value: { command: 'chief' } }))
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('clock.every', () => ({ value: { cancel: () => {} } }))
+  on('fs.read', (_, e) => {
+    if (e.path === '/Users/me/.chief/bin/chief') return { value: '#!/bin/sh' }
+    const text = FILES[e.path]
+    if (text === undefined) throw new Error('missing')
+    return { value: text }
+  })
+  on('process.run', (_, e) => {
+    runs.push({ argv: [...e.argv], ...(e.init?.stdin !== undefined ? { stdin: e.init.stdin } : {}) })
+    if (e.argv[0] === '/usr/bin/env') return { value: { exitCode: 0, stdout: 'HOME=/Users/me\nPATH=/usr/bin\n', stderr: '' } }
+    return { value: { exitCode: 0, stdout: '', stderr: '' } }
+  })
+  on('prompt.submit', (_, e) => {
+    prompts.push(e.text)
+    return { text: e.text }
+  })
+  const fills: string[] = []
+  on('prompt.fill', (_, e) => {
+    fills.push(e.text)
+    return { isFilled: true }
+  })
+
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+  await $.command.run({ command: 'chief', args: '' })
+
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const ui = await $.ui.mount({ ...PANE, surface })
+    expect(await ui.find({ type: 'Text', text: /主会话在听/ })).toBeTruthy()
+    expect(await ui.find({ type: 'Text', text: /2 条等判断/ })).toBeTruthy()
+    expect(await ui.find({ type: 'Text', text: /判断了 3 条 · 派人去办 1 · 只记下 1 · 忽略 1 · 替你发出 1/ })).toBeTruthy()
+    expect(await ui.find({ type: 'Text', text: /今天截止/ })).toBeTruthy()
+    expect(await ui.find({ type: 'Text', text: /Joe 问能不能本周上线/ })).toBeTruthy()
+    // 等你确认的回复直接在「现在要你」里。
+    expect(await ui.find({ type: 'Text', text: /等你确认再发 · 2/ })).toBeTruthy()
+    await ui.unmount()
+  }
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  // 批注：在要你定的卡片上批一句，先攒着，不发。
+  const before = prompts.length
+  await ui.press({ key: 'an-a3' })
+  await ui.input({ key: 'ai-a3', text: '这个先别回 Joe' })
+  expect(prompts.length).toBe(before)
+  expect(await ui.find({ type: 'Text', text: /要发给主会话的批注 · 1/ })).toBeTruthy()
+  await ui.press({ key: 'ok3' })
+  expect(prompts.at(-1)).toBe('chief：问题 #3 照建议办')
+  await ui.input({ key: 'in3', text: '下周三，我来回' })
+  expect(prompts.at(-1)).toBe('chief：问题 #3 的回答：下周三，我来回')
+
+  await ui.press({ key: 'tab-outbox' })
+  expect(await ui.find({ type: 'Text', text: /压测那个你处理了吗/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /你确认 · 回 o\/r#3 修 bug：LGTM/ })).toBeTruthy()
+
+  // 稿子按发出去的样子显示，点「改稿」才变成输入框；改了再发：先存改后的稿子（标准输入），再排队。
+  await ui.press({ key: 'ed5' })
+  await ui.input({ key: 'body5', text: '处理了，报告发你私信了', kind: 'change' })
+  await ui.press({ key: 'sd5' })
+  const tail = runs.slice(-4).map(r => `${r.argv.slice(1).join(' ')}${r.stdin ? ` <${r.stdin}` : ''}`)
+  expect(tail).toContain('reply edit 5 <处理了，报告发你私信了')
+  expect(tail).toContain('reply queue 5')
+  // 改过稿子才发：告诉主会话，让它从你的改动里学写法。
+  expect(prompts.at(-1)).toBe('chief：回复 #5 你改过再发的')
+
+  // 让它重写：点了才出输入框。
+  await ui.press({ key: 'rw5' })
+  await ui.input({ key: 'rd5', text: '语气太硬，客气点' })
+  expect(runs.some(r => r.argv.slice(1).join(' ') === 'reply redo 5' && r.stdin === '语气太硬，客气点')).toBe(true)
+  expect(prompts.at(-1)).toBe('chief：回复 #5 重写：语气太硬，客气点')
+
+  await ui.press({ key: 'dp5' })
+  expect(runs.at(-1)?.argv.slice(1).join(' ')).toBe('reply drop 5')
+
+  // approve 也在待发出里，按钮写 approve。
+  expect(await ui.find({ type: 'Text', text: /approve PR o\/r#44/ })).toBeTruthy()
+  await ui.press({ key: 'sd7' })
+  expect(runs.at(-1)?.argv.slice(1).join(' ')).toBe('reply queue 7')
+
+  // 进度：最上面一句重点；要关注的单独成卡，写清原因、还差什么，能直接动手。
+  await ui.press({ key: 'tab-things' })
+  expect(await ui.find({ type: 'Text', text: /最要紧：PROJ-479 接口改造 今天截止，卡在等后端接口/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /还差/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /等你定了就提测/ })).toBeTruthy()
+  // 你在子会话里推进的，面板也看得到；跳过权限模式的会话会提醒。
+  expect(await ui.find({ type: 'Text', text: /接口联调完了，在等后端发版/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /权限模式不一样/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /1 件在做 · 1 件要关注 · 最近 7 天办完 1 件/ })).toBeTruthy()
+  await ui.press({ key: 'import' })
+  expect(prompts.at(-1)).toBe('chief：导入现在在做的事')
+  // 进度页：卡片上批一句，再写一句通用的话，一起发给主会话。
+  await ui.press({ key: 'an-t1' })
+  await ui.input({ key: 'ai-t1', text: '今天下班前改完报告' })
+  expect(await ui.find({ type: 'Text', text: /要发给主会话的批注 · 2/ })).toBeTruthy()
+  await ui.press({ key: 'send-basket' })
+  expect(prompts.at(-1)).toBe('chief：批注（2 条）\n1. 关于【要你定 #3 Joe 问能不能本周上线】：这个先别回 Joe\n2. 关于【事情 #1 PROJ-479 接口改造】：今天下班前改完报告')
+  expect(await ui.find({ type: 'Text', text: /要发给主会话的批注/ })).toBeFalsy()
+  await ui.press({ key: 'ago1' })
+  expect(runs.at(-1)?.argv).toEqual(['/usr/bin/open', 'claude://code/continue?session=local_abc'])
+  await ui.press({ key: 'aask1' })
+  expect(prompts.at(-1)).toMatch(/^chief：转告事情 #1：现在进展怎么样/)
+  await ui.press({ key: 'adn1' })
+  expect(runs.some(r => r.argv.slice(1).join(' ') === 'thing update 1 --status done')).toBe(true)
+  await ui.press({ key: 'done-list' })
+  expect(await ui.find({ type: 'Text', text: /1 件在做 · 1 件要关注/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /✓ o\/r#3 review/ })).toBeTruthy()
+
+  // 策略：改场景、加情况、加规矩、采纳提议。
+  await ui.press({ key: 'tab-policy' })
+  await ui.select({ key: 'h-custom:1', value: 'dispatch' })
+  expect(runs.at(-1)?.argv.slice(1).join(' ')).toBe('rules set custom:1 handle=dispatch')
+  await ui.input({ key: 'add-custom', text: 'Jira 上 QA 提的 bug 指给我' })
+  expect(runs.some(r => r.argv.slice(1).join(' ') === 'rules custom add' && r.stdin === 'Jira 上 QA 提的 bug 指给我')).toBe(true)
+  await ui.press({ key: 'rmc-custom:1' })
+  expect(runs.at(-1)?.argv.slice(1).join(' ')).toBe('rules custom remove 1')
+  expect(await ui.find({ type: 'Text', text: /Alice 在项目频道问进度时派活/ })).toBeTruthy()
+  await ui.select({ key: 'm-slack_dm', value: 'auto' })
+  expect(runs.at(-1)?.argv.slice(1).join(' ')).toBe('rules set slack_dm reply=auto')
+  await ui.press({ key: 'eb-slack_dm' })
+  await ui.input({ key: 'bf-slack_dm', text: '先查清楚再回，回复用中文' })
+  expect(runs.some(r => r.argv.slice(1).join(' ') === 'rules brief slack_dm' && r.stdin === '先查清楚再回，回复用中文')).toBe(true)
+  await ui.input({ key: 'add-rule', text: 'Bob 问进度可以直接回' })
+  expect(runs.some(r => r.argv.slice(1).join(' ') === 'rules add' && r.stdin === 'Bob 问进度可以直接回')).toBe(true)
+  await ui.press({ key: 'pa1' })
+  expect(runs.at(-1)?.argv.slice(1).join(' ')).toBe('rules accept 1')
+  await ui.press({ key: 'rm0' })
+  expect(runs.some(r => r.argv.slice(1).join(' ') === 'rules remove' && r.stdin === '涉及排期的都要问我')).toBe(true)
+
+  // 测评：数字、判断记录、标对错。
+  await ui.press({ key: 'tab-eval' })
+  expect(await ui.find({ type: 'Text', text: /替你做了/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /没打扰你就处理掉 2 条 · 派人去办 1 件/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /判断 3 条：派人去办 1 · 只记下 1 · 忽略 1/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /判断准确率：100%（标了 1 条，错 0）/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /你确认原样发 1/ })).toBeTruthy()
+  await ui.press({ key: 'dt1' })
+  await ui.press({ key: 'ok-1' })
+  expect(runs.at(-1)?.argv.slice(1).join(' ')).toBe('review 1 ok')
+  await ui.select({ key: 'sc-1', value: 'dispatch' })
+  expect(runs.at(-1)?.argv.slice(1).join(' ')).toBe('eval from-event 1 dispatch')
+  await ui.press({ key: 'dt2' })
+  await ui.input({ key: 'wr-2', text: 'Alice 在问我负责的部分，要派活' })
+  expect(runs.some(r => r.argv.slice(1).join(' ') === 'review 2 wrong' && r.stdin === 'Alice 在问我负责的部分，要派活')).toBe(true)
+  expect(prompts.at(-1)).toBe('chief：判断 #2 错了：Alice 在问我负责的部分，要派活')
+
+  // 控制：脚本都变成按钮。
+  await ui.press({ key: 'tab-control' })
+  // 来源连不上：标红，写出为什么。
+  expect(await ui.find({ type: 'Text', text: /连不上（连着 1 次）/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /check your internet connection/ })).toBeTruthy()
+  await ui.press({ key: 'eng-restart' })
+  expect(runs.at(-1)?.argv.slice(1).join(' ')).toBe('engine restart')
+  await ui.press({ key: 'hub-stop' })
+  expect(runs.at(-1)?.argv.slice(1).join(' ')).toBe('hub stop')
+  await ui.input({ key: 'test-msg', text: 'PERF-35121 的报告今天能给吗' })
+  expect(runs.some(r => r.argv.slice(1).join(' ') === 'test --from 测试同事' && r.stdin === 'PERF-35121 的报告今天能给吗')).toBe(true)
+  await ui.press({ key: 'cn-jira' })
+  expect(runs.at(-1)?.argv.slice(1).join(' ')).toBe('connect jira')
+  await ui.unmount()
+})
+
+test('主会话没在听：说清楚怎么办，积多了能一键跳过', async ($, on) => {
+  const runs: string[] = []
+  on('command.register', () => ({ value: { command: 'chief' } }))
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('clock.every', () => ({ value: { cancel: () => {} } }))
+  on('fs.read', (_, e) => {
+    if (e.path === '/Users/me/.chief/bin/chief') return { value: '#!/bin/sh' }
+    if (e.path.endsWith('state.json')) return { value: JSON.stringify({ nextId: 88 }) }
+    if (e.path.endsWith('alive.json')) return { value: JSON.stringify({ at: '2026-01-01T00:00:00Z' }) }
+    throw new Error('missing')
+  })
+  on('process.run', (_, e) => {
+    runs.push(e.argv.join(' '))
+    if (e.argv[0] === '/usr/bin/env') return { value: { exitCode: 0, stdout: 'HOME=/Users/me\nPATH=/usr/bin\n', stderr: '' } }
+    return { value: { exitCode: 0, stdout: '', stderr: '' } }
+  })
+
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+  await $.command.run({ command: 'chief', args: '' })
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  expect(await ui.find({ type: 'Text', text: /主会话没在听/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /引擎没在跑/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /新消息现在没人判断/ })).toBeTruthy()
+  await ui.press({ key: 'skip-old' })
+  expect(runs).toContain('/Users/me/.chief/bin/chief mark --upto 87 ignored')
+  expect(runs).toContain('/Users/me/.chief/bin/chief cursor 87')
+  await ui.unmount()
+})
+
+test('引擎还没装：只有设置页，按钮跑插件里的 setup.sh', async ($, on) => {
+  const runs: string[] = []
+  on('command.register', () => ({ value: { command: 'chief' } }))
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('clock.every', () => ({ value: { cancel: () => {} } }))
+  on('fs.read', () => {
+    throw new Error('missing')
+  })
+  on('process.run', (_, e) => {
+    runs.push(e.argv.join(' '))
+    if (e.argv[0] === '/usr/bin/env') return { value: { exitCode: 0, stdout: 'HOME=/Users/me\nPATH=/usr/bin\n', stderr: '' } }
+    return { value: { exitCode: 0, stdout: '', stderr: '' } }
+  })
+
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+  await $.command.run({ command: 'chief', args: '' })
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  expect(await ui.find({ type: 'Text', text: /设置 chief/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /现在要你/ })).toBeFalsy()
+  await ui.press({ key: 'setup-engine' })
+  expect(runs.some(r => r.startsWith('/bin/sh ') && r.endsWith('/setup.sh'))).toBe(true)
+  await ui.unmount()
+})
