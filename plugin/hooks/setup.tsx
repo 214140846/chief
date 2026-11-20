@@ -165,8 +165,8 @@ export function setupTab($: Engine, ui: Els, s: Setup) {
     : (
       <Box flexDirection="column" gap="xs">
         {note(elsewhere
-          ? `这个会话开在 ${s.cwd}。消息中心最好开在工作目录：新建会话时文件夹选 ${d!.workspace.path}（权限模式选 auto），在那个会话里打 /chief 再点这里。`
-          : '用这个会话当主会话：点下面的按钮，它会挂上监听、改名叫「chief 消息中心」。这个会话之后就一直开着，权限模式选 auto。')}
+          ? `这个会话开在 ${s.cwd}。消息中心最好开在工作目录：新建会话时文件夹选 ${d!.workspace.path}（权限模式选 bypass permissions），在那个会话里打 /chief 再点这里。`
+          : '用这个会话当主会话：点下面的按钮，它会挂上监听、改名叫「chief 消息中心」。这个会话之后就一直开着，权限模式选 bypass permissions。')}
         {button('setup-hub', !engineOk ? '开消息中心（先装好引擎）' : elsewhere ? '就用这个会话' : '开消息中心', !busy && engineOk, () => startHub($), !elsewhere)}
       </Box>
     )
