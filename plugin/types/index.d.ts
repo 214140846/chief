@@ -107,7 +107,7 @@ export type Snapshot = {
   dryDecisions: DecisionRow[]
 }
 
-export type Tab = 'now' | 'outbox' | 'things' | 'policy' | 'eval' | 'control' | 'setup'
+export type Tab = 'now' | 'outbox' | 'things' | 'policy' | 'eval' | 'setup'
 
 // chief doctor 的结果：设置页按它打勾。
 export type Doctor = {
@@ -148,7 +148,7 @@ declare module 'claude-code' {
       edits: Record<string, string>
       // 展开着的行（事情、判断）。
       open: string[]
-      // 控制页里看的最近日志。
+      // 设置页里看的最近日志。
       logs: string
       // 攒着要一起发给主会话的批注：批在哪（t<事情号> / a<问题号> / r<回复号> / d<事件号> / note）、那是什么、你说的话。
       basket: { key: string; label: string; text: string }[]
