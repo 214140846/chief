@@ -574,10 +574,14 @@ export function policyTab($: Engine, ui: Els, s: Snapshot, opened: string[]) {
     )
   }
 
-  const title = (text: string, sub?: string) => (
-    <Box flexDirection="column" marginTop="lg">
-      <Text weight="semibold">{text}</Text>
-      {sub && <Text size="caption" dimColor wrap="wrap">{sub}</Text>}
+  // 每一块规矩框起来，一眼分得清层级。
+  const section = (key: string, text: string, sub: string | undefined, ...body: RenderChildren[]) => (
+    <Box key={key} flexDirection="column" borderStyle="round" borderColor="inactive" paddingX="md" paddingY="sm" gap="xs" marginTop="sm">
+      <Box flexDirection="column">
+        <Text weight="semibold">{text}</Text>
+        {sub && <Text size="caption" dimColor wrap="wrap">{sub}</Text>}
+      </Box>
+      {body}
     </Box>
   )
 
@@ -614,71 +618,71 @@ export function policyTab($: Engine, ui: Els, s: Snapshot, opened: string[]) {
         </Box>
       )}
 
-      {title('白名单：回这些人直接发', '名单里的人，替你写好的回复不用你确认就发（仍有 5 秒能撤回）；你写的「一定问我」的规矩照样优先。写名字的一部分或 Slack 用户编号')}
-      {(p.trusted ?? []).length === 0 && <Text size="footnote" dimColor>还没有。</Text>}
-      {(p.trusted ?? []).map((x, i) => (
-        <Box key={`tr${i}`} flexDirection="row" justifyContent="space-between" alignItems="center" paddingY="xs">
-          <Text>{x}</Text>
-          <Button key={`rtr${i}`} plain onPress={() => trust($, x, false)}>移出</Button>
-        </Box>
-      ))}
-      {'Input' in ui && (
-        <Box width="100%"><ui.Input key="add-trusted" placeholder="加一个人，比如：Bob Chen" submitLabel="加上" onSubmit={(v: string) => {
-          if (v.trim()) void trust($, v.trim(), true)
-        }} /></Box>
-      )}
+      {section('sec-trusted', '白名单：回这些人直接发', '名单里的人，替你写好的回复不用你确认就发（仍有 5 秒能撤回）；你写的「一定问我」的规矩照样优先。写名字的一部分或 Slack 用户编号',
+        (p.trusted ?? []).length === 0 && <Text key="tr-none" size="footnote" dimColor>还没有。</Text>,
+        (p.trusted ?? []).map((x, i) => (
+          <Box key={`tr${i}`} flexDirection="row" justifyContent="space-between" alignItems="center" paddingY="xs">
+            <Text>{x}</Text>
+            <Button key={`rtr${i}`} plain onPress={() => trust($, x, false)}>移出</Button>
+          </Box>
+        )),
+        'Input' in ui && (
+          <Box key="tr-add" width="100%"><ui.Input key="add-trusted" placeholder="加一个人，比如：Bob Chen" submitLabel="加上" onSubmit={(v: string) => {
+            if (v.trim()) void trust($, v.trim(), true)
+          }} /></Box>
+        ))}
 
-      {title('我加的情况', '主会话先拿消息对这些，对上了就照它办')}
-      {p.custom.length === 0 && <Text size="footnote" dimColor>还没有。</Text>}
-      {p.custom.map(c => ruleRow(`custom:${c.id}`, c.when, c, () => void removeCustom($, c.id)))}
-      {'Input' in ui && (
-        <Box width="100%"><ui.Input key="add-custom" placeholder="加一种情况，比如：Jira 上 QA 提的 bug 指给我" submitLabel="加上" onSubmit={(v: string) => {
-          if (v.trim()) void addCustom($, v.trim())
-        }} /></Box>
-      )}
+      {section('sec-custom', '我加的情况', '主会话先拿消息对这些，对上了就照它办',
+        p.custom.length === 0 && <Text key="cu-none" size="footnote" dimColor>还没有。</Text>,
+        p.custom.map(c => ruleRow(`custom:${c.id}`, c.when, c, () => void removeCustom($, c.id))),
+        'Input' in ui && (
+          <Box key="cu-add" width="100%"><ui.Input key="add-custom" placeholder="加一种情况，比如：Jira 上 QA 提的 bug 指给我" submitLabel="加上" onSubmit={(v: string) => {
+            if (v.trim()) void addCustom($, v.trim())
+          }} /></Box>
+        ))}
 
-      {title('每种消息')}
-      {Object.entries(p.scenarios).map(([k, v]) => ruleRow(k, SCENARIO[k] ?? k, v))}
+      {section('sec-scenarios', '每种消息', '没对上「我加的情况」的，按消息的种类办',
+        Object.entries(p.scenarios).map(([k, v]) => ruleRow(k, SCENARIO[k] ?? k, v)))}
 
-      {title('回复写法', '替你写的话都照这几条写；你在待发出里改过稿子，主会话会据此提议新的写法')}
-      {(p.style ?? []).map((x, i) => (
-        <Box key={`st${i}`} flexDirection="row" gap="sm" alignItems="flex-start" paddingY="xs">
-          <Box flexGrow={1} flexShrink={1}><Text wrap="wrap">{x}</Text></Box>
-          <Button key={`rst${i}`} plain onPress={() => removeStyle($, x)}>删除</Button>
-        </Box>
-      ))}
-      {'Input' in ui && (
-        <Box width="100%"><ui.Input key="add-style" placeholder="加一条写法，比如：不用「您」，直接叫名字" submitLabel="加上" onSubmit={(v: string) => {
-          if (v.trim()) void addStyle($, v.trim())
-        }} /></Box>
-      )}
+      {section('sec-style', '回复写法', '替你写的话都照这几条写；你在待发出里改过稿子，主会话会据此提议新的写法',
+        (p.style ?? []).map((x, i) => (
+          <Box key={`st${i}`} flexDirection="row" gap="sm" alignItems="flex-start" paddingY="xs">
+            <Box flexGrow={1} flexShrink={1}><Text wrap="wrap">{x}</Text></Box>
+            <Button key={`rst${i}`} plain onPress={() => removeStyle($, x)}>删除</Button>
+          </Box>
+        )),
+        'Input' in ui && (
+          <Box key="st-add" width="100%"><ui.Input key="add-style" placeholder="加一条写法，比如：不用「您」，直接叫名字" submitLabel="加上" onSubmit={(v: string) => {
+            if (v.trim()) void addStyle($, v.trim())
+          }} /></Box>
+        ))}
 
-      {title('Slack 回复放哪', '对方本来在 thread 里说的，总是回到那个 thread；其余按对话的种类')}
-      {([['direct', '一对一私信'], ['group', '群聊'], ['channel', '频道'], ['self', '你给自己发的']] as const).map(([k, label]) => (
-        <Box key={`pl-${k}`} flexDirection="row" justifyContent="space-between" alignItems="center" gap="sm" paddingY="xs">
-          <Text>{label}</Text>
-          {select(ui, `pl-${k}`, (p.placement ?? DEFAULT_PLACEMENT)[k], [{ value: 'inline', label: '直接回在对话里' }, { value: 'thread', label: '回到 thread' }], v => void setPlacement($, k, v as 'inline' | 'thread'))}
-        </Box>
-      ))}
+      {section('sec-placement', 'Slack 回复放哪', '对方本来在 thread 里说的，总是回到那个 thread；其余按对话的种类',
+        ([['direct', '一对一私信'], ['group', '群聊'], ['channel', '频道'], ['self', '你给自己发的']] as const).map(([k, label]) => (
+          <Box key={`pl-${k}`} flexDirection="row" justifyContent="space-between" alignItems="center" gap="sm" paddingY="xs">
+            <Text>{label}</Text>
+            {select(ui, `pl-${k}`, (p.placement ?? DEFAULT_PLACEMENT)[k], [{ value: 'inline', label: '直接回在对话里' }, { value: 'thread', label: '回到 thread' }], v => void setPlacement($, k, v as 'inline' | 'thread'))}
+          </Box>
+        )))}
 
-      {title('Slack 回复的署名', '替你发到 Slack 的话，开头自动加这一行，让对方一眼知道是 agent 代回的；清空就不加')}
-      {'Input' in ui
-        ? <ui.Input key="signature" value={p.signature ?? '🤖 agent reply'} submitLabel="存" onSubmit={(v: string) => void setSignature($, v.trim())} />
-        : <Text>{p.signature ?? '🤖 agent reply'}</Text>}
+      {section('sec-signature', 'Slack 回复的署名', '替你发到 Slack 的话，开头自动加这一行，让对方一眼知道是 agent 代回的；清空就不加',
+        'Input' in ui
+          ? <ui.Input key="signature" value={p.signature ?? '🤖 agent reply'} submitLabel="存" onSubmit={(v: string) => void setSignature($, v.trim())} />
+          : <Text key="sig">{p.signature ?? '🤖 agent reply'}</Text>)}
 
-      {title('我的规矩', '一句话，最优先')}
-      {p.notes.length === 0 && <Text size="footnote" dimColor>还没有。</Text>}
-      {p.notes.map((n, i) => (
-        <Box key={`nt${i}`} flexDirection="row" gap="sm" alignItems="flex-start" paddingY="xs">
-          <Box flexGrow={1} flexShrink={1}><Text wrap="wrap">{n}</Text></Box>
-          <Button key={`rm${i}`} plain onPress={() => removeRule($, n)}>删除</Button>
-        </Box>
-      ))}
-      {'Input' in ui && (
-        <Box width="100%"><ui.Input key="add-rule" placeholder="加一条，比如：涉及排期的都要问我" submitLabel="加上" onSubmit={(v: string) => {
-          if (v.trim()) void addRule($, v.trim())
-        }} /></Box>
-      )}
+      {section('sec-notes', '我的规矩', '一句话，最优先',
+        p.notes.length === 0 && <Text key="nt-none" size="footnote" dimColor>还没有。</Text>,
+        p.notes.map((n, i) => (
+          <Box key={`nt${i}`} flexDirection="row" gap="sm" alignItems="flex-start" paddingY="xs">
+            <Box flexGrow={1} flexShrink={1}><Text wrap="wrap">{n}</Text></Box>
+            <Button key={`rm${i}`} plain onPress={() => removeRule($, n)}>删除</Button>
+          </Box>
+        )),
+        'Input' in ui && (
+          <Box key="nt-add" width="100%"><ui.Input key="add-rule" placeholder="加一条，比如：涉及排期的都要问我" submitLabel="加上" onSubmit={(v: string) => {
+            if (v.trim()) void addRule($, v.trim())
+          }} /></Box>
+        ))}
     </Box>
   )
 }
