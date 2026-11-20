@@ -142,8 +142,13 @@ export function setupTab($: Engine, ui: Els, s: Setup) {
   const slack = d?.sources.slack
   const slackOk = slack !== undefined && slack.enabled && slack.ready
   const slackBody = s.busy === 'slack'
-    ? note('在弹出的 Chrome 窗口里登录 Slack，登好窗口会自己关掉。')
-    : slackOk ? note('连上了')
+    ? note('在弹出的 Chrome 窗口里登录 Slack，一直登到看得到消息列表（要确认新设备的照做），窗口会自己关掉。')
+    : slackOk ? (
+      <Box flexDirection="column" gap="xs">
+        {note('登录过了。控制页上 Slack 显示连不上（比如登录过期）的话，重新登一次。')}
+        {button('setup-slack-again', '重新登录', !busy, () => void loginSlack($), false)}
+      </Box>
+    )
     : (
       <Box flexDirection="column" gap="xs">
         {note(d?.chrome === false ? '要用 Google Chrome 登录：先装一个 Chrome。' : '会弹出一个单独的 Chrome 窗口，你在里面正常登录（公司 SSO 照常走）。登录凭证直接存进钥匙串，不经过聊天。')}

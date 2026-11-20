@@ -856,7 +856,7 @@ export function controlTab($: Engine, ui: Els, s: Snapshot, logText: string) {
           {SOURCES.filter(src => s.sources[src] && (s.health[src]?.fails ?? 0) > 0).map(src => (
             <Text key={`err-${src}`} size="footnote" color="error" wrap="wrap">{SOURCE[src]} {ago(s.health[src]!.at)}：{s.health[src]!.error ?? '没说为什么'}</Text>
           ))}
-          <Text dimColor size="caption" wrap="wrap">Slack、Notion 要密钥，在终端里连：pbpaste | chief connect slack（先复制好）。</Text>
+          <Text dimColor size="caption" wrap="wrap">Slack 连不上（比如登录过期）：到「设置」页点「登录 Slack」重新登一次。Notion 要令牌，在终端里连：pbpaste | chief connect notion（先复制好）。</Text>
         </Box>
       ))}
       {section('试一下', (
