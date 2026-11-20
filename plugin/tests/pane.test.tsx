@@ -87,12 +87,9 @@ test('面板：主会话状态、要你定、待发出；按钮各做各的', as
   }
 
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
-  // 批注：在要你定的卡片上批一句，先攒着，不发。
-  const before = prompts.length
-  await ui.press({ key: 'an-a3' })
-  await ui.input({ key: 'ai-a3', text: '这个先别回 Joe' })
-  expect(prompts.length).toBe(before)
-  expect(await ui.find({ type: 'Text', text: /要发给主会话的批注 · 1/ })).toBeTruthy()
+  // 要你定的卡片只有三条路：照建议办、看细节、写你的决定发送；没有批注。
+  expect(await ui.find({ key: 'ok3' })).toBeTruthy()
+  expect(await ui.find({ key: 'an-a3' })).toBeFalsy()
   await ui.press({ key: 'ok3' })
   expect(prompts.at(-1)).toBe('chief：问题 #3 照建议办')
   await ui.input({ key: 'in3', text: '下周三，我来回' })
@@ -118,6 +115,8 @@ test('面板：主会话状态、要你定、待发出；按钮各做各的', as
   expect(runs.some(r => r.argv.slice(1).join(' ') === 'reply redo 5' && r.stdin === '语气太硬，客气点')).toBe(true)
   expect(prompts.at(-1)).toBe('chief：回复 #5 重写：语气太硬，客气点')
 
+  // 待发出也没有批注：要改就「改稿」或「让它重写」。
+  expect(await ui.find({ key: 'an-r5' })).toBeFalsy()
   await ui.press({ key: 'dp5' })
   expect(runs.at(-1)?.argv.slice(1).join(' ')).toBe('reply drop 5')
 
@@ -137,12 +136,14 @@ test('面板：主会话状态、要你定、待发出；按钮各做各的', as
   expect(await ui.find({ type: 'Text', text: /1 件在做 · 1 件要关注 · 最近 7 天办完 1 件/ })).toBeTruthy()
   await ui.press({ key: 'import' })
   expect(prompts.at(-1)).toBe('chief：导入现在在做的事')
-  // 进度页：卡片上批一句，再写一句通用的话，一起发给主会话。
+  // 进度页：卡片上批一句，先攒着不发，攒好了一起发给主会话。
+  const before = prompts.length
   await ui.press({ key: 'an-t1' })
   await ui.input({ key: 'ai-t1', text: '今天下班前改完报告' })
-  expect(await ui.find({ type: 'Text', text: /要发给主会话的批注 · 2/ })).toBeTruthy()
+  expect(prompts.length).toBe(before)
+  expect(await ui.find({ type: 'Text', text: /要发给主会话的批注 · 1/ })).toBeTruthy()
   await ui.press({ key: 'send-basket' })
-  expect(prompts.at(-1)).toBe('chief：批注（2 条）\n1. 关于【要你定 #3 Joe 问能不能本周上线】：这个先别回 Joe\n2. 关于【事情 #1 PROJ-479 接口改造】：今天下班前改完报告')
+  expect(prompts.at(-1)).toBe('chief：批注（1 条）\n1. 关于【事情 #1 PROJ-479 接口改造】：今天下班前改完报告')
   expect(await ui.find({ type: 'Text', text: /要发给主会话的批注/ })).toBeFalsy()
   await ui.press({ key: 'ago1' })
   expect(runs.at(-1)?.argv).toEqual(['/usr/bin/open', 'claude://code/continue?session=local_abc'])

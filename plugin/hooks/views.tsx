@@ -210,11 +210,10 @@ export function nowTab($: Engine, ui: Els, s: Snapshot, opened: string[] = [], e
           {t?.session && (
             <Button key={`oa${q.id}`} onPress={() => openSession($, t.session ?? '', t.title)}>看细节</Button>
           )}
-          {annotateButton($, ui, `a${q.id}`, opened)}
         </Box>
-        {annotateBox($, ui, `a${q.id}`, `【要你定 #${q.id} ${short(q.question, 30)}】`, opened)}
+        {/* 要你定的卡片只给三条路：照建议办、去会话里看、写你的决定。攒着一起发的「批注」只放在进度页。 */}
         {'Input' in ui && (
-          <ui.Input key={`in${q.id}`} placeholder="不照建议？直接说你的决定" submitLabel="告诉它" onSubmit={(v: string) => {
+          <ui.Input key={`in${q.id}`} placeholder="不同意？写你的决定" submitLabel="发送" onSubmit={(v: string) => {
             if (v.trim()) void tell($, `chief：问题 #${q.id} 的回答：${v.trim()}`, '你的决定')
           }} />
         )}
@@ -307,7 +306,6 @@ export function replyCard($: Engine, ui: Els, s: Snapshot, edit: Record<string, 
         {!approve && <Button key={`rw${r.id}`} onPress={() => toggle($, redoKey)}>让它重写</Button>}
         <Button key={`dp${r.id}`} onPress={() => act($, approve ? '不 approve' : '不发', ['reply', 'drop', String(r.id)])}>{approve ? '不 approve' : '不发'}</Button>
         {t?.session && <Button key={`or${r.id}`} plain onPress={() => openSession($, t.session ?? '', t.title)}>看细节</Button>}
-        {annotateButton($, ui, `r${r.id}`, opened)}
       </Box>
 
       {redoing && 'Input' in ui && (
@@ -316,7 +314,6 @@ export function replyCard($: Engine, ui: Els, s: Snapshot, edit: Record<string, 
             onSubmit={(v: string) => { if (v.trim()) { void redo($, r, v.trim()); void toggle($, redoKey) } }} />
         </Box>
       )}
-      {annotateBox($, ui, `r${r.id}`, `【待发出 #${r.id} ${approve ? `approve ${r.target.ref ?? ''}` : `回 ${who}`}】`, opened)}
     </Box>
   )
 }
