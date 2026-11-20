@@ -4,6 +4,7 @@
 // gabriel-slack 管连接、重连、令牌刷新、事件 hydration（人名频道名解析）。
 // 这里只做：收事件 → 判断跟你有没有关系 → 交给 host。
 
+import { readFileSync } from "node:fs";
 import type { ChannelContext, ChannelPlugin, SecretCheck, SecretSpec } from "./types";
 import { scrubTokens } from "./api";
 import { classifyCreated, classifyDeleted, classifyUpdated, directOf, type Classified, type GabrielChannel, type GabrielDeleteEvent, type GabrielMessageEvent } from "./classify";
@@ -50,6 +51,15 @@ export interface GabrielClientLike {
   // 按编号查人名（查 @ 了谁用）；老的假客户端没有。
   readonly users?: { resolve(ids: string[]): Promise<Array<{ id: string; name?: string; displayName?: string; handle?: string } | null>> };
   reactions: { add(opts: { channel: string; ts: string; emoji: string }): Promise<void> };
+  // 传图（回复附图用）：传完分享到 channel（有 threadTs 就进那个 thread）。老的假客户端没有。
+  readonly files?: { upload(opts: { filename: string; content: Uint8Array; mimeType?: string; channel?: string; threadTs?: string }): Promise<unknown> };
+}
+
+// 发出去落在哪：附的图跟着发到同一个对话、同一个 thread。
+export interface SentTo {
+  ref: string;
+  channel: string;
+  threadTs?: string;
 }
 
 export interface CheckCookieResult {
@@ -190,7 +200,7 @@ export class SlackPlugin implements ChannelPlugin {
 
   // 主动发一条新消息：to 是用户编号（U…）、邮箱、或频道编号（C… / G… / D…）。发给人就先打开和他的私信。
   // threadTs：发到频道里某条帖子的 thread 里（别人的帖子也行）。attribution：正文上方的署名行（不给就不加）。
-  async sendNew(to: string, text: string, threadTs?: string, attribution: SlackAttribution = false): Promise<{ ref: string }> {
+  async sendNew(to: string, text: string, threadTs?: string, attribution: SlackAttribution = false): Promise<SentTo> {
     const client = this.client;
     if (!client?.core) throw new Error("Slack 还没连上");
     let channel = to;
@@ -205,18 +215,33 @@ export class SlackPlugin implements ChannelPlugin {
       channel = opened.channel.id;
     }
     const res = await client.chat.send({ channel, markdown: text, ...(threadTs ? { threadTs } : {}), attribution });
-    return { ref: `${res.channel}:${res.ts}` };
+    return { ref: `${res.channel}:${res.ts}`, channel: res.channel, ...(threadTs ? { threadTs } : {}) };
   }
 
   // 在一条消息所在的线程里回一句，以你本人的身份。target 是那条消息交来时的 replyTarget；text 原样发。
   // inThread：回到对方那条消息的 thread 里；否则直接回在对话里（放哪由引擎按规矩定）。attribution：正文上方的署名行（不给就不加）。
-  async send(target: Readonly<Record<string, string>>, text: string, inThreadOf = true, attribution: SlackAttribution = false): Promise<{ ref: string }> {
+  async send(target: Readonly<Record<string, string>>, text: string, inThreadOf = true, attribution: SlackAttribution = false): Promise<SentTo> {
     const client = this.client;
     if (!client) throw new Error("Slack 还没连上");
     const channel = target.channel!;
     const inThread = target.thread_ts ?? (inThreadOf ? target.ts : undefined);
     const res = await client.chat.send({ channel, markdown: text, ...(inThread ? { threadTs: inThread } : {}), attribution });
-    return { ref: `${res.channel}:${res.ts}` };
+    return { ref: `${res.channel}:${res.ts}`, channel: res.channel, ...(inThread ? { threadTs: inThread } : {}) };
+  }
+
+  // 正文发完，把附的图一张张发到同一个地方。返回没发上的（名字和原因）；全发上了是空的。
+  async sendImages(to: SentTo, images: readonly { file: string; name: string; mime: string }[]): Promise<string[]> {
+    const files = this.client?.files;
+    if (!files) return images.map((i) => `${i.name}：这个 Slack 连接传不了文件`);
+    const failed: string[] = [];
+    for (const img of images) {
+      try {
+        await files.upload({ filename: img.name, content: readFileSync(img.file), mimeType: img.mime, channel: to.channel, ...(to.threadTs ? { threadTs: to.threadTs } : {}) });
+      } catch (error) {
+        failed.push(`${img.name}：${error instanceof Error ? error.message.slice(0, 120) : String(error)}`);
+      }
+    }
+    return failed;
   }
 
   // ── 收消息 ──

@@ -300,6 +300,10 @@ export function replyCard($: Engine, ui: Els, s: Snapshot, edit: Record<string, 
             {md(ui, body.replace(/<@([UW][A-Z0-9]+)>/g, (_, id: string) => `**@${s.people?.[id] ?? id}**`))}
           </Box>
         ))}
+      {/* 附的图：发之前让你看到会跟着发出去哪几张。 */}
+      {(r.images ?? []).length > 0 && (
+        <Text size="footnote" dimColor wrap="wrap">附图 {r.images!.length} 张（正文发完跟着发到同一个地方）：{r.images!.map(i => `${i.name}（${Math.max(1, Math.round(i.bytes / 1024))} KB）`).join('、')}</Text>
+      )}
 
       <Box flexDirection="row" gap="sm" flexWrap="wrap" alignItems="center">
         <Button key={`sd${r.id}`} variant="primary" onPress={() => send($, r)}>{r.status === 'failed' ? '重发' : approve ? 'approve' : '发送'}</Button>

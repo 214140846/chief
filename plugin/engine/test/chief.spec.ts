@@ -1,5 +1,5 @@
 import { execFileSync, spawn } from "node:child_process";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -461,7 +461,7 @@ describe("Slack 署名放在正文上方的小字里", () => {
     const plugin = new SlackPlugin({ createClient: async () => fake });
     await plugin.start({ secrets: { cookie_d: "xoxd-x" }, deliver: async () => {}, threadSeen: () => false, status: () => {}, log: () => {} });
     const attribution = { text: "🤖 agent reply · confirmed by {self}", review: "confirmed" as const };
-    expect(await plugin.send({ channel: "C1", ts: "1.0" }, "好的，今天合", true, attribution)).toEqual({ ref: "C1:9.0" });
+    expect(await plugin.send({ channel: "C1", ts: "1.0" }, "好的，今天合", true, attribution)).toEqual({ ref: "C1:9.0", channel: "C1", threadTs: "1.0" });
     await plugin.sendNew("U0ABC", "jk 你好", undefined, attribution);
     await plugin.send({ channel: "C1", ts: "1.0" }, "不加署名", false);
     expect(calls).toEqual([
@@ -669,5 +669,74 @@ describe("GitHub 上不报的机器人", () => {
     expect(() => run(h, "not a login; rm -rf", "rules", "bot", "add")).toThrow();
     run(h, "acme-review", "rules", "bot", "remove");
     expect((JSON.parse(chief(h, "rules", "json")) as { bots: string[] }).bots).toEqual([]);
+  });
+});
+
+describe("回复附图", () => {
+  const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(32)]);
+  const run = (h: string, input: string, ...args: string[]) =>
+    execFileSync(process.execPath, ["--import", TSX, CLI, ...args], { env: { ...process.env, CHIEF_HOME: h }, encoding: "utf8", input, stdio: ["pipe", "pipe", "pipe"] });
+
+  it("只认真的图片：看文件开头，不看扩展名；软链接、太大的不收；收下复制一份", async () => {
+    const { sniffImage, takeImage } = await import("../src/images");
+    expect(sniffImage(PNG)?.mime).toBe("image/png");
+    expect(sniffImage(Buffer.from([0xff, 0xd8, 0xff, 0xe0]))?.mime).toBe("image/jpeg");
+    expect(sniffImage(Buffer.from("GIF89a..."))?.mime).toBe("image/gif");
+    expect(sniffImage(Buffer.from("RIFF\0\0\0\0WEBPVP8 "))?.mime).toBe("image/webp");
+    const d = home();
+    writeFileSync(join(d, "arch.png"), PNG);
+    writeFileSync(join(d, "secret.png"), "-----BEGIN OPENSSH PRIVATE KEY-----");
+    symlinkSync(join(d, "arch.png"), join(d, "link.png"));
+    writeFileSync(join(d, "huge.png"), Buffer.concat([PNG, Buffer.alloc(10 * 1024 * 1024)]));
+    const got = takeImage(join(d, "arch.png"), join(d, "out"), "r1-1");
+    expect(got).toMatchObject({ name: "arch.png", mime: "image/png", bytes: PNG.length });
+    expect(readFileSync(got.file)).toEqual(PNG);
+    // 原文件后来被改了，发的还是收下时那份。
+    writeFileSync(join(d, "arch.png"), "changed");
+    expect(readFileSync(got.file)).toEqual(PNG);
+    expect(() => takeImage(join(d, "secret.png"), join(d, "out"), "x")).toThrow("不是图片");
+    expect(() => takeImage(join(d, "link.png"), join(d, "out"), "x")).toThrow("链接");
+    expect(() => takeImage(join(d, "huge.png"), join(d, "out"), "x")).toThrow("10MB");
+  });
+
+  it("chief reply add --image：Slack 的回复带上图；GitHub 的拒收", () => {
+    const h = home();
+    run(h, "帮我看下架构", "test", "--from", "Alice");
+    writeFileSync(join(h, "arch.png"), PNG);
+    mkdirSync(join(h, "drafts"), { recursive: true });
+    writeFileSync(join(h, "drafts", "1-a.md"), "架构图在下面");
+    run(h, "", "reply", "add", "--event", "1", "--file", join(h, "drafts", "1-a.md"), "--image", join(h, "arch.png"));
+    const r = (JSON.parse(chief(h, "reply", "list")) as { images?: { file: string; name: string }[] }[])[0]!;
+    expect(r.images?.map((i) => i.name)).toEqual(["arch.png"]);
+    expect(r.images?.[0]?.file.startsWith(join(h, "drafts", "images"))).toBe(true);
+    // GitHub 的评论只发文字：带图直接拒收，什么都不存。
+    const gh = { id: 9, at: "t", source: "github", kind: "github.pr", title: "o/r#44", url: null, from: "bob", text: "看下", why: ["mention"], keys: [], reply: { ref: "o/r#44" } };
+    writeFileSync(join(h, "events.jsonl"), `${readFileSync(join(h, "events.jsonl"), "utf8")}${JSON.stringify(gh)}\n`);
+    expect(() => run(h, "", "reply", "add", "--event", "9", "--file", join(h, "drafts", "1-a.md"), "--image", join(h, "arch.png"))).toThrow(/只有 Slack 的回复能附图/);
+    expect((JSON.parse(chief(h, "reply", "list")) as unknown[]).length).toBe(1);
+  });
+
+  it("发：正文发完，图发到同一个 thread；没发上的说出名字", async () => {
+    const { SlackPlugin } = await import("../src/slack/plugin");
+    const uploads: unknown[] = [];
+    let fail = false;
+    const fake = {
+      selfUserId: "U0ME",
+      core: { callWebApi: async () => ({}) },
+      on: () => {}, onError: () => {}, start: async () => {}, stop: async () => {},
+      chat: { send: async (opts: { channel: string }) => ({ channel: opts.channel, ts: "9.0" }) },
+      reactions: { add: async () => {} },
+      files: { upload: async (opts: { filename: string; channel?: string; threadTs?: string; mimeType?: string }) => { if (fail) throw new Error("file_uploads_disabled"); uploads.push({ filename: opts.filename, channel: opts.channel, threadTs: opts.threadTs, mimeType: opts.mimeType }); } },
+    };
+    const plugin = new SlackPlugin({ createClient: async () => fake });
+    await plugin.start({ secrets: { cookie_d: "xoxd-x" }, deliver: async () => {}, threadSeen: () => false, status: () => {}, log: () => {} });
+    const d = home();
+    writeFileSync(join(d, "a.png"), PNG);
+    const sent = await plugin.send({ channel: "C1", ts: "1.0" }, "架构图在下面", true);
+    expect(await plugin.sendImages(sent, [{ file: join(d, "a.png"), name: "arch.png", mime: "image/png" }])).toEqual([]);
+    expect(uploads).toEqual([{ filename: "arch.png", channel: "C1", threadTs: "1.0", mimeType: "image/png" }]);
+    fail = true;
+    expect(await plugin.sendImages(sent, [{ file: join(d, "a.png"), name: "arch.png", mime: "image/png" }])).toEqual(["arch.png：file_uploads_disabled"]);
+    await plugin.stop();
   });
 });

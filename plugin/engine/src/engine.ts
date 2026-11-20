@@ -384,7 +384,7 @@ export class Engine {
         return;
       }
       for (const r of due) {
-        let out: { url: string | null };
+        let out: { url: string | null; warning?: string };
         try {
           out = await this.sendOne(r);
         } catch (error) {
@@ -394,8 +394,9 @@ export class Engine {
           say("chief · 回复没发出去", `${r.context.who ?? r.context.where}：${why}`);
           continue;
         }
-        log(`回复 ${r.id} 发出去了（${r.source}）`);
-        if (!this.record(r.id, { status: "sent", sentAt: new Date().toISOString(), ...(out.url ? { url: out.url } : {}) })) this.unrecorded.set(r.id, out);
+        log(`回复 ${r.id} 发出去了（${r.source}）${out.warning ? `；${out.warning}` : ""}`);
+        if (out.warning) say("chief · 回复的图没发上", `${r.context.who ?? r.context.where}：${out.warning}`);
+        if (!this.record(r.id, { status: "sent", sentAt: new Date().toISOString(), ...(out.url ? { url: out.url } : {}), ...(out.warning ? { error: out.warning } : {}) })) this.unrecorded.set(r.id, out);
       }
     } catch (error) {
       log(`发回复出错：${error instanceof Error ? error.message : String(error)}`);
@@ -417,7 +418,7 @@ export class Engine {
     }
   }
 
-  private async sendOne(r: Reply): Promise<{ url: string | null }> {
+  private async sendOne(r: Reply): Promise<{ url: string | null; warning?: string }> {
     const signal = AbortSignal.timeout(60_000);
     if (r.kind === "approve") {
       const gh = findGh();
@@ -433,7 +434,9 @@ export class Engine {
         : await this.slack.send(r.target, r.body, placementOf(r.target, loadPolicy().placement) === "thread", attribution);
       this.state.sent.push(sent.ref);
       this.persist();
-      return { url: null };
+      // 附的图发到同一个地方。正文已经发出去了：图没发上也不能算整条失败（重发会把正文再发一遍），记在 error 里给你看。
+      const failed = r.images?.length ? await this.slack.sendImages(sent, r.images) : [];
+      return { url: null, ...(failed.length > 0 ? { warning: `正文发出去了，图没发上：${failed.join("；")}` } : {}) };
     }
     if (r.source === "github") {
       const gh = findGh();
