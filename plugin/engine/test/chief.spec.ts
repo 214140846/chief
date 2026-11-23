@@ -1,5 +1,5 @@
 import { execFileSync, spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmdirSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmdirSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -44,6 +44,11 @@ function yours(h: string, input: string, ...args: string[]): string {
     // 已经配过
   }
   return withStdin(h, JSON.stringify({ key: KEY, text: input }), "rules", "--yours", ...args);
+}
+
+// 在终端里跑 chief key reset，敲进 typed：用 Python 的 pty 给它一个假终端。
+function resetInTerminal(h: string, typed: string): string {
+  return execFileSync("python3", ["-c", "import pty, sys; sys.exit(pty.spawn(sys.argv[1:]) >> 8)", process.execPath, "--import", TSX, CLI, "key", "reset"], { env: { ...process.env, CHIEF_HOME: h }, encoding: "utf8", input: `${typed}\n`, stdio: ["pipe", "pipe", "pipe"] });
 }
 
 function sendByYouFails(h: string, id: string): string {
@@ -1103,9 +1108,46 @@ describe("谁能让回复发出去：引擎把关，不靠主会话自觉", () =
     expect(() => withStdin(h, JSON.stringify({ key: KEY, how: "chat" }), "reply", "confirm", "1")).toThrow(/原话/);
     withStdin(h, JSON.stringify({ key: KEY, how: "chat", said: "发吧" }), "reply", "confirm", "1");
     expect(status(h, 1)).toMatchObject({ status: "queued", by: "you", confirm: { how: "chat", said: "发吧" } });
-    chief(h, "key", "reset");
+    // 主会话没有终端：清不掉。
+    expect(chiefFails(h, "key", "reset")).toContain("终端");
+    expect(withStdin(h, KEY, "key", "check")).toContain("对上了");
+    // 你在终端里清（这里用 script 给它一个终端），插件重新加载时配新的。
+    resetInTerminal(h, "reset");
     withStdin(h, other, "key", "set");
     expect(withStdin(h, other, "key", "check")).toContain("对上了");
+  });
+
+  it("清钥匙要在终端里敲 reset；清、换都记下来（面板据此一直挂着提醒）", () => {
+    const h = setup();
+    withStdin(h, KEY, "key", "set");
+    // 插件每次加载都 set 同一把：不算换。
+    withStdin(h, KEY, "key", "set");
+    const log = () => readFileSync(join(h, "key-log.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l) as { what: string; tty?: boolean });
+    expect(log().map((x) => x.what)).toEqual(["first"]);
+    // 没敲对：不清。
+    expect(() => resetInTerminal(h, "yes")).toThrow();
+    expect(withStdin(h, KEY, "key", "check")).toContain("对上了");
+    resetInTerminal(h, "reset");
+    expect(() => withStdin(h, KEY, "key", "check")).toThrow(/对不上/);
+    withStdin(h, "cd".repeat(32), "key", "set");
+    expect(log().map((x) => x.what)).toEqual(["first", "reset", "set"]);
+    expect(log()[1]!.tty).toBe(true);
+  });
+
+  it("钥匙文件被直接删了再配一把：照样记成换了钥匙", () => {
+    const h = setup();
+    withStdin(h, KEY, "key", "set");
+    unlinkSync(join(h, "confirm-key.sha256"));
+    withStdin(h, "cd".repeat(32), "key", "set");
+    expect(readFileSync(join(h, "key-log.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l).what)).toEqual(["first", "set"]);
+  });
+
+  it("以前配的钥匙没有记录：插件下次加载时补一行，之后被删了再配也认得出", () => {
+    const h = setup();
+    withStdin(h, KEY, "key", "set");
+    unlinkSync(join(h, "key-log.jsonl"));
+    withStdin(h, KEY, "key", "set");
+    expect(readFileSync(join(h, "key-log.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l).what)).toEqual(["first"]);
   });
 
   it("ask-confirm 只记下请求，不发：等插件核对你真的说过", () => {

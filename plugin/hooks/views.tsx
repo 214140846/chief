@@ -3,7 +3,7 @@ import type { EngineInterface as Engine, RenderChildren } from 'claude-code'
 
 import type { AskRow, DecisionRow, Handle, HubUsage, ReplyMode, ReplyRow, Rule, Snapshot, ThingRow } from '../types'
 import {
-  act, answerAsk, askAlways, openImage, addCustom, addRule, addQuick, addStyle, removeCase, runEvals, saveCase, trust, annotate, clearBasket, openSession, removeQuick, removeStyle, sendBasket, setPlacement, setSignature, unannotate, decideProposal, engineDo, finish, hubStop, markRight, markWrong, redo, removeCustom, removeRule, send, setBrief,
+  ackKeyAlerts, act, answerAsk, askAlways, openImage, addCustom, addRule, addQuick, addStyle, removeCase, runEvals, saveCase, trust, annotate, clearBasket, openSession, removeQuick, removeStyle, sendBasket, setPlacement, setSignature, unannotate, decideProposal, engineDo, finish, hubStop, markRight, markWrong, redo, removeCustom, removeRule, send, setBrief,
   setEdit, setScenario, setTab, showLogs, skipOld, tell, testMessage, toggle,
 } from './actions'
 import { EVAL_DAYS, MINUTES, chartSvg, statsOf } from './data'
@@ -182,6 +182,14 @@ export function header($: Engine, ui: Els, s: Snapshot, said: string, current: s
           : broken.length > 0 ? <Text size="caption" color="error">{broken.map(k => SOURCE[k as keyof typeof SOURCE] ?? k).join('、')} 连不上</Text>
           : s.unhandled > 0 ? <Text size="caption" dimColor>{s.unhandled} 条等判断</Text> : <Text size="caption" dimColor>引擎在跑</Text>}
       </Box>
+      {s.keyAlerts.length > 0 && (
+        <Box flexDirection="column" borderStyle="round" borderColor="error" paddingX="md" paddingY="sm" gap="xs">
+          <Text weight="semibold" color="error">「以你的名义发」的钥匙被动过</Text>
+          {s.keyAlerts.map((x, i) => <Text key={`ka-${i}`} size="footnote" wrap="wrap">{ago(x.at)}：{x.what === 'reset' ? '钥匙被清掉了' : '配了一把新钥匙'}</Text>)}
+          <Text size="footnote" dimColor wrap="wrap">是你自己在终端里 chief key reset、再重新加载了插件，就点知道了。不是你：有人（可能是被消息带偏的主会话）想以你的名义发东西，先停下主会话，到「待发出」看有没有你没点过的，再在终端里 chief key reset、重新加载插件。</Text>
+          <Button key="ack-key" onPress={() => ackKeyAlerts($, s.keyAlerts.at(-1)!.at)}>是我换的，知道了</Button>
+        </Box>
+      )}
       {!s.hub.listening && (
         <Box flexDirection="column" borderStyle="round" borderColor="warning" paddingX="md" paddingY="sm" gap="xs">
           <Text weight="semibold">新消息现在没人判断</Text>

@@ -29,19 +29,20 @@
 //                                      排队发（5 秒可撤回；queue --policy 按规矩直接发，引擎再核一遍；confirm 以你的名义发，要插件的钥匙；
 //                                      ask-confirm 你在会话里说了发，等插件核对）、撤回、不发、让它重写
 //                                      edit-yours 你在面板上自己改的稿子（带钥匙，不按「不许写 chief 编号」拦）
-//   chief key set|check|reset          「以你的名义发」的钥匙：插件配，原文不落在这里
+//   chief key set|check|reset          「以你的名义发」的钥匙：插件配，原文不落在这里；reset 要你在终端里敲 reset 确认，清、换都会弹通知、面板挂提醒
 //                                      new --to 可以是一条 Slack 消息的链接：回到那条帖子的 thread 里
 //   chief slack who <名字>             找 Slack 上的人，拿到 <@U…>（写进稿子才会真的提醒到人）
 //   chief archive                      把办完超过 7 天的事件、判断、事情、回复搬进 ~/chief/data/archive（引擎每天自己搬一次）
 // 从标准输入给的文字（理由、进展、问题、稿子）不经过命令行参数：里面会引用别人的原文，不能让 shell 当成命令。
 // 写给用户看的话（问题、建议、事情标题和进展、回复正文）里带 chief 自己的编号（#98、问题 #63、回复 107）的一律拒收（见 plain.ts）；
 // 问题要提待发出里的某条，用 chief ask add --reply R 挂上。
-import { watch as fsWatch, closeSync, existsSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, realpathSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { watch as fsWatch, appendFileSync, closeSync, existsSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, realpathSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
+import { createInterface } from "node:readline/promises";
 import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { archiveOld, archivedEvent } from "./archive";
-import { Engine, SECRET } from "./engine";
+import { Engine, SECRET, say } from "./engine";
 import { autoReason, prsOf, replyHash } from "./gate";
 import { MAX_IMAGES, takeImage, type ReplyImage } from "./images";
 import { KEY, keysOf } from "./keys";
@@ -153,11 +154,51 @@ function keyMatches(key: string): boolean {
   return want.length === got.length && timingSafeEqual(want, got);
 }
 
+// 钥匙的记录：first 第一次配（不用提醒）；reset 清掉了；set 清掉以后又配了一把（换了钥匙）。
+type KeyLogEntry = { at: string; what: "first" | "reset" | "set"; tty?: boolean };
+
+function keyLog(): KeyLogEntry[] {
+  if (!existsSync(paths().keyLog)) return [];
+  return readFileSync(paths().keyLog, "utf8").split("\n").flatMap((l) => {
+    try {
+      return l.trim() ? [JSON.parse(l) as KeyLogEntry] : [];
+    } catch {
+      return [];
+    }
+  });
+}
+
+// 钥匙换了：记一行（面板一直挂着提醒，直到你在面板上点知道了），再弹一条通知。
+// 测试的数据目录在系统临时目录里：不弹（动的也不是你真的钥匙）。写死目录，不看 TMPDIR（那是谁都能设的）。
+const TEMP_DIRS = ["/tmp/", "/private/tmp/", "/var/folders/", "/private/var/folders/"];
+
+function keyChanged(what: KeyLogEntry["what"], tty: boolean): void {
+  appendFileSync(paths().keyLog, `${JSON.stringify({ at: new Date().toISOString(), what, tty })}\n`, { mode: 0o600 });
+  if (what === "first" || TEMP_DIRS.some((d) => paths().home.startsWith(d))) return;
+  say("chief · 「以你的名义发」的钥匙换了", what === "reset" ? "钥匙被清掉了。不是你在终端里清的，就是有人（可能是主会话）动了它。" : "配了一把新钥匙。不是你刚重新加载插件，就是有人（可能是主会话）换了它。");
+}
+
+// 在终端里问一句，要你亲手敲 reset。
+async function askInTerminal(prompt: string): Promise<string> {
+  const rl = createInterface({ input: process.stdin, output: process.stderr });
+  try {
+    return (await rl.question(prompt)).trim();
+  } finally {
+    rl.close();
+  }
+}
+
 // chief key set|check（标准输入给钥匙）| reset：插件第一次加载时 set；已经有一把就不让换，要换你在终端先 reset。
+// reset 要在终端里亲手敲 reset 确认，不给主会话悄悄清掉。主会话和你是同一个系统用户：它能造一个假终端、也能直接删钥匙文件，
+// 拦不死；所以每次清、换都记进 key-log.jsonl 并弹通知，面板一直挂着提醒，直到你在面板上点知道了（这一步记在插件自己的存储里）。
 async function keyCmd(args: string[]): Promise<void> {
   const sub = args.shift();
   if (sub === "reset") {
+    if (!process.stdin.isTTY) fail("chief key reset 要你在终端里亲手跑（会让你敲 reset 确认）；主会话不能替你清钥匙");
+    const typed = await askInTerminal("清掉「以你的名义发」的钥匙：插件重新加载前，面板上的发送都用不了。确认就敲 reset：");
+    if (typed !== "reset") fail("没清");
     if (existsSync(paths().confirmKey)) unlinkSync(paths().confirmKey);
+    keyChanged("reset", true);
     process.stdout.write("钥匙清掉了：chief 插件下次加载会配一把新的（在那之前面板上的发送用不了）\n");
     return;
   }
@@ -170,11 +211,16 @@ async function keyCmd(args: string[]): Promise<void> {
   }
   if (sub === "set") {
     if (existsSync(paths().confirmKey)) {
-      if (keyMatches(key)) return void process.stdout.write("已经是这把了\n");
+      if (keyMatches(key)) {
+        // 以前配的钥匙没有记录：补一行，之后被删了再配能认出是换了。
+        if (keyLog().length === 0) keyChanged("first", false);
+        return void process.stdout.write("已经是这把了\n");
+      }
       fail("已经配过另一把钥匙：要换，你在终端跑 chief key reset，再重新加载插件");
     }
     ensureHome();
     writeFileSync(paths().confirmKey, `${keyHash(key).toString("hex")}\n`, { mode: 0o600 });
+    keyChanged(keyLog().length === 0 ? "first" : "set", process.stdin.isTTY === true);
     process.stdout.write("钥匙配好了\n");
     return;
   }

@@ -16,6 +16,7 @@
 //   activity.json 事情挂着的 Claude App 会话最近的动静（引擎每分钟看一次，见 activity.ts）。
 //   rules.json    你的规矩（结构化）：每个场景怎么处理、回复要不要你确认，加上你写的自由规矩、主会话提议的规矩。
 //   confirm-key.sha256  「以你的名义发」用的钥匙的指纹：钥匙原文只在 chief 插件自己的存储里，主会话拿不到（见 cli.ts 的 chief key）。
+//   key-log.jsonl 钥匙什么时候配的、清的、换的，只追加；面板拿它提醒你钥匙被换过。
 //   reviews.json  你给主会话的判断标的对错（事件号 → 对 / 错和你说的应该怎样）。
 // 几个进程（引擎、主会话的命令、面板的命令）会同时写的文件（replies、things、policy、dispatch、routes、reviews、hub），都拿着 <文件>.lock 读改写。
 // 引擎只写 events.jsonl、state.json；命令行（消息中心在用）只写另外几个。两边不抢同一个文件。
@@ -45,6 +46,8 @@ export function paths(home = chiefHome()) {
     sources: join(home, "sources.json"),
     settings: join(home, "settings.json"),
     confirmKey: join(home, "confirm-key.sha256"),
+    // 钥匙换过的记录（一行一次，只追加）：面板看到没确认过的就一直挂着提醒，见 cli.ts 的 chief key。
+    keyLog: join(home, "key-log.jsonl"),
     routes: join(home, "routes.json"),
     hub: join(home, "hub.json"),
     dispatch: join(home, "dispatch.json"),

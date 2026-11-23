@@ -73,6 +73,10 @@ export async function refresh($: Engine) {
     readJson<Record<string, string>>($, `${dir}/people.json`, {}),
     readJson<HubUsage>($, `${dir}/hub-usage.json`, { days: {} }),
   ])
+  // 钥匙清过、换过的记录：你点过「知道了」的（记在插件自己的存储里，主会话改不了 chief 的数据就能抹掉它）不再提醒。
+  const keyAck = await $.store.get('keyAck').catch(() => null)
+  const keyAlerts = (await readLines<{ at: string; what: string }>($, `${dir}/key-log.jsonl`))
+    .filter((x): x is Snapshot['keyAlerts'][number] => (x.what === 'reset' || x.what === 'set') && (typeof keyAck !== 'string' || x.at > keyAck))
   const maxEvent = (state.nextId ?? 1) - 1
   const since = Date.now() - EVAL_DAYS * 86_400_000
   const next: Snapshot = {
@@ -93,6 +97,7 @@ export async function refresh($: Engine) {
     activity: Object.fromEntries(Object.entries(activity).filter(([k]) => k !== '_hub')),
     people,
     hubUsage,
+    keyAlerts,
     hubMode: ((activity as Record<string, unknown>)._hub as { permissionMode?: string | null } | undefined)?.permissionMode ?? null,
   }
   await update($, snap, () => next)

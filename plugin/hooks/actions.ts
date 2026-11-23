@@ -176,6 +176,12 @@ export async function removeCustom($: Engine, id: number) {
   await act($, '删情况', ['rules', 'custom', 'remove', String(id)])
 }
 
+// 钥匙换过的提醒：你点了知道了才收起（记在插件自己的存储里）。
+export async function ackKeyAlerts($: Engine, upto: string) {
+  await $.store.set('keyAck', upto)
+  await refresh($)
+}
+
 // ── 控制 ──
 
 export async function engineDo($: Engine, what: 'stop' | 'start' | 'restart') {

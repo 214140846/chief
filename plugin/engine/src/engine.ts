@@ -27,7 +27,7 @@ export const SECRET = { slack: `slack.${SLACK_COOKIE_D}`, notion: "notion.token"
 // 文字当参数交给 osascript（不拼进脚本），对方写了什么都不会被当成脚本执行。
 const NOTIFY = 'on run argv\ndisplay notification (item 2 of argv) with title (item 1 of argv)\nend run';
 
-function say(title: string, body: string): void {
+export function say(title: string, body: string): void {
   execFile("/usr/bin/osascript", ["-e", NOTIFY, title.slice(0, 80), body.replace(/\s+/g, " ").slice(0, 160)], { timeout: 10_000 }, () => {});
 }
 

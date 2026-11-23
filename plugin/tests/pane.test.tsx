@@ -51,6 +51,7 @@ const FILES: Record<string, string> = {
     { at: now, event: 2, scenario: 'slack_thread', verdict: 'noted', reason: 'Alice 只是同步看板 ready', what: { source: 'slack', title: '#proj', from: 'Alice', text: '看板 ready 了' } },
     { at: now, event: 3, scenario: 'slack_thread', verdict: 'ignored', reason: '没点你名的闲聊' },
   ].map(d => JSON.stringify(d)).join('\n'),
+  '/Users/me/chief/data/key-log.jsonl': [{ at: '2026-01-01T00:00:00.000Z', what: 'first' }, { at: now, what: 'reset' }].map(x => JSON.stringify(x)).join('\n'),
   '/Users/me/chief/data/reviews.json': JSON.stringify({ 3: { ok: true, at: now } }),
   '/Users/me/chief/data/sources.json': JSON.stringify({ slack: true, github: true }),
   '/Users/me/chief/data/activity.json': JSON.stringify({ local_abc: { at: new Date(Date.now() + 1000).toISOString(), title: 'x', last: '接口联调完了，在等后端发版', permissionMode: 'bypassPermissions', archived: false }, _hub: { permissionMode: 'auto' } }),
@@ -109,6 +110,11 @@ test('面板：主会话状态、要你定、待发出；按钮各做各的', as
   }
 
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  // 钥匙被清过：一直挂着红框，点了知道了才收起；第一次配的不提醒。
+  expect(await ui.find({ type: 'Text', text: /钥匙被动过/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /钥匙被清掉了/ })).toBeTruthy()
+  await ui.press({ key: 'ack-key' })
+  expect(await ui.find({ type: 'Text', text: /钥匙被动过/ })).toBeFalsy()
   // 问题挂着的回复：显示回谁、说什么，不显示回复号。
   expect(await ui.find({ type: 'Text', text: /相关的待发出：回 Bob Chen「处理了，报告在 thread 里」/ })).toBeTruthy()
   expect(await ui.find({ type: 'Text', text: /#5/ })).toBeFalsy()
