@@ -2,7 +2,7 @@
 import { atom, update } from 'claude-code'
 import type { EngineInterface as Engine } from 'claude-code'
 
-import type { AskRow, DecisionRow, PolicyFile, ReplyRow, Reviews, Snapshot, ThingRow } from '../types'
+import type { AskRow, DecisionRow, HubUsage, PolicyFile, ReplyRow, Reviews, Snapshot, ThingRow } from '../types'
 
 // 面板的状态都在 PluginState['chief'] 里（types/index.d.ts）；引擎要求每个文件用到哪份就在本文件里声明哪份。
 const snap = atom({ plugin: 'chief', key: 'snap' } as const, null)
@@ -57,7 +57,7 @@ async function readLines<T>($: Engine, path: string): Promise<T[]> {
 
 export async function refresh($: Engine) {
   const dir = await chiefDir($)
-  const [alive, engine, state, dispatch, things, replies, decisions, reviews, policy, sources, activity, evals, people] = await Promise.all([
+  const [alive, engine, state, dispatch, things, replies, decisions, reviews, policy, sources, activity, evals, people, hubUsage] = await Promise.all([
     readJson<{ at?: string; stopped?: boolean }>($, `${dir}/alive.json`, {}),
     readJson<{ at?: string; health?: Snapshot['health'] }>($, `${dir}/engine.json`, {}),
     readJson<{ nextId?: number }>($, `${dir}/state.json`, {}),
@@ -71,6 +71,7 @@ export async function refresh($: Engine) {
     readJson<Snapshot['activity']>($, `${dir}/activity.json`, {}),
     readJson<Snapshot['evals']>($, `${dir}/evals.json`, { cases: [], runs: [] }),
     readJson<Record<string, string>>($, `${dir}/people.json`, {}),
+    readJson<HubUsage>($, `${dir}/hub-usage.json`, { days: {} }),
   ])
   const maxEvent = (state.nextId ?? 1) - 1
   const since = Date.now() - EVAL_DAYS * 86_400_000
@@ -91,6 +92,7 @@ export async function refresh($: Engine) {
     sources,
     activity: Object.fromEntries(Object.entries(activity).filter(([k]) => k !== '_hub')),
     people,
+    hubUsage,
     hubMode: ((activity as Record<string, unknown>)._hub as { permissionMode?: string | null } | undefined)?.permissionMode ?? null,
   }
   await update($, snap, () => next)

@@ -11,6 +11,7 @@ import type { EngineInterface as Engine, Register } from 'claude-code'
 
 import { refresh, chiefDir } from './data'
 import { confirmAsked, ensureKey, noteUserSaid } from './confirm'
+import { isHub, isHubMonitor, markHub, recordCall } from './usage'
 import { autoUpdate, checkSetup, missing, readSetup, setupTab } from './setup'
 import { evalTab, header, nowTab, outboxTab, policyTab, thingsTab, type Els } from './views'
 
@@ -93,6 +94,19 @@ export const register: Register = on => {
     const ran = await next(e)
     if (e.command.includes('ask-confirm')) await confirmAsked($).catch(() => {})
     return ran
+  })
+
+  // 挂上 chief events --follow 的 Monitor：这个会话就是主会话，之后它调模型用掉的额度记下来（面板「测评」页看）。
+  on('tool.call', { tool: 'Monitor' }, async ($, e, next) => {
+    if (isHubMonitor(e.input.command)) await markHub($).catch(() => {})
+    return next(e)
+  })
+
+  // 主会话（不算它派出的子代理）每调完一次模型：读额度，记一笔。
+  on('turn.step', async function* ($, e, next) {
+    const res = yield* next(e)
+    if (e.agentId === undefined && res.usage && await isHub($).catch(() => false)) await recordCall($, res.usage).catch(() => {})
+    return res
   })
 
   on('command.run', { command: 'chief' }, async $ => {

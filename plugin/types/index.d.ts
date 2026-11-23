@@ -114,6 +114,19 @@ export type Snapshot = {
   evals: { cases: { id: number; text: string; from: string; expect: 'dispatch' | 'note' | 'ignore' | 'ask'; note?: string }[]; runs: { id: number; at: string; events: Record<string, number> }[] }
   // 演练消息的判断（不算进「替你做了」）。
   dryDecisions: DecisionRow[]
+  // 主会话用掉的订阅额度（hub-usage.json）。
+  hubUsage: HubUsage
+}
+
+// 主会话一天用掉的额度（hooks/usage.ts 记）：five / week 是 5 小时、每周窗口涨了几个百分点（量到的加估的），
+// weight 是 token 按价钱折算的份量，measured 是其中量到的那部分。
+export type UsageDay = { calls: number; weight: number; five: number; week: number; measured: { weight: number; five: number; week: number } }
+export type HubUsage = {
+  days: Record<string, UsageDay>
+  // 量到的平均速度：每份 token 涨几个百分点（估隔得久的那次用）。
+  rate?: { five: number; week: number }
+  // 最近一次读数：上下文多长、整个账号两个窗口用了多少、什么时候重置。
+  now?: { at: string; context: number | null; window: number; five: number | null; week: number | null; fiveReset?: string; weekReset?: string }
 }
 
 export type Tab = 'now' | 'outbox' | 'things' | 'policy' | 'eval' | 'setup'
@@ -168,6 +181,10 @@ declare module 'claude-code' {
       setup: Setup
       // 你在这个会话里最近亲口说的一句话（插件核对「你在会话里说了发」用）。
       said: { text: string; at: number } | null
+      // 本会话是不是主会话（挂过 chief events --follow 的 Monitor）。
+      hub: boolean
+      // 本会话上一次调完模型读到的额度百分比。
+      reading: { at: number; five: number | null; week: number | null } | null
     }
   }
 }

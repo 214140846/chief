@@ -1,12 +1,13 @@
 // 面板的六个页签怎么画。元素来自当前界面（App / 终端）的元素表；App 才有的（输入框、下拉、Markdown、图）没有时退回纯文字。
 import type { EngineInterface as Engine, RenderChildren } from 'claude-code'
 
-import type { AskRow, DecisionRow, Handle, ReplyMode, ReplyRow, Rule, Snapshot, ThingRow } from '../types'
+import type { AskRow, DecisionRow, Handle, HubUsage, ReplyMode, ReplyRow, Rule, Snapshot, ThingRow } from '../types'
 import {
   act, answerAsk, openImage, addCustom, addRule, addQuick, addStyle, removeCase, runEvals, saveCase, trust, annotate, clearBasket, openSession, removeQuick, removeStyle, sendBasket, setPlacement, setSignature, unannotate, decideProposal, engineDo, finish, hubStop, markRight, markWrong, redo, removeCustom, removeRule, send, setBrief,
   setEdit, setScenario, setTab, showLogs, skipOld, tell, testMessage, toggle,
 } from './actions'
 import { EVAL_DAYS, MINUTES, chartSvg, statsOf } from './data'
+import { dayOf } from './usage'
 
 export type Els = ReturnType<Engine['ui']['resolve']>
 
@@ -752,6 +753,52 @@ export function policyTab($: Engine, ui: Els, s: Snapshot, opened: string[]) {
 
 // ── 测评 ──
 
+// 上下文超过这么多，每来一条消息都要把它整个读一遍，额度涨得快：提醒换个新主会话。
+const LONG_CONTEXT = 300_000
+const pts = (n: number) => (n < 0.05 ? '不到 0.1' : n.toFixed(1))
+const WEEKDAY = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
+function resetAt(iso: string | undefined, withDay: boolean): string {
+  if (!iso) return ''
+  const d = new Date(iso)
+  const hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+  return `，${withDay ? WEEKDAY[d.getDay()] : ''}${hm} 重置`
+}
+
+// 主会话用掉的订阅额度（hooks/usage.ts 记的）：今天、最近几天、账号现在的两个窗口、上下文多长。
+export function usageBox(ui: Els, u: HubUsage) {
+  const { Box, Text } = ui
+  const days = Object.entries(u.days).sort(([a], [b]) => b.localeCompare(a))
+  const now = u.now
+  return (
+    <Box flexDirection="column" borderStyle="round" borderColor="inactive" paddingX="md" paddingY="sm" gap="xs" marginTop="sm">
+      <Text weight="semibold">主会话用掉的额度</Text>
+      {days.length === 0
+        ? <Text dimColor wrap="wrap">还没记到。主会话挂上收消息的 Monitor 以后开始记（插件刚更新的话，等它下次重挂，最多半小时）。</Text>
+        : (
+          <Box flexDirection="column" gap="xs">
+            {days.slice(0, 7).map(([day, d], i) => (
+              <Text key={`ud-${day}`} wrap="wrap" dimColor={i > 0}>
+                {day === dayOf(Date.now()) ? '今天' : day.slice(5)}：5 小时额度约 {pts(d.five)} 个点 · 每周额度约 {pts(d.week)} 个点 · 调了 {d.calls} 次模型
+              </Text>
+            ))}
+          </Box>
+        )}
+      {now && (now.five !== null || now.week !== null) && (
+        <Text size="footnote" dimColor wrap="wrap">
+          整个账号现在（含你别的会话）：{now.five !== null ? `5 小时已用 ${now.five}%${resetAt(now.fiveReset, false)}` : ''}{now.five !== null && now.week !== null ? ' · ' : ''}{now.week !== null ? `每周已用 ${now.week}%${resetAt(now.weekReset, true)}` : ''}
+        </Text>
+      )}
+      {now && now.context !== null && (
+        <Text size="footnote" color={now.context > LONG_CONTEXT ? 'warning' : undefined} dimColor={now.context <= LONG_CONTEXT} wrap="wrap">
+          主会话上下文 {Math.round(now.context / 10_000)} 万 token
+          {now.context > LONG_CONTEXT ? '：太长了，每来一条消息都要整个读一遍，额度涨得快。开个新会话说「开 chief 消息中心」接手（进度、规矩都在 chief 里，不会丢）。' : ''}
+        </Text>
+      )}
+      <Text size="caption" dimColor wrap="wrap">主会话每调完一次模型，看两个窗口的百分比涨了多少，记在它头上；闲了一阵后的第一次按平均速度估。百分比只精确到 0.1，你同时用着别的会话也会混进一点，所以是「约」。账号的总用量在任意会话里输入 /usage 看。</Text>
+    </Box>
+  )
+}
+
 export function evalTab($: Engine, ui: Els, s: Snapshot, opened: string[]) {
   const { Box, Text, Button } = ui
   const st = statsOf(s)
@@ -822,6 +869,8 @@ export function evalTab($: Engine, ui: Els, s: Snapshot, opened: string[]) {
           估算：只记下 / 忽略的每条按 {MINUTES.quiet} 分钟（读、判断），派活每件 {MINUTES.dispatched} 分钟（找会话、交代），回复每条 {MINUTES.reply} 分钟，approve 每个 {MINUTES.approve} 分钟。只算它替你做的，不算会话里干的活。
         </Text>
       </Box>
+
+      {usageBox(ui, s.hubUsage)}
 
       <Box flexDirection="column" borderStyle="round" borderColor="inactive" paddingX="md" paddingY="sm" gap="xs" marginTop="sm">
         <Box flexDirection="row" justifyContent="space-between" alignItems="center">
