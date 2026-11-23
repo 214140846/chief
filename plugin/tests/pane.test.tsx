@@ -1,6 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import { askedAfter } from '../hooks/confirm'
+import { listify } from '../hooks/views'
 import type { ReplyRow } from '../types'
 
 const PANE = {
@@ -94,7 +95,7 @@ test('面板：主会话状态、要你定、待发出；按钮各做各的', as
     expect(await ui.find({ type: 'Text', text: /2 条等判断/ })).toBeTruthy()
     expect(await ui.find({ type: 'Text', text: /判断了 3 条 · 派人去办 1 · 只记下 1 · 忽略 1 · 替你发出 1/ })).toBeTruthy()
     expect(await ui.find({ type: 'Text', text: /今天截止/ })).toBeTruthy()
-    expect(await ui.find({ type: 'Text', text: /Joe 问能不能本周上线/ })).toBeTruthy()
+    expect(await ui.find({ type: 'Markdown', text: /Joe 问能不能本周上线/ })).toBeTruthy()
     // 等你确认的回复直接在「现在要你」里。
     expect(await ui.find({ type: 'Text', text: /等你确认再发 · 2/ })).toBeTruthy()
     await ui.unmount()
@@ -379,4 +380,12 @@ test('会话里确认：只放行你说完话以后提的请求；还能发的�
   expect(askedAfter(items, said, said.at + 60_000)).toEqual([2])
   expect(askedAfter(items, said, said.at + 16 * 60_000)).toEqual([])
   expect(askedAfter(items, null, said.at)).toEqual([])
+})
+
+test('挤在一段里的几个问题拆成编号列表，日期和「第 9 层」不算编号', () => {
+  const q = '前端方案里写明是占位英文、等 Ivy 定。两件事要你定：1 现在就改成「Processing」，还是等 Ivy 这批文案一起改？2 迁移栈第 9 层的 PR 描述里要不要补一段占位文案清单？'
+  expect(listify(q)).toBe('前端方案里写明是占位英文、等 Ivy 定。两件事要你定：\n\n1. 现在就改成「Processing」，还是等 Ivy 这批文案一起改？\n2. 迁移栈第 9 层的 PR 描述里要不要补一段占位文案清单？')
+  expect(listify('1 等 Ivy 这批一起改，她 25/26 号就给文案，省得改两次；2 补上，方便 review。')).toBe('1. 等 Ivy 这批一起改，她 25/26 号就给文案，省得改两次\n2. 补上，方便 review。')
+  expect(listify('只有一件事：要不要等 1 天？')).toBe('只有一件事：要不要等 1 天？')
+  expect(listify('已经分好行：\n1. 甲\n2. 乙')).toBe('已经分好行：\n1. 甲\n2. 乙')
 })

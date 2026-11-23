@@ -104,6 +104,21 @@ function annotateBox($: Engine, ui: Els, key: string, label: string, opened: str
   )
 }
 
+// 主会话常把几个问题挤在一段里（「两件事要你定：1 …？2 …？」）：按 1、2、3… 的顺序认出编号，拆成编号列表，一条一行。
+// 编号前面得是开头、空格或标点，后面不能紧跟数字（25/26 号、第 9 层不算）；凑不齐 1 和 2 就原样返回。
+export function listify(text: string): string {
+  if (/\n\s*(\d+[.)、]|[-*] )/.test(text)) return text
+  const marks: { start: number; end: number }[] = []
+  for (const m of text.matchAll(/(^|[\s：:；;？?。，,])([1-9])(?!\d)[.、．)）]?\s*/g)) {
+    if (Number(m[2]) !== marks.length + 1) continue
+    marks.push({ start: m.index + m[1].length, end: m.index + m[0].length })
+  }
+  if (marks.length < 2) return text
+  const head = text.slice(0, marks[0].start).trim()
+  const items = marks.map((k, i) => text.slice(k.end, marks[i + 1]?.start ?? text.length).trim().replace(/[；;，,]$/, ''))
+  return `${head === '' ? '' : `${head}\n\n`}${items.map((x, i) => `${i + 1}. ${x}`).join('\n')}`
+}
+
 function md(ui: Els, text: string, dim = false) {
   const { Text } = ui
   return 'Markdown' in ui ? <ui.Markdown text={text} dimColor={dim} /> : <Text dimColor={dim} wrap="wrap">{text}</Text>
@@ -202,8 +217,8 @@ export function nowTab($: Engine, ui: Els, s: Snapshot, opened: string[] = [], e
           
           {t ? <Text dimColor size="caption">{t.title}</Text> : <Text dimColor size="caption">要你定</Text>}
         </Box>
-        <Text weight="semibold" wrap="wrap">{q.question}</Text>
-        {q.suggest !== '' && <Box flexDirection="column"><Text dimColor size="caption">建议</Text>{md(ui, q.suggest)}</Box>}
+        {md(ui, listify(q.question))}
+        {q.suggest !== '' && <Box flexDirection="column"><Text dimColor size="caption">建议</Text>{md(ui, listify(q.suggest))}</Box>}
         <Box flexDirection="row" gap="sm">
           {q.suggest !== '' && (
             <Button key={`ok${q.id}`} variant="primary" onPress={() => tell($, `chief：问题 #${q.id} 照建议办`, '照建议办', true)}>照建议办</Button>
