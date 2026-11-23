@@ -1,6 +1,8 @@
 {
   "name": "chief",
-  "owner": { "name": "jinjin99" },
+  "owner": {
+    "name": "jinjin99"
+  },
   "plugins": [
     {
       "name": "chief",
@@ -9,8 +11,8 @@
         "source": "git-subdir",
         "url": "https://github.com/jinjin99/chief.git",
         "path": "plugin",
-        "ref": "v0.2.2",
-        "sha": "40b030c0a9a3c69df034760737ec08997386c282"
+        "ref": "v0.3.0",
+        "sha": "196da77b3f9c8c96da467975e1fc99852a540de3"
       }
     }
   ]
