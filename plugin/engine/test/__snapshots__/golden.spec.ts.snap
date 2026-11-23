@@ -1,0 +1,236 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`金样：Slack 消息 → 事件 > 我在的 thread 1`] = `
+{
+  "at": "2026-11-19T00:00:00.000Z",
+  "from": "Carol",
+  "fromId": "U1",
+  "keys": [
+    "slack:C1:1.0",
+    "github.com/acme/shop/pull/12",
+    "PROJ-479",
+  ],
+  "kind": "message.received",
+  "reply": {
+    "audience": "channel",
+    "channel": "C1",
+    "thread_ts": "1.0",
+    "ts": "3.0",
+  },
+  "source": "slack",
+  "text": "@你 看下 [PR](https://github.com/acme/shop/pull/12) 和 PROJ-479 @Alice @here #ops",
+  "title": "#dev",
+  "url": null,
+  "why": [
+    "thread",
+  ],
+}
+`;
+
+exports[`金样：Slack 消息 → 事件 > 私信 1`] = `
+{
+  "at": "2026-11-19T00:00:00.000Z",
+  "from": "Carol",
+  "fromId": "U1",
+  "keys": [
+    "slack:D1:2.0",
+    "github.com/acme/shop/pull/12",
+    "PROJ-479",
+  ],
+  "kind": "message.received",
+  "reply": {
+    "audience": "direct",
+    "channel": "D1",
+    "ts": "2.0",
+  },
+  "source": "slack",
+  "text": "@你 看下 [PR](https://github.com/acme/shop/pull/12) 和 PROJ-479 @Alice @here #ops",
+  "title": "Carol 的私信",
+  "url": null,
+  "why": [
+    "dm",
+  ],
+}
+`;
+
+exports[`金样：Slack 消息 → 事件 > 给自己发的 1`] = `
+{
+  "at": "2026-11-19T00:00:00.000Z",
+  "from": "你",
+  "fromId": "U1",
+  "keys": [
+    "slack:D0:4.0",
+    "github.com/acme/shop/pull/12",
+    "PROJ-479",
+  ],
+  "kind": "message.received",
+  "reply": {
+    "audience": "self",
+    "channel": "C1",
+    "ts": "1.0",
+  },
+  "source": "slack",
+  "text": "@你 看下 [PR](https://github.com/acme/shop/pull/12) 和 PROJ-479 @Alice @here #ops",
+  "title": "你在 Slack 上给助理的话",
+  "url": null,
+  "why": [
+    "self",
+  ],
+}
+`;
+
+exports[`金样：Slack 消息 → 事件 > 频道里 @我 1`] = `
+{
+  "at": "2026-11-19T00:00:00.000Z",
+  "from": "Carol",
+  "fromId": "U1",
+  "keys": [
+    "slack:C1:1.0",
+    "github.com/acme/shop/pull/12",
+    "PROJ-479",
+  ],
+  "kind": "message.received",
+  "reply": {
+    "audience": "channel",
+    "channel": "C1",
+    "ts": "1.0",
+  },
+  "source": "slack",
+  "text": "@你 看下 [PR](https://github.com/acme/shop/pull/12) 和 PROJ-479 @Alice @here #ops",
+  "title": "#dev",
+  "url": null,
+  "why": [
+    "mention",
+  ],
+}
+`;
+
+exports[`金样：外部来源的动态 → 事件 > github PR 请我 review 1`] = `
+{
+  "at": "2026-11-19T00:00:00Z",
+  "from": null,
+  "keys": [
+    "github.com/acme/shop/pull/12",
+    "PROJ-479",
+    "OPS-7",
+  ],
+  "kind": "github.pr",
+  "reply": {
+    "ref": "acme/shop#12",
+  },
+  "source": "github",
+  "text": "PR 开着；新评论：bob：看 OPS-7",
+  "title": "acme/shop#12 加字段 PROJ-479",
+  "url": "https://github.com/acme/shop/pull/12",
+  "why": [
+    "review",
+  ],
+}
+`;
+
+exports[`金样：外部来源的动态 → 事件 > github issue @我 1`] = `
+{
+  "at": "2026-11-19T00:00:00Z",
+  "from": null,
+  "keys": [
+    "github.com/acme/shop/issues/3",
+  ],
+  "kind": "github.issue",
+  "reply": {
+    "ref": "Acme/Shop#3",
+  },
+  "source": "github",
+  "text": "s",
+  "title": "Acme/Shop#3 bug",
+  "url": "https://github.com/Acme/Shop/issues/3",
+  "why": [
+    "mention",
+    "comment",
+  ],
+}
+`;
+
+exports[`金样：外部来源的动态 → 事件 > github 认不出地址 1`] = `
+{
+  "at": "2026-11-19T00:00:00Z",
+  "from": null,
+  "keys": [
+    "https://example.com/x",
+  ],
+  "kind": "k",
+  "reply": {
+    "ref": "a/b#1",
+  },
+  "source": "github",
+  "text": "s",
+  "title": "t",
+  "url": "https://example.com/x",
+  "why": [
+    "mention",
+  ],
+}
+`;
+
+exports[`金样：外部来源的动态 → 事件 > jira 指派给我 1`] = `
+{
+  "at": "2026-11-19T00:00:00Z",
+  "from": null,
+  "keys": [
+    "PROJ-479",
+    "github.com/acme/shop/pull/12",
+  ],
+  "kind": "jira.issue",
+  "reply": {
+    "key": "PROJ-479",
+  },
+  "source": "jira",
+  "text": "Jira PROJ-479 提到 github.com/acme/shop/pull/12",
+  "title": "PROJ-479 加字段",
+  "url": "https://x.atlassian.net/browse/PROJ-479",
+  "why": [
+    "assigned",
+  ],
+}
+`;
+
+exports[`金样：外部来源的动态 → 事件 > jira 没有工单号 1`] = `
+{
+  "at": "2026-11-19T00:00:00Z",
+  "from": null,
+  "keys": [
+    "",
+  ],
+  "kind": "jira.issue",
+  "reply": {
+    "key": "",
+  },
+  "source": "jira",
+  "text": "s",
+  "title": "t",
+  "url": "https://example.com",
+  "why": [
+    "mention",
+  ],
+}
+`;
+
+exports[`金样：外部来源的动态 → 事件 > notion 新评论 1`] = `
+{
+  "at": "2026-11-19T00:00:00Z",
+  "from": null,
+  "keys": [
+    "notion:0123456789abcdef0123456789abcdef",
+  ],
+  "kind": "notion.page",
+  "reply": {
+    "page": "0123456789abcdef0123456789abcdef",
+  },
+  "source": "notion",
+  "text": "s",
+  "title": "Notion「周报」",
+  "url": "https://www.notion.so/x-0123456789abcdef0123456789abcdef",
+  "why": [
+    "comment",
+  ],
+}
+`;

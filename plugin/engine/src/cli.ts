@@ -473,6 +473,11 @@ async function thing(args: string[]): Promise<void> {
           x.log = [...x.log, { at, text: `卡住：${report.blocker}` }].slice(-MAX_LOG);
         } else delete x.blocker;
       }
+      // 办完、不做了：下一步和阻碍都过时了，清掉（不然卡片上还挂着「等你定」）。
+      if (status === "done" || status === "dropped") {
+        delete x.next;
+        delete x.blocker;
+      }
       if (report.result) {
         x.results = [...(x.results ?? []), report.result].slice(-20);
         x.log = [...x.log, { at, text: `结果：${report.result}` }].slice(-MAX_LOG);
@@ -518,6 +523,8 @@ async function ask(args: string[]): Promise<void> {
   }
   if (sub === "answer") {
     const id = num(args.shift(), "问题号");
+    // --from-panel：你在面板上答的。马上记下，再造一条事件，主会话空下来时转告那件事的会话（不用等它回你）。
+    const fromPanel = args.includes("--from-panel");
     const answer = await stdinText();
     if (!answer) fail("回答是空的");
     const out = updateThings((t) => {
@@ -527,9 +534,19 @@ async function ask(args: string[]): Promise<void> {
       a.answer = answer;
       const x = t.things.find((y) => y.id === a.thing);
       if (x && x.status === "waiting_you" && !t.asks.some((y) => y.thing === x.id && y.status === "open")) x.status = "doing";
-      return { ask: a.id, thing: a.thing, session: x?.session ?? null, reply: a.reply ?? null };
+      return { ask: a.id, thing: a.thing, title: x?.title ?? "", question: a.question, session: x?.session ?? null, reply: a.reply ?? null };
     });
-    process.stdout.write(`${JSON.stringify(out)}\n`);
+    if (fromPanel) {
+      withLock(paths().state, () => {
+        const st = loadState();
+        appendEvent({
+          id: st.nextId++, at: new Date().toISOString(), source: "session", kind: "ask.answered", title: `问题 #${out.ask} 你答了：${out.title}`.slice(0, 200), url: null, from: "你",
+          text: `问题：${out.question}\n你的回答：${answer}`, why: ["answered"], keys: out.session ? [out.session] : [], reply: { ask: String(out.ask), thing: String(out.thing) },
+        });
+        saveState(st);
+      });
+    }
+    process.stdout.write(`${JSON.stringify({ ask: out.ask, thing: out.thing, session: out.session, reply: out.reply })}\n`);
     return;
   }
   fail("chief ask add|list|answer");

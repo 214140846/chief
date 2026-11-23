@@ -14,7 +14,7 @@ import { GitHubSource, findGh, ghRunner } from "./sources/github";
 import { JiraSource, acliRunner, findAcli } from "./sources/jira";
 import { NotionSource } from "./sources/notion";
 import type { Source, SourceItem } from "./sources/types";
-import { appendEvent, ensureHome, loadDispatch, loadEnabled, readEvents, readJson, loadPolicy, loadState, placementOf, paths, saveState, updateReplies, withLock, writeJson, type Enabled, type EngineState, type EventSource, type ChiefEvent, type Reply } from "./store";
+import { appendEvent, ensureHome, loadDispatch, loadEnabled, loadThings, readEvents, readJson, loadPolicy, loadState, placementOf, paths, saveState, updateReplies, withLock, writeJson, type Enabled, type EngineState, type EventSource, type ChiefEvent, type Reply } from "./store";
 
 const POLL_MS = 5 * 60_000;
 // 第一次连上：往回看一天。
@@ -178,6 +178,8 @@ export class Engine {
   private readonly firstSeen = new Map<number, number>();
   private lastHubNag = 0;
   private sessionWatcher: FSWatcher | null = null;
+  // 见过的「要你定」：工作会话自己 chief ask add 的，主会话不知道，由引擎弹通知。null = 还没看过一遍（引擎刚起来时已有的不弹）。
+  private knownAsks: Set<number> | null = null;
 
   async start(): Promise<void> {
     ensureHome();
@@ -254,6 +256,10 @@ export class Engine {
           }, `missed:${e.id}`);
         }
       }
+      // 新的「要你定」：弹通知叫你看面板（最多晚一分钟）。
+      const open = loadThings().asks.filter((a) => a.status === "open");
+      if (this.knownAsks !== null) for (const a of open) if (!this.knownAsks.has(a.id)) say("chief · 有事要你定", a.question);
+      this.knownAsks = new Set(open.map((a) => a.id));
       // 主会话掉线了、又有消息等着：叫你。引擎刚起来的头几分钟不算（主会话可能还没挂上）。
       const waiting = events.filter((e) => !handled[e.id] && !e.dryrun).length;
       if (down && waiting > 0 && now - this.startedAt >= HUB_DOWN_MS && now - this.lastHubNag >= HUB_NAG_MS) {

@@ -90,10 +90,13 @@ test('面板：主会话状态、要你定、待发出；按钮各做各的', as
   // 要你定的卡片只有三条路：照建议办、看细节、写你的决定发送；没有批注。
   expect(await ui.find({ key: 'ok3' })).toBeTruthy()
   expect(await ui.find({ key: 'an-a3' })).toBeFalsy()
+  // 你的决定由面板直接记下（不经过主会话，主会话忙也不用等），主会话之后从事件里拿去转告。
+  const promptsBefore = prompts.length
   await ui.press({ key: 'ok3' })
-  expect(prompts.at(-1)).toBe('chief：问题 #3 照建议办')
+  expect(runs.some(r => r.argv.slice(1).join(' ') === 'ask answer 3 --from-panel' && r.stdin === '照建议办：回复下周二上线')).toBe(true)
   await ui.input({ key: 'in3', text: '下周三，我来回' })
-  expect(prompts.at(-1)).toBe('chief：问题 #3 的回答：下周三，我来回')
+  expect(runs.some(r => r.argv.slice(1).join(' ') === 'ask answer 3 --from-panel' && r.stdin === '下周三，我来回')).toBe(true)
+  expect(prompts.length).toBe(promptsBefore)
 
   await ui.press({ key: 'tab-outbox' })
   expect(await ui.find({ type: 'Text', text: /压测那个你处理了吗/ })).toBeTruthy()

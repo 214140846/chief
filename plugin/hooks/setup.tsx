@@ -53,11 +53,11 @@ export async function readSetup($: Engine) {
   return read($, setup)
 }
 
-// 还差几步（必需的：引擎、Slack、消息中心）。
+// 还差几步（必需的只有引擎和消息中心；来源都是可选的，一个不开也能用：活由你在主会话里交代）。
 export function missing(s: Setup): number {
   const d = s.doctor
-  if (!s.installed || d === null) return 3
-  return [d.engine === 'running' && d.version === wanted, d.sources.slack.enabled && d.sources.slack.ready, d.hub.listening].filter(ok => !ok).length
+  if (!s.installed || d === null) return 2
+  return [d.engine === 'running' && d.version === wanted, d.hub.listening].filter(ok => !ok).length
 }
 
 async function step($: Engine, busy: Setup['busy'], run: () => Promise<{ exitCode: number; stdout: string; stderr: string } | null>) {
@@ -215,7 +215,8 @@ export function setupTab($: Engine, ui: Els, st: Setup, s: Snapshot | null, logT
   const slackReady = d?.sources.slack.ready === true
   // 还没记过工作区、又不在登录中：Slack 那行给一个填工作区的输入框，代替「登录 Slack」按钮。
   const askWorkspace = st.busy !== 'slack' && st.installed && d !== null && !d.slackWorkspace && d.chrome !== false
-  const slackOk = on('slack') && fails('slack') === 0 && (d === null || slackReady)
+  // 开着的来源都连得上就算好（一个都不开也算好）。
+  const sourcesOk = (['slack', 'github', 'jira', 'notion'] as const).every(src => !on(src) || fails(src) === 0)
   const tool = (id: 'github' | 'jira', install: string, login: string) => {
     const t = d?.sources[id]
     if (on(id)) return [line(id, off(id))]
@@ -257,7 +258,7 @@ export function setupTab($: Engine, ui: Els, st: Setup, s: Snapshot | null, logT
     <Box flexDirection="column" gap="sm" marginTop="sm">
       {!st.installed && <Text weight="semibold">设置 chief：从上往下点，先装引擎</Text>}
       {block('set-engine', engineOk, '后台引擎（收消息、发回复）', engine)}
-      {block('set-sources', slackOk, '来源', sources)}
+      {block('set-sources', sourcesOk, '来源', sources, true)}
       {block('set-hub', listening, '主会话', hub)}
       {d !== null && block('set-awake', d.awake, '插电时不让电脑睡', (
         <Box flexDirection="column" gap="xs">

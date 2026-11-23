@@ -206,7 +206,7 @@ export function nowTab($: Engine, ui: Els, s: Snapshot, opened: string[] = [], e
         {q.suggest !== '' && <Box flexDirection="column"><Text dimColor size="caption">建议</Text>{md(ui, q.suggest)}</Box>}
         <Box flexDirection="row" gap="sm">
           {q.suggest !== '' && (
-            <Button key={`ok${q.id}`} variant="primary" onPress={() => tell($, `chief：问题 #${q.id} 照建议办`, '照建议办')}>照建议办</Button>
+            <Button key={`ok${q.id}`} variant="primary" onPress={() => void act($, '照建议办', ['ask', 'answer', String(q.id), '--from-panel'], `照建议办：${q.suggest}`)}>照建议办</Button>
           )}
           {t?.session && (
             <Button key={`oa${q.id}`} onPress={() => openSession($, t.session ?? '', t.title)}>看细节</Button>
@@ -215,7 +215,7 @@ export function nowTab($: Engine, ui: Els, s: Snapshot, opened: string[] = [], e
         {/* 要你定的卡片只给三条路：照建议办、去会话里看、写你的决定。攒着一起发的「批注」只放在进度页。 */}
         {'Input' in ui && (
           <ui.Input key={`in${q.id}`} placeholder="不同意？写你的决定" submitLabel="发送" onSubmit={(v: string) => {
-            if (v.trim()) void tell($, `chief：问题 #${q.id} 的回答：${v.trim()}`, '你的决定')
+            if (v.trim()) void act($, '你的决定', ['ask', 'answer', String(q.id), '--from-panel'], v.trim())
           }} />
         )}
       </Box>
