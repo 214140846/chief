@@ -190,6 +190,8 @@ describe("事情和要你定的", () => {
     execFileSync(process.execPath, ["--import", TSX, CLI, "rules", "add"], { env: { ...process.env, CHIEF_HOME: h }, input: "Bob Chen 问进度可以直接回" });
     expect(chief(h, "rules")).toContain("Bob Chen 问进度可以直接回");
     expect(chiefFails(h, "rules", "set", "slack_dm", "reply=maybe")).toContain("看不懂");
+    expect(chiefFails(h, "rules", "set", "slack_dm", "handle=command")).toContain("只能用在你给自己发的私信");
+    chief(h, "rules", "set", "slack_self", "handle=command");
   });
 
   it("判断记一行，带理由；跳过旧的不记判断", () => {

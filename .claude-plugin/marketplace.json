@@ -2,6 +2,16 @@
   "name": "chief",
   "owner": { "name": "jinjin99" },
   "plugins": [
-    { "name": "chief", "source": "./plugin", "description": "私人助理：找你的消息派给对应的 Claude 会话去办" }
+    {
+      "name": "chief",
+      "description": "私人助理：找你的消息派给对应的 Claude 会话去办",
+      "source": {
+        "source": "git-subdir",
+        "url": "https://github.com/jinjin99/chief.git",
+        "path": "plugin",
+        "ref": "v0.2.2",
+        "sha": "fc00f480c67774c370c61e0f062446819bd6f3db"
+      }
+    }
   ]
 }

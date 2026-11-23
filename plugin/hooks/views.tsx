@@ -565,7 +565,7 @@ export function policyTab($: Engine, ui: Els, s: Snapshot, opened: string[]) {
         <Box flexDirection="row" justifyContent="space-between" alignItems="center" gap="sm" flexWrap="wrap">
           <Box flexGrow={1} flexShrink={1} minWidth={16}><Text wrap="wrap">{label}</Text></Box>
           <Box flexDirection="row" gap="sm" alignItems="center">
-            {select(ui, `h-${target}`, r.handle, HANDLES, val => void setScenario($, target, 'handle', val as Handle))}
+            {select(ui, `h-${target}`, r.handle, target === 'slack_self' ? HANDLES : HANDLES.filter(h => h.value !== 'command'), val => void setScenario($, target, 'handle', val as Handle))}
             {r.handle !== 'ignore' && r.handle !== 'note' && select(ui, `m-${target}`, r.reply, MODES, val => void setScenario($, target, 'reply', val as ReplyMode))}
           </Box>
         </Box>

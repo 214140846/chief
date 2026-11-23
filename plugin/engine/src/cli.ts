@@ -852,6 +852,8 @@ async function rules(args: string[]): Promise<void> {
       if ((k === "handle" && HANDLE_VALUES.includes(v as Handle)) || (k === "reply" && (v === "ask" || v === "auto"))) return [k, v!];
       fail(`看不懂 ${oneLine(kv, 40)}：handle=${HANDLE_VALUES.join("|")} reply=ask|auto`);
     });
+    // 「当成我的指令」只给你自己发的话用：别人的消息不能被当成你的指令。
+    if (target !== "slack_self" && changes.some(([k, v]) => k === "handle" && v === "command")) fail("「当成我的指令」只能用在你给自己发的私信（slack_self）上");
     const now = updatePolicy((pp) => {
       const r = ruleOf(pp, target);
       for (const [k, v] of changes) {
@@ -874,6 +876,7 @@ async function rules(args: string[]): Promise<void> {
         fail("标准输入是一句「什么情况」，或 JSON：{\"when\": \"…\", \"handle\": \"dispatch\", \"reply\": \"ask\", \"brief\": \"…\"}");
       }
       if (typeof c.when !== "string" || !c.when.trim()) fail("when（什么情况）不能空");
+      if (c.handle === "command") fail("「当成我的指令」只能用在你给自己发的私信（slack_self）上");
       const handle = typeof c.handle === "string" && HANDLE_VALUES.includes(c.handle as Handle) ? (c.handle as Handle) : "dispatch";
       const reply: ReplyMode = c.reply === "auto" ? "auto" : "ask";
       const brief = typeof c.brief === "string" && c.brief.trim() ? oneLine(c.brief, 500) : undefined;

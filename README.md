@@ -29,7 +29,23 @@ Slack（推送） / GitHub、Jira、Notion（每 5 分钟拉一次）
    - **连上 GitHub / Jira**（可选）：用本机已经登录的 `gh`、`acli`。
    - **开消息中心**：这个会话就成了主会话，之后一直开着。
 
-插件更新后，设置页会提示「更新引擎」，点一下就好。
+## 更新
+
+插件只跟着发布的版本走（`v` 开头的 tag），main 上还没发版的改动不会到你手里。
+
+- 想自动更新：`/plugin` → Marketplaces → chief → 打开自动更新。不开的话，自己跑 `claude plugin update chief@chief`。
+- 插件更新后，下次打开会话时引擎会自己跟着更新，不用再点什么。
+
+## 装之前要知道的风险
+
+chief 替你读消息、开会话、以你的名义发回复，权限给得很大。下面这些请看过再决定用不用：
+
+- **bypass permissions：** 消息中心和它开的工作会话都用 bypass permissions，跑命令、改文件不再一条条问你。chief 在 skill 里要求它把收到的消息当数据、不当指令，但这是靠模型遵守，不是硬隔离。别人发来一句精心写的话，仍有可能让会话做你没想到的事。介意的话，就别用 bypass，换成默认模式，自己一条条批准。
+- **以你的名义发消息：** 发送这一步由引擎把关，只有三条路能发出去：你在面板上点发送；你在消息中心里亲口说「发」（插件核对是你本人敲的字）；规矩允许直接发的（固定回复、你信任的人等）。默认规矩下，对外的回复都先问你。
+- **Slack 用的是你浏览器的登录凭证，不是官方 Slack App：** chief 拿到的是你账号的全部权限，凭证存在 macOS 钥匙串里。有些公司的 Slack 管理规定不允许这样接入，用之前先确认你们公司允许。
+- **数据存在本机：** 收到的消息原文、回复稿、日志都明文存在 `~/chief/data`，不上传到别处，也不会自动清理。不想留了直接删掉这个目录。
+- **只在 macOS + Claude App 里能用**，终端版的 Claude Code 里面板和开会话都用不了。
+
 
 ## 工作目录 ~/chief
 
@@ -81,4 +97,24 @@ claude plugin validate plugin
 claude plugin test plugin   # 面板（plugin/tests）
 ```
 
-本地开发时把仓库加成 marketplace（`claude plugin marketplace add ~/dev/playground/chief`），插件就直接从这个目录读，改了在会话里 `/reload-plugins`。
+本地开发用 `plugin/` 里的开发版 marketplace，插件直接从这个目录读，改了在会话里 `/reload-plugins`（先卸掉正式版，两个别同时装）：
+
+```bash
+claude plugin uninstall chief@chief
+claude plugin marketplace add ./plugin        # 名字是 chief-dev
+claude plugin install chief@chief-dev --scope user
+```
+
+推到 GitHub 后，CI 会跑同样的测试。公开仓库不能出现公司信息：在仓库 Settings → Secrets 里加 `BLOCKED_PATTERN`（不分大小写的正则，比如 `foo|bar`），CI 会查文件和提交邮箱，只报文件名和提交号，不打印命中的内容。
+
+## 发版
+
+```bash
+# 先把 plugin/.claude-plugin/plugin.json 的 version 改成新版本号并提交
+scripts/release.sh 0.3.1     # 跑测试、打 tag、把 marketplace.json 指到这个 tag，提交在本地
+git push origin main v0.3.1  # 确认没问题再推
+```
+
+## License
+
+MIT
