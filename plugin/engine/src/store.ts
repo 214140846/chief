@@ -420,6 +420,8 @@ export interface Proposal {
   // 依据：你哪几次纠正了它。
   basis: string;
   at: string;
+  // 主会话想放宽发送（见 cli.ts 的 chief rules --yours）：没带钥匙就记成提议，采纳时照原样再跑一遍这条命令。
+  change?: { args: string[]; input: string };
 }
 
 // Slack 对话的种类：一对一私信、群聊、频道、和你自己的私信。

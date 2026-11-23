@@ -36,6 +36,16 @@ function sendByYou(h: string, id: string): string {
   return withStdin(h, JSON.stringify({ key: KEY, how: "panel" }), "reply", "confirm", id);
 }
 
+// 你在面板上改规矩：带钥匙（chief rules --yours），放宽发送的也直接生效。
+function yours(h: string, input: string, ...args: string[]): string {
+  try {
+    withStdin(h, KEY, "key", "set");
+  } catch {
+    // 已经配过
+  }
+  return withStdin(h, JSON.stringify({ key: KEY, text: input }), "rules", "--yours", ...args);
+}
+
 function sendByYouFails(h: string, id: string): string {
   try {
     sendByYou(h, id);
@@ -185,7 +195,7 @@ describe("事情和要你定的", () => {
   it("规矩：场景表加自由规矩，能改", () => {
     const h = home();
     expect(chief(h, "rules")).toContain("Slack 私信（slack_dm）：派人去办；回复先给我确认");
-    chief(h, "rules", "set", "slack_dm", "reply=auto");
+    yours(h, "", "set", "slack_dm", "reply=auto");
     expect(chief(h, "rules")).toContain("Slack 私信（slack_dm）：派人去办；回复直接发");
     execFileSync(process.execPath, ["--import", TSX, CLI, "rules", "add"], { env: { ...process.env, CHIEF_HOME: h }, input: "Bob Chen 问进度可以直接回" });
     expect(chief(h, "rules")).toContain("Bob Chen 问进度可以直接回");
@@ -352,7 +362,7 @@ describe("策略能自己加、approve、进度表", () => {
     expect(chief(h, "rules")).toContain("custom:1 当「Slack 里有人发 PR 链接");
     const out = run(h, "Jira 上 QA 提的 bug 指给我", "rules", "custom", "add");
     expect(out).toContain("custom:2");
-    chief(h, "rules", "set", "custom:2", "handle=dispatch", "reply=auto");
+    yours(h, "", "set", "custom:2", "handle=dispatch", "reply=auto");
     run(h, "先复现再修", "rules", "brief", "custom:2");
     expect(chief(h, "rules")).toContain("当「Jira 上 QA 提的 bug 指给我」：派人去办；回复直接发（发前 5 秒可撤回）；交代：先复现再修");
     chief(h, "rules", "custom", "remove", "2");
@@ -403,9 +413,9 @@ describe("Slack 署名", () => {
   it("默认加 agent 署名，能改、能清掉", () => {
     const h = home();
     expect(chief(h, "rules")).toContain("正文上方会自动加一行灰色小字署名：🤖 agent reply · confirmed by @我");
-    execFileSync(process.execPath, ["--import", TSX, CLI, "rules", "sign"], { env: { ...process.env, CHIEF_HOME: h }, input: "— Rikki 的助手代回" });
+    yours(h, "— Rikki 的助手代回", "sign");
     expect(JSON.parse(chief(h, "rules", "json")).signature).toBe("— Rikki 的助手代回");
-    execFileSync(process.execPath, ["--import", TSX, CLI, "rules", "sign"], { env: { ...process.env, CHIEF_HOME: h }, input: "" });
+    yours(h, "", "sign");
     expect(chief(h, "rules")).toContain("（不加）");
   });
 });
@@ -662,7 +672,7 @@ describe("白名单", () => {
       { id: 1, at: "t", source: "slack", kind: "k", title: "私信", url: null, from: "Bob Lee", fromId: "U0BOB1234", text: "压测好了吗", why: ["dm"], keys: [], reply: { channel: "D1", ts: "1" } },
       { id: 2, at: "t", source: "slack", kind: "k", title: "私信", url: null, from: "Joe", fromId: "U0JOE1234", text: "能上线吗", why: ["dm"], keys: [], reply: { channel: "D2", ts: "1" } },
     ].map((e) => JSON.stringify(e)).join("\n") + "\n");
-    withStdin(h, "bob lee", "rules", "trust", "add");
+    yours(h, "bob lee", "trust", "add");
     writeFileSync(join(h, "drafts", "a.md"), "好了");
     expect(JSON.parse(chief(h, "reply", "add", "--event", "1", "--file", join(h, "drafts", "a.md")))).toMatchObject({ policy: "auto", trusted: true });
     expect(JSON.parse(chief(h, "reply", "add", "--event", "2", "--file", join(h, "drafts", "a.md")))).toMatchObject({ policy: "ask" });
@@ -680,6 +690,73 @@ describe("白名单", () => {
     expect(isTrusted([""], "", "")).toBe(false);
     // 全大写、不带数字的名字不当成编号。
     expect(isTrusted(["WES"], "wes", "U0WES1234")).toBe(true);
+  });
+});
+
+describe("放宽发送的规矩要你点头", () => {
+  const rulesJson = (h: string) => JSON.parse(chief(h, "rules", "json")) as { scenarios: Record<string, { handle: string; reply: string }>; custom: { id: number; handle: string; reply: string }[]; trusted: string[]; quick: string[]; signature: string; notes: string[]; proposals: { id: number; text: string; change?: unknown }[] };
+
+  it("不带钥匙：放宽的都变成提议，不生效；收紧的直接改", () => {
+    const h = home();
+    expect(chief(h, "rules", "set", "slack_dm", "reply=auto")).toContain("它提议的规矩");
+    chief(h, "rules", "set", "custom:1", "handle=approve");
+    withStdin(h, JSON.stringify({ when: "有人让我 approve", handle: "approve", reply: "ask" }), "rules", "custom", "add");
+    withStdin(h, JSON.stringify({ when: "QA 的 bug", handle: "dispatch", reply: "auto" }), "rules", "custom", "add");
+    withStdin(h, "U0EVE9999", "rules", "trust", "add");
+    withStdin(h, "好的", "rules", "quick", "add");
+    withStdin(h, "", "rules", "sign");
+    let p = rulesJson(h);
+    expect(p.scenarios.slack_dm!.reply).toBe("ask");
+    expect(p.custom.map((c) => c.id)).toEqual([1]);
+    expect(p.trusted).toEqual([]);
+    expect(p.quick).toEqual([]);
+    expect(p.signature).toBe("🤖 agent reply");
+    // custom:1 本来就是直接 approve，没变：不算放宽，不提议。
+    expect(p.proposals.map((x) => x.text)).toEqual([
+      "「Slack 私信」改成：派人去办；回复直接发（发前 5 秒可撤回）",
+      "加一种情况「有人让我 approve」：直接 approve PR；approve 前先问我",
+      "加一种情况「QA 的 bug」：派人去办；回复直接发（发前 5 秒可撤回）",
+      "白名单加上 U0EVE9999：回 ta 的话不用你确认直接发",
+      "固定回复加上「好的」：回复正好是这句就不问你直接发",
+      "Slack 回复不再加署名（对方看不出是 agent 代发的）",
+    ]);
+    // 收紧的不用钥匙。
+    chief(h, "rules", "set", "custom:1", "reply=ask");
+    chief(h, "rules", "set", "slack_self", "handle=note");
+    p = rulesJson(h);
+    expect(p.custom[0]).toMatchObject({ handle: "approve", reply: "ask" });
+    expect(p.scenarios.slack_self!.handle).toBe("note");
+    // 改回「当成我的指令」是放宽。
+    chief(h, "rules", "set", "slack_self", "handle=command");
+    expect(rulesJson(h).scenarios.slack_self!.handle).toBe("note");
+  });
+
+  it("主会话采纳不了放宽的提议；你在面板上点（带钥匙）才照原样生效；不要的不用钥匙", () => {
+    const h = home();
+    chief(h, "rules", "set", "slack_dm", "reply=auto");
+    withStdin(h, "U0EVE9999", "rules", "trust", "add");
+    withStdin(h, JSON.stringify({ when: "QA 的 bug", handle: "dispatch", reply: "auto" }), "rules", "custom", "add");
+    const [a, b, c] = rulesJson(h).proposals.map((x) => String(x.id));
+    expect(chiefFails(h, "rules", "accept", a!)).toContain("面板上点采纳");
+    // 钥匙不对也不行。
+    expect(() => withStdin(h, JSON.stringify({ key: "cd".repeat(32), text: "" }), "rules", "--yours", "accept", a!)).toThrow(/钥匙对不上/);
+    yours(h, "", "accept", a!);
+    yours(h, "", "accept", c!);
+    chief(h, "rules", "reject", b!);
+    const p = rulesJson(h);
+    expect(p.scenarios.slack_dm!.reply).toBe("auto");
+    expect(p.custom.find((x) => x.id === 2)).toMatchObject({ handle: "dispatch", reply: "auto" });
+    expect(p.trusted).toEqual([]);
+    expect(p.proposals).toEqual([]);
+    // 采纳的是改动本身，不是一条文字规矩。
+    expect(p.notes.some((n) => n.includes("Slack 私信"))).toBe(false);
+  });
+
+  it("主会话的文字提议照旧：采纳不用钥匙，进你写的规矩", () => {
+    const h = home();
+    const id = withStdin(h, JSON.stringify({ text: "Alice 问进度派活", basis: "你标错了" }), "rules", "propose").trim();
+    chief(h, "rules", "accept", id);
+    expect(rulesJson(h).notes).toContain("Alice 问进度派活");
   });
 });
 
@@ -916,14 +993,14 @@ describe("谁能让回复发出去：引擎把关，不靠主会话自觉", () =
     // 私信默认「回复先问你」：主会话说规矩允许也没用。
     expect(chiefFails(h, "reply", "queue", "1", "--policy")).toContain("要你确认");
     expect(status(h, 1).status).toBe("pending");
-    chief(h, "rules", "set", "slack_dm", "reply=auto");
+    yours(h, "", "set", "slack_dm", "reply=auto");
     expect(chief(h, "reply", "queue", "1", "--policy")).toContain("按规矩直接发");
     expect(status(h, 1)).toMatchObject({ status: "queued", by: "policy" });
   });
 
   it("固定回复：一字不差才放行，多一个字都不行", () => {
     const h = setup();
-    withStdin(h, "approve 了 ✅", "rules", "quick", "add");
+    yours(h, "approve 了 ✅", "quick", "add");
     chief(h, "reply", "add", "--event", "1", "--file", draft(h, "a.md", "approve 了 ✅，明天上线"));
     expect(chiefFails(h, "reply", "queue", "1", "--policy")).toContain("要你确认");
     chief(h, "reply", "add", "--event", "1", "--file", draft(h, "b.md", "approve 了 ✅"));
@@ -951,7 +1028,7 @@ describe("谁能让回复发出去：引擎把关，不靠主会话自觉", () =
 
   it("reply new 发的固定回复：queue --policy 拒掉", () => {
     const h = setup();
-    withStdin(h, "收到 👍", "rules", "quick", "add");
+    yours(h, "收到 👍", "quick", "add");
     chief(h, "reply", "new", "--to", "U0EVE9999", "--file", draft(h, "n.md", "收到 👍"));
     expect(chiefFails(h, "reply", "queue", "1", "--policy")).toContain("要你确认");
     expect(status(h, 1).status).toBe("pending");

@@ -21,7 +21,8 @@
 //   chief eval add|from-event|list|remove|run|report  演练：拿例子测主会话会怎么办（不真的办），对结果
 //   chief import                       导入用：Jira 指派给你没做完的、GitHub 你开着的 / 等你 review 的 PR
 //   chief ask add|list|answer          要你定的
-//   chief rules [show|json|set|brief|add|remove|propose|accept|reject]  你的规矩（含每类活的交代），和主会话提议的规矩
+//   chief rules [show|json|set|brief|add|remove|propose|accept|reject]  你的规矩（含每类活的交代），和主会话提议的规矩；
+//                                      放宽发送的改动（直接发、直接 approve、白名单、固定回复、署名）不带 --yours（插件的钥匙）只会变成提议，等你在面板上采纳
 //   chief review <事件号> ok|wrong     你给主会话的一次判断标对错（错的时候标准输入给应该怎样）
 //   chief reply add|approve|new|list|edit|queue|confirm|ask-confirm|undo|drop|redo   回复 / approve / 主动发新消息：加进待发出、改、
 //                                      排队发（5 秒可撤回；queue --policy 按规矩直接发，引擎再核一遍；confirm 以你的名义发，要插件的钥匙；
@@ -829,11 +830,45 @@ function ruleLine(r: ScenarioRule): string {
   return `${HANDLES[r.handle]}${replyPart}${r.brief ? `；交代：${r.brief}` : ""}`;
 }
 
+// 放宽发送的改动（让更多回复、approve 不问你就发）要你点头。主会话读的是别人写的原文，可能被人带着改规矩：
+//   chief rules --yours <子命令…>：带 chief 插件的钥匙（面板上改的），标准输入给 JSON {key, text}，text 是这条命令本来从标准输入给的东西。直接生效。
+//   不带钥匙：放宽的改动不生效，记成提议放进面板「它提议的规矩」，你点采纳（面板带钥匙）才照原样生效。收紧的不用钥匙。
+// 算放宽的：场景 / 你加的情况改成 reply=auto 或 handle=approve|command，加这样的情况，白名单加人，固定回复加句子，改署名，「一定问我」名单删掉一项。
+// 主会话和你是同一个系统用户，直接改 rules.json 拦不住；这里管的是它照正常路子（chief 命令）改规矩时不能自己放宽。
+type RulesOpts = { yours: boolean; text: string };
+
+// 放宽的改动没带钥匙：记成提议（说清改的是什么），告诉主会话还没生效。
+function proposeLoosen(argv: string[], input: string, text: string): void {
+  const id = updatePolicy((pp) => {
+    const x = { id: pp.nextProposal++, text, basis: "这条会放宽发送（更多东西不问你就发），主会话改不了，要你点采纳才生效", at: new Date().toISOString(), change: { args: argv, input } };
+    pp.proposals.push(x);
+    return x.id;
+  });
+  process.stdout.write(`没改：这条会放宽发送，要用户点头。已放进面板「它提议的规矩」（提议 ${id}），用户点采纳才生效\n`);
+}
+
 // chief rules：给消息中心读的规矩全文。
 // chief rules set <场景|custom:号> handle=… reply=ask|auto；chief rules brief <场景|custom:号>（标准输入）；
 // chief rules custom add（标准输入：一句「什么情况」，或 JSON {when, handle, reply, brief}）| custom remove <号>；
 // chief rules add（标准输入一句）；chief rules remove（标准输入给那一条的原文）
-async function rules(args: string[]): Promise<void> {
+// 放宽发送的（见上面）不带 --yours 只会变成提议。
+async function rules(args: string[], given?: RulesOpts): Promise<void> {
+  let opts = given;
+  if (opts === undefined && args[0] === "--yours") {
+    args.shift();
+    let req: { key?: unknown; text?: unknown };
+    try {
+      req = JSON.parse(await stdinRaw(MAX_TEXT * 4)) as typeof req;
+    } catch {
+      fail("--yours 的标准输入给 JSON：{\"key\": …, \"text\": …}");
+    }
+    if (typeof req.key !== "string" || !keyMatches(req.key)) fail("钥匙对不上：--yours 只给你在面板上改规矩用");
+    opts = { yours: true, text: typeof req.text === "string" ? req.text.replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, " ").trim().slice(0, MAX_TEXT) : "" };
+  }
+  const yours = opts?.yours === true;
+  const input = async () => (opts !== undefined ? opts.text : stdinText());
+  // 这条命令原样（提议采纳时再跑一遍）。
+  const argv = [...args];
   const sub = args.shift();
   const p = loadPolicy();
   // 第一次看规矩时把默认的写下来；老的文件缺后来加的东西（我加的情况、新场景）就补上。面板直接读这个文件。
@@ -877,6 +912,12 @@ async function rules(args: string[]): Promise<void> {
     });
     // 「当成我的指令」只给你自己发的话用：别人的消息不能被当成你的指令。
     if (target !== "slack_self" && changes.some(([k, v]) => k === "handle" && v === "command")) fail("「当成我的指令」只能用在你给自己发的私信（slack_self）上");
+    const cur = ruleOf(p, target);
+    const loosen = changes.some(([k, v]) => (k === "reply" && v === "auto" && cur.reply !== "auto") || (k === "handle" && (v === "approve" || v === "command") && cur.handle !== v));
+    if (loosen && !yours) {
+      const after = { ...cur, ...Object.fromEntries(changes) } as ScenarioRule;
+      return proposeLoosen(argv, "", `「${target in SCENARIOS ? SCENARIOS[target as Scenario] : target}」改成：${ruleLine(after)}`);
+    }
     const now = updatePolicy((pp) => {
       const r = ruleOf(pp, target);
       for (const [k, v] of changes) {
@@ -891,7 +932,7 @@ async function rules(args: string[]): Promise<void> {
   if (sub === "custom") {
     const what = args.shift();
     if (what === "add") {
-      const raw = await stdinText();
+      const raw = await input();
       let c: { when?: unknown; handle?: unknown; reply?: unknown; brief?: unknown };
       try {
         c = raw.startsWith("{") ? (JSON.parse(raw) as typeof c) : { when: raw };
@@ -904,6 +945,9 @@ async function rules(args: string[]): Promise<void> {
       const reply: ReplyMode = c.reply === "auto" ? "auto" : "ask";
       const brief = typeof c.brief === "string" && c.brief.trim() ? oneLine(c.brief, 500) : undefined;
       const when = oneLine(c.when, 200);
+      if ((reply === "auto" || handle === "approve") && !yours) {
+        return proposeLoosen(argv, raw, `加一种情况「${when}」：${ruleLine({ handle, reply, ...(brief ? { brief } : {}) })}`);
+      }
       const id = updatePolicy((pp) => {
         const x: CustomScenario = { id: pp.nextCustom++, when, handle, reply, ...(brief ? { brief } : {}) };
         pp.custom.push(x);
@@ -927,9 +971,10 @@ async function rules(args: string[]): Promise<void> {
   // chief rules trust add|remove（标准输入：Slack 用户编号 U…，或完整的显示名）：白名单。名字要一字不差（不分大小写），不认名字的一部分
   if (sub === "trust") {
     const what = args.shift();
-    const text = oneLine(await stdinText(), 80);
+    const text = oneLine(await input(), 80);
     if (!text) fail("从标准输入给一个人：Slack 用户编号（U…，最稳），或完整的显示名（一字不差，不分大小写）");
     if (what === "add") {
+      if (!yours && !p.trusted.includes(text)) return proposeLoosen(argv, text, `白名单加上 ${text}：回 ta 的话不用你确认直接发`);
       updatePolicy((pp) => {
         if (!pp.trusted.includes(text)) pp.trusted.push(text);
       });
@@ -950,9 +995,10 @@ async function rules(args: string[]): Promise<void> {
   // chief rules quick add|remove（标准输入一句原文）：固定回复，一字不差才允许直接发
   if (sub === "quick") {
     const what = args.shift();
-    const text = (await stdinText()).trim();
+    const text = (await input()).trim();
     if (!text || text.length > 200) fail("从标准输入给一句原文（200 字以内）");
     if (what === "add") {
+      if (!yours && !p.quick.includes(text)) return proposeLoosen(argv, text, `固定回复加上「${text}」：回复正好是这句就不问你直接发`);
       updatePolicy((pp) => {
         if (!pp.quick.includes(text)) pp.quick.push(text);
       });
@@ -973,7 +1019,7 @@ async function rules(args: string[]): Promise<void> {
   // chief rules bot add|remove（标准输入一个 GitHub 登录名）：GitHub 上不报的机器人
   if (sub === "bot") {
     const what = args.shift();
-    const login = (await stdinText()).trim().toLowerCase();
+    const login = (await input()).trim().toLowerCase();
     // GitHub 登录名：字母、数字、连字符，最多 39 个字；机器人账号可能带 [bot]。
     if (!/^[a-z0-9](?:[a-z0-9-]{0,38})(?:\[bot\])?$/.test(login)) fail("从标准输入给一个 GitHub 登录名，比如 acme-review-bot");
     if (what === "add") {
@@ -997,7 +1043,7 @@ async function rules(args: string[]): Promise<void> {
   // chief rules style add（标准输入一句）| style remove（标准输入那一条的原文）：回复写法
   if (sub === "style") {
     const what = args.shift();
-    const text = oneLine(await stdinText(), 300);
+    const text = oneLine(await input(), 300);
     if (!text) fail("从标准输入给那一条写法");
     if (what === "add") {
       updatePolicy((pp) => {
@@ -1032,8 +1078,10 @@ async function rules(args: string[]): Promise<void> {
     return;
   }
   // chief rules sign（标准输入给一行标识，显示在替你发到 Slack 的话正文上方；空的就是不加）
+  // 署名告诉对方这是 agent 代发的：改它（尤其清掉）算放宽，要你点头。
   if (sub === "sign") {
-    const text = oneLine(await stdinText(), 80);
+    const text = oneLine(await input(), 80);
+    if (!yours && text !== p.signature) return proposeLoosen(argv, text, text ? `Slack 回复的署名改成「${text}」` : "Slack 回复不再加署名（对方看不出是 agent 代发的）");
     updatePolicy((pp) => {
       pp.signature = text;
     });
@@ -1043,7 +1091,7 @@ async function rules(args: string[]): Promise<void> {
   // chief rules brief <场景|custom:号>（标准输入给交代的话；空的就是清掉）
   if (sub === "brief") {
     const target = args.shift() ?? fail("chief rules brief <场景|custom:号>");
-    const text = oneLine(await stdinText(), 500);
+    const text = oneLine(await input(), 500);
     updatePolicy((pp) => {
       const r = ruleOf(pp, target);
       if (text) r.brief = text;
@@ -1053,7 +1101,7 @@ async function rules(args: string[]): Promise<void> {
     return;
   }
   if (sub === "add") {
-    const text = oneLine(await stdinText(), 300);
+    const text = oneLine(await input(), 300);
     if (!text) fail("规矩是空的（从标准输入给一句）");
     const n = updatePolicy((pp) => {
       if (!pp.notes.includes(text)) pp.notes.push(text);
@@ -1064,7 +1112,7 @@ async function rules(args: string[]): Promise<void> {
   }
   // 按原文删（标准输入给那一条）：连点两下也只删这一条，不会删到下一条。
   if (sub === "remove") {
-    const text = oneLine(await stdinText(), 300);
+    const text = oneLine(await input(), 300);
     if (!text) fail("从标准输入给要删的那一条的原文");
     const gone = updatePolicy((pp) => {
       const before = pp.notes.length;
@@ -1078,7 +1126,7 @@ async function rules(args: string[]): Promise<void> {
   if (sub === "propose") {
     let body: { text?: unknown; basis?: unknown };
     try {
-      body = JSON.parse(await stdinText()) as typeof body;
+      body = JSON.parse(await input()) as typeof body;
     } catch {
       fail('标准输入要是 JSON：{"text": "…", "basis": "…"}');
     }
@@ -1093,18 +1141,22 @@ async function rules(args: string[]): Promise<void> {
     process.stdout.write(`${id}\n`);
     return;
   }
+  // 采纳放宽发送的提议要钥匙（你在面板上点）：主会话不能自己提、自己采纳。不要（拒掉）不用。
   if (sub === "accept" || sub === "reject") {
     const id = num(args.shift(), "提议号");
+    const pending = p.proposals.find((y) => y.id === id);
+    if (sub === "accept" && pending?.change && !yours) fail("这条会放宽发送：要用户自己在面板上点采纳");
     const x = updatePolicy((pp) => {
       const found = pp.proposals.find((y) => y.id === id) ?? oops(`没有提议 ${id}（可能已经处理了）`);
       pp.proposals = pp.proposals.filter((y) => y.id !== id);
-      if (sub === "accept" && !pp.notes.includes(found.text)) pp.notes.push(found.text);
+      if (sub === "accept" && !found.change && !pp.notes.includes(found.text)) pp.notes.push(found.text);
       return found;
     });
+    if (sub === "accept" && x.change) await rules([...x.change.args], { yours: true, text: x.change.input });
     process.stdout.write(sub === "accept" ? `采纳了：${x.text}\n` : "不要了\n");
     return;
   }
-  fail("chief rules [show|json|set|brief|sign|place|style|trust|custom|add|remove|propose|accept|reject]");
+  fail("chief rules [--yours] [show|json|set|brief|sign|place|style|trust|quick|bot|custom|add|remove|propose|accept|reject]");
 }
 
 // ── 你给判断标对错 ──
