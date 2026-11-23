@@ -434,7 +434,7 @@ export class Engine {
         : await this.slack.send(r.target, r.body, placementOf(r.target, loadPolicy().placement) === "thread", attribution);
       this.state.sent.push(sent.ref);
       this.persist();
-      // 附的图发到同一个地方。正文已经发出去了：图没发上也不能算整条失败（重发会把正文再发一遍），记在 error 里给你看。
+      // 附的图跟着正文（发进哪个 thread 见 imageThreadOf）。正文已经发出去了：图没发上也不能算整条失败（重发会把正文再发一遍），记在 error 里给你看。
       const failed = r.images?.length ? await this.slack.sendImages(sent, r.images) : [];
       return { url: null, ...(failed.length > 0 ? { warning: `正文发出去了，图没发上：${failed.join("；")}` } : {}) };
     }

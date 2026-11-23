@@ -487,7 +487,7 @@ describe("Slack 署名放在正文上方的小字里", () => {
     const plugin = new SlackPlugin({ createClient: async () => fake });
     await plugin.start({ secrets: { cookie_d: "xoxd-x" }, deliver: async () => {}, threadSeen: () => false, status: () => {}, log: () => {} });
     const attribution = { text: "🤖 agent reply · confirmed by {self}", review: "confirmed" as const };
-    expect(await plugin.send({ channel: "C1", ts: "1.0" }, "好的，今天合", true, attribution)).toEqual({ ref: "C1:9.0", channel: "C1", threadTs: "1.0" });
+    expect(await plugin.send({ channel: "C1", ts: "1.0" }, "好的，今天合", true, attribution)).toEqual({ ref: "C1:9.0", channel: "C1", ts: "9.0", threadTs: "1.0" });
     await plugin.sendNew("U0ABC", "jk 你好", undefined, attribution);
     await plugin.send({ channel: "C1", ts: "1.0" }, "不加署名", false);
     expect(calls).toEqual([
@@ -763,6 +763,44 @@ describe("回复附图", () => {
     expect(uploads).toEqual([{ filename: "arch.png", channel: "C1", threadTs: "1.0", mimeType: "image/png" }]);
     fail = true;
     expect(await plugin.sendImages(sent, [{ file: join(d, "a.png"), name: "arch.png", mime: "image/png" }])).toEqual(["arch.png：file_uploads_disabled"]);
+    await plugin.stop();
+  });
+
+  it("图和正文在一起：发到频道的新消息、直接回在频道里的，图进正文自己的 thread；回 thread 的进同一个 thread；私信里直接回的图紧跟在下面", async () => {
+    const { SlackPlugin, imageThreadOf } = await import("../src/slack/plugin");
+    const uploads: { filename: string; channel: string | undefined; threadTs: string | undefined }[] = [];
+    let n = 0;
+    const fake = {
+      selfUserId: "U0ME",
+      core: { callWebApi: async (method: string) => (method === "conversations.open" ? { channel: { id: "D7" } } : {}) },
+      on: () => {}, onError: () => {}, start: async () => {}, stop: async () => {},
+      chat: { send: async (opts: { channel: string }) => ({ channel: opts.channel, ts: `${++n}0.0` }) },
+      reactions: { add: async () => {} },
+      files: { upload: async (opts: { filename: string; channel?: string; threadTs?: string }) => { uploads.push({ filename: opts.filename, channel: opts.channel, threadTs: opts.threadTs }); } },
+    };
+    const plugin = new SlackPlugin({ createClient: async () => fake });
+    await plugin.start({ secrets: { cookie_d: "xoxd-x" }, deliver: async () => {}, threadSeen: () => false, status: () => {}, log: () => {} });
+    const d = home();
+    writeFileSync(join(d, "a.png"), PNG);
+    const two = [{ file: join(d, "a.png"), name: "a.png", mime: "image/png" }, { file: join(d, "a.png"), name: "b.png", mime: "image/png" }];
+    const imagesOf = async (sent: Parameters<typeof imageThreadOf>[0]) => {
+      uploads.length = 0;
+      expect(await plugin.sendImages(sent, two)).toEqual([]);
+      return uploads.map((u) => `${u.filename}@${u.channel}/${u.threadTs ?? "顶层"}`);
+    };
+    // chief reply new --to <频道>：正文是频道里的新消息（ts 10.0），两张图都进它的 thread。
+    expect(await imagesOf(await plugin.sendNew("C2", "问下 PM"))).toEqual(["a.png@C2/10.0", "b.png@C2/10.0"]);
+    // 直接回在频道里（规矩把频道设成 inline）：图进这条回复自己的 thread。
+    expect(await imagesOf(await plugin.send({ channel: "C1", ts: "1.0", audience: "channel" }, "看图", false))).toEqual(["a.png@C1/20.0", "b.png@C1/20.0"]);
+    // 回到对方那条的 thread / 对方本来就在 thread 里：图进同一个 thread（原来就是这样）。
+    expect(await imagesOf(await plugin.send({ channel: "C1", ts: "1.0", audience: "channel" }, "看图", true))).toEqual(["a.png@C1/1.0", "b.png@C1/1.0"]);
+    expect(await imagesOf(await plugin.send({ channel: "C1", ts: "1.5", thread_ts: "1.0", audience: "channel" }, "看图", false))).toEqual(["a.png@C1/1.0", "b.png@C1/1.0"]);
+    // 发到帖子的 thread（reply new --to <消息链接>）：进那个 thread。
+    expect(await imagesOf(await plugin.sendNew("C2", "补一张图", "5.0"))).toEqual(["a.png@C2/5.0", "b.png@C2/5.0"]);
+    // 私信、群聊里直接回在对话里：图紧跟在正文下面，照旧顶层。
+    expect(await imagesOf(await plugin.send({ channel: "D1", ts: "2.0", audience: "direct" }, "看图", false))).toEqual(["a.png@D1/顶层", "b.png@D1/顶层"]);
+    expect(await imagesOf(await plugin.send({ channel: "C9", ts: "2.0", audience: "group" }, "看图", false))).toEqual(["a.png@C9/顶层", "b.png@C9/顶层"]);
+    expect(await imagesOf(await plugin.sendNew("U0ABC123", "jk 你好"))).toEqual(["a.png@D7/顶层", "b.png@D7/顶层"]);
     await plugin.stop();
   });
 });
