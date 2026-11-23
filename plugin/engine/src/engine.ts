@@ -81,12 +81,12 @@ export function inYourThread(key: string, threads: readonly string[], sent: read
 
 // 这条 Slack 消息是不是 chief（或别的 agent）替你发的，不是新消息：
 // - 记下的发出编号（存在 state.json，重启后补推的也认得）；
-// - 你自己账号发的、正文上方带 agent 署名行的（现在的发法；署名行谁都能写，所以只认你自己账号发的，别人的照常收）；
-// - 正文开头是署名的（以前的发法；Slack 回传时会把 _ 换成 *，比的时候去掉这些符号）。
+// - 你自己账号发的、正文上方带 agent 署名行的（现在的发法），或正文开头是署名的（以前的发法；Slack 回传时会把 _ 换成 *）。
+// 只看正文像不像署名不算：别人的消息开头写上署名就能让 chief 看不见它。
 export function isOwnAgentMessage(m: InboundMessage, sent: readonly string[], signature: string, selfId: string | null): boolean {
   if (sent.includes(`${m.replyTarget.channel}:${m.replyTarget.ts}`)) return true;
-  if (m.attribution !== undefined && selfId !== null && m.sender.id === selfId) return true;
-  return startsWithSignature(m.text, signature);
+  if (selfId === null || m.sender.id !== selfId) return false;
+  return m.attribution !== undefined || startsWithSignature(m.text, signature);
 }
 
 function log(line: string): void {
