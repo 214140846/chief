@@ -23,7 +23,10 @@
 //   chief ask add|list|answer          要你定的
 //   chief rules [show|json|set|brief|add|remove|propose|accept|reject]  你的规矩（含每类活的交代），和主会话提议的规矩
 //   chief review <事件号> ok|wrong     你给主会话的一次判断标对错（错的时候标准输入给应该怎样）
-//   chief reply add|approve|new|list|edit|queue|undo|drop|redo   回复 / approve / 主动发新消息：加进待发出、改、排队发（5 秒可撤回）、撤回、不发、让它重写
+//   chief reply add|approve|new|list|edit|queue|confirm|ask-confirm|undo|drop|redo   回复 / approve / 主动发新消息：加进待发出、改、
+//                                      排队发（5 秒可撤回；queue --policy 按规矩直接发，引擎再核一遍；confirm 以你的名义发，要插件的钥匙；
+//                                      ask-confirm 你在会话里说了发，等插件核对）、撤回、不发、让它重写
+//   chief key set|check|reset          「以你的名义发」的钥匙：插件配，原文不落在这里
 //                                      new --to 可以是一条 Slack 消息的链接：回到那条帖子的 thread 里
 //   chief slack who <名字>             找 Slack 上的人，拿到 <@U…>（写进稿子才会真的提醒到人）
 //   chief archive                      把办完超过 7 天的事件、判断、事情、回复搬进 ~/chief/data/archive（引擎每天自己搬一次）
@@ -37,6 +40,7 @@ import { Engine, SECRET } from "./engine";
 import { MAX_IMAGES, takeImage, type ReplyImage } from "./images";
 import { KEY, keysOf } from "./keys";
 import { type ChildProcess, spawn } from "node:child_process";
+import { createHash, timingSafeEqual } from "node:crypto";
 import { LABEL, bootout, bootstrap, kickstart, plistPath, renderPlist, serviceState } from "./launchd";
 import { KeychainStore, isStorableSecret } from "./secrets";
 import { findPeople, parsePermalink } from "./slack/people";
@@ -118,6 +122,63 @@ function oneLine(text: string, max = 200): string {
 
 function eventById(id: number): ChiefEvent {
   return readEvents().find((e) => e.id === id) ?? archivedEvent(id) ?? fail(`没有事件 #${id}`);
+}
+
+// ── 谁能让回复发出去 ──
+// 规矩允许直接发（--policy）：引擎自己按规矩再算一遍，算出来要问你的发不出去，主会话怎么理解都没用。
+// 返回放行的理由；null 是这条要你确认。
+export function autoReason(r: Reply, pol: Policy, event: ChiefEvent | null): string | null {
+  const body = r.body.trim();
+  // 固定回复：一字不差才算，前后多一个字都不行。
+  if (body !== "" && pol.quick.some((q) => q.trim() === body)) return "固定回复";
+  if (r.kind === "message" || event === null) return null;
+  if (r.kind !== "approve" && isTrusted(pol.trusted, event.from, event.fromId)) return "白名单";
+  if (r.custom !== undefined) {
+    const c = pol.custom.find((x) => x.id === r.custom);
+    return c?.reply === "auto" ? `你加的情况 custom:${c.id}` : null;
+  }
+  return pol.scenarios[scenarioOf(event)].reply === "auto" ? `场景「${SCENARIOS[scenarioOf(event)]}」` : null;
+}
+
+// 以你的名义发（confirmed by 你）要带钥匙：钥匙原文只在 chief 插件自己的存储里，这里只存它的指纹。
+function keyHash(key: string): Buffer {
+  return createHash("sha256").update(key, "utf8").digest();
+}
+
+function keyMatches(key: string): boolean {
+  const file = paths().confirmKey;
+  if (!existsSync(file) || !key) return false;
+  const want = Buffer.from(readFileSync(file, "utf8").trim(), "hex");
+  const got = keyHash(key);
+  return want.length === got.length && timingSafeEqual(want, got);
+}
+
+// chief key set|check（标准输入给钥匙）| reset：插件第一次加载时 set；已经有一把就不让换，要换你在终端先 reset。
+async function keyCmd(args: string[]): Promise<void> {
+  const sub = args.shift();
+  if (sub === "reset") {
+    if (existsSync(paths().confirmKey)) unlinkSync(paths().confirmKey);
+    process.stdout.write("钥匙清掉了：chief 插件下次加载会配一把新的（在那之前面板上的发送用不了）\n");
+    return;
+  }
+  const key = (await stdinText()).trim();
+  if (!/^[0-9a-f]{64}$/.test(key)) fail("钥匙从标准输入给：64 位十六进制");
+  if (sub === "check") {
+    if (!keyMatches(key)) fail("钥匙对不上");
+    process.stdout.write("对上了\n");
+    return;
+  }
+  if (sub === "set") {
+    if (existsSync(paths().confirmKey)) {
+      if (keyMatches(key)) return void process.stdout.write("已经是这把了\n");
+      fail("已经配过另一把钥匙：要换，你在终端跑 chief key reset，再重新加载插件");
+    }
+    ensureHome();
+    writeFileSync(paths().confirmKey, `${keyHash(key).toString("hex")}\n`, { mode: 0o600 });
+    process.stdout.write("钥匙配好了\n");
+    return;
+  }
+  fail("chief key set|check|reset");
 }
 
 function streamLine(e: ChiefEvent): string {
@@ -755,7 +816,7 @@ async function rules(args: string[]): Promise<void> {
   // 第一次看规矩时把默认的写下来；老的文件缺后来加的东西（我加的情况、新场景）就补上。面板直接读这个文件。
   const onDisk = readJson<Partial<Policy>>(paths().policy, {});
   const missing = Object.keys(SCENARIOS).some((k) => !(k in (onDisk.scenarios ?? {})));
-  if (!existsSync(paths().policy) || onDisk.custom === undefined || missing || onDisk.placement === undefined || onDisk.style === undefined || onDisk.trusted === undefined || onDisk.bots === undefined) updatePolicy(() => undefined);
+  if (!existsSync(paths().policy) || onDisk.custom === undefined || missing || onDisk.placement === undefined || onDisk.style === undefined || onDisk.trusted === undefined || onDisk.bots === undefined || onDisk.quick === undefined) updatePolicy(() => undefined);
   if (sub === undefined || sub === "show") {
     const lines = ["# 我的规矩（chief rules）", "", "## 我加的情况（先对这些，对上了就照它办，比下面的场景表优先）", ""];
     if (p.custom.length === 0) lines.push("（没有）");
@@ -768,6 +829,8 @@ async function rules(args: string[]): Promise<void> {
     p.notes.forEach((n, i) => lines.push(`${i + 1}. ${n}`));
     lines.push("", "## 白名单：回这些人的话直接发，不用我确认（我写的「一定问我」的规矩照样优先）", "");
     lines.push(p.trusted.length > 0 ? p.trusted.map((x) => `- ${x}`).join("\n") : "（没有）");
+    lines.push("", "## 固定回复：回复和这几句一字不差，才能不问我直接发（别的规矩只管怎么写，不能让你直接发）", "");
+    lines.push(p.quick.length > 0 ? p.quick.map((x) => `- ${x}`).join("\n") : "（没有）");
     lines.push("", "## GitHub 上不报的机器人（它们的 review、评论不算有人找我；名字带 bot 的本来就不报）", "");
     lines.push(p.bots.length > 0 ? p.bots.map((x) => `- ${x}`).join("\n") : "（没有）");
     lines.push("", "## 回复写法（替我写的话都照这个写）", "");
@@ -857,6 +920,29 @@ async function rules(args: string[]): Promise<void> {
       return;
     }
     fail("chief rules trust add|remove");
+  }
+  // chief rules quick add|remove（标准输入一句原文）：固定回复，一字不差才允许直接发
+  if (sub === "quick") {
+    const what = args.shift();
+    const text = (await stdinText()).trim();
+    if (!text || text.length > 200) fail("从标准输入给一句原文（200 字以内）");
+    if (what === "add") {
+      updatePolicy((pp) => {
+        if (!pp.quick.includes(text)) pp.quick.push(text);
+      });
+      process.stdout.write(`加好了：回复正好是「${text}」时可以直接发\n`);
+      return;
+    }
+    if (what === "remove") {
+      const gone = updatePolicy((pp) => {
+        const before = pp.quick.length;
+        pp.quick = pp.quick.filter((x) => x !== text);
+        return before !== pp.quick.length;
+      });
+      if (!gone) fail("固定回复里没有这句");
+      return;
+    }
+    fail("chief rules quick add|remove");
   }
   // chief rules bot add|remove（标准输入一个 GitHub 登录名）：GitHub 上不报的机器人
   if (sub === "bot") {
@@ -1028,6 +1114,24 @@ function draftText(file: string): string {
 // 点了发送以后，这么久之内还能撤回；到点由引擎发出去。
 const UNDO_MS = 5_000;
 
+// 排队发：发前的检查（还能不能发、是不是测试消息）都在这，谁让发的由 mark 写。
+function queueReply(id: number, now: Date, mark: (r: Reply) => void): void {
+  // 锁外先读好（锁里不能 fail）。
+  const testEvents = new Set(readEvents().filter((e) => e.test).map((e) => e.id));
+  updateReplies((all) => {
+    const r = all.items.find((x) => x.id === id);
+    if (!r) throw new Error(`没有回复 ${id}`);
+    if (r.status !== "pending" && r.status !== "failed") throw new Error(`回复 ${id} 现在是 ${r.status}，不能发`);
+    if (r.source === "notion") throw new Error("Notion 集成只读，这条请你到页面上自己回");
+    if (Object.keys(r.target).length === 0) throw new Error("这是测试消息的回复，不会真的发出去");
+    if (r.kind === "approve" && testEvents.has(r.event)) throw new Error("这是测试消息，不会真的 approve");
+    r.status = "queued";
+    r.sendAt = new Date(now.getTime() + UNDO_MS).toISOString();
+    delete r.error;
+    mark(r);
+  });
+}
+
 async function reply(args: string[]): Promise<void> {
   const sub = args.shift();
   if (sub === "add") {
@@ -1075,6 +1179,7 @@ async function reply(args: string[]): Promise<void> {
       for (const old of all.items) if (old.event === event.id && old.kind === "approve" && old.status === "pending") old.status = "dropped";
       const x: Reply = {
         id: all.nextId++, kind: "approve", event: event.id, source: "github", target: { ref }, body: "", status: "pending", at: new Date().toISOString(),
+        ...(customFlag !== null ? { custom: num(customFlag, "--custom ") } : {}),
         context: { who: event.from, where: event.title, said: event.text.slice(0, 2000), url: `https://github.com/${ref.replace("#", "/pull/")}` },
         ...(thingId !== null ? { thing: thingId } : {}),
       };
@@ -1137,25 +1242,55 @@ async function reply(args: string[]): Promise<void> {
     });
     return;
   }
+  // chief reply queue R --policy：主会话按规矩直接发。引擎按规矩再算一遍（autoReason），要你确认的拒掉，留在待发出。
+  // 以你的名义发不走这里：面板上点发送、或你在会话里说了发，由 chief 插件带钥匙走 chief reply confirm。
   if (sub === "queue") {
-    // 你点了发送（by you），或者规矩允许直接发（--policy）。
-    const byPolicy = args.includes("--policy");
-    // 锁外先读好（锁里不能 fail）。
-    const testEvents = new Set(readEvents().filter((e) => e.test).map((e) => e.id));
-    updateReplies((all) => {
-      const r = find(all);
-      if (r.status !== "pending" && r.status !== "failed") throw new Error(`回复 ${id} 现在是 ${r.status}，不能发`);
-      if (r.source === "notion") throw new Error("Notion 集成只读，这条请你到页面上自己回");
-      if (Object.keys(r.target).length === 0) throw new Error("这是测试消息的回复，不会真的发出去");
-      if (r.kind === "approve" && testEvents.has(r.event)) throw new Error("这是测试消息，不会真的 approve");
-      r.status = "queued";
-      r.by = byPolicy ? "policy" : "you";
-      r.sendAt = new Date(now.getTime() + UNDO_MS).toISOString();
-      delete r.error;
+    if (!args.includes("--policy")) {
+      fail(`以你的名义发要你确认：你在面板上点发送；你在会话里说了「发」，用 chief reply ask-confirm ${id}，chief 插件核对你真的说过再发`);
+    }
+    const current = loadReplies().items.find((x) => x.id === id) ?? fail(`没有回复 ${id}`);
+    const event = current.kind === "message" ? null : readEvents().find((e) => e.id === current.event) ?? archivedEvent(current.event) ?? null;
+    const why = autoReason(current, loadPolicy(), event);
+    if (why === null) fail(`回复 ${id} 按规矩要你确认，不能直接发：留在待发出，等你在面板上点发送（或你在会话里说发）`);
+    queueReply(id, now, (r) => {
+      r.by = "policy";
+      delete r.confirm;
+    });
+    process.stdout.write(`按规矩直接发（${why}）：5 秒后发出，之前可以 chief reply undo ${id}\n`);
+    return;
+  }
+  // chief reply confirm R（标准输入 JSON：{key, how: panel|chat, said?}）：以你的名义发。只有 chief 插件有钥匙。
+  if (sub === "confirm") {
+    let req: { key?: unknown; how?: unknown; said?: unknown };
+    try {
+      req = JSON.parse(await stdinText()) as typeof req;
+    } catch {
+      fail("标准输入给 JSON：{\"key\": …, \"how\": \"panel\"|\"chat\", \"said\": …}");
+    }
+    if (typeof req.key !== "string" || !keyMatches(req.key)) fail("钥匙对不上：以你的名义发只能你在面板上点，或你在会话里说了由 chief 插件核对后发");
+    const how = req.how === "chat" ? "chat" : req.how === "panel" ? "panel" : fail("how 是 panel 或 chat");
+    const said = typeof req.said === "string" ? oneLine(req.said, 300) : "";
+    if (how === "chat" && !said) fail("会话里确认的要带上你的原话");
+    queueReply(id, now, (r) => {
+      r.by = "you";
+      r.confirm = { how, ...(said ? { said } : {}), at: now.toISOString() };
+      delete r.confirmAsk;
     });
     process.stdout.write(`5 秒后发出，之前可以 chief reply undo ${id}\n`);
     return;
   }
+  // chief reply ask-confirm R：你在主会话里说了发，主会话用这个请求以你的名义发。这一步不发：
+  // chief 插件看到请求，核对你在这一轮真的说过话，才带钥匙 confirm；核对不上就留着，面板上请你点。
+  if (sub === "ask-confirm") {
+    updateReplies((all) => {
+      const r = find(all);
+      if (r.status !== "pending" && r.status !== "failed") throw new Error(`回复 ${id} 现在是 ${r.status}，不能发`);
+      r.confirmAsk = { at: now.toISOString() };
+    });
+    process.stdout.write(`记下了：chief 插件核对你在会话里说过发，就以你的名义发；核对不上会留在待发出等你点\n`);
+    return;
+  }
+
   if (sub === "undo") {
     updateReplies((all) => {
       const r = find(all);
@@ -1451,6 +1586,7 @@ async function main(argv: string[]): Promise<void> {
       }
       return;
     }
+    case "key": return keyCmd(args);
     case "hub": {
       // chief hub stop：让主会话停下（它的监听看到就退出，标题改回普通会话）。下次在哪个会话发 /chief:hub，哪个就是主会话。
       if (args[0] === "stop") {

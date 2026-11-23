@@ -3,7 +3,7 @@ import type { EngineInterface as Engine, RenderChildren } from 'claude-code'
 
 import type { AskRow, DecisionRow, Handle, ReplyMode, ReplyRow, Rule, Snapshot, ThingRow } from '../types'
 import {
-  act, addCustom, addRule, addStyle, removeCase, runEvals, saveCase, trust, annotate, clearBasket, openSession, removeStyle, sendBasket, setPlacement, setSignature, unannotate, decideProposal, engineDo, finish, hubStop, markRight, markWrong, redo, removeCustom, removeRule, send, setBrief,
+  act, addCustom, addRule, addQuick, addStyle, removeCase, runEvals, saveCase, trust, annotate, clearBasket, openSession, removeQuick, removeStyle, sendBasket, setPlacement, setSignature, unannotate, decideProposal, engineDo, finish, hubStop, markRight, markWrong, redo, removeCustom, removeRule, send, setBrief,
   setEdit, setScenario, setTab, showLogs, skipOld, tell, testMessage, toggle,
 } from './actions'
 import { EVAL_DAYS, MINUTES, chartSvg, statsOf } from './data'
@@ -206,7 +206,7 @@ export function nowTab($: Engine, ui: Els, s: Snapshot, opened: string[] = [], e
         {q.suggest !== '' && <Box flexDirection="column"><Text dimColor size="caption">建议</Text>{md(ui, q.suggest)}</Box>}
         <Box flexDirection="row" gap="sm">
           {q.suggest !== '' && (
-            <Button key={`ok${q.id}`} variant="primary" onPress={() => tell($, `chief：问题 #${q.id} 照建议办`, '照建议办')}>照建议办</Button>
+            <Button key={`ok${q.id}`} variant="primary" onPress={() => tell($, `chief：问题 #${q.id} 照建议办`, '照建议办', true)}>照建议办</Button>
           )}
           {t?.session && (
             <Button key={`oa${q.id}`} onPress={() => openSession($, t.session ?? '', t.title)}>看细节</Button>
@@ -215,7 +215,7 @@ export function nowTab($: Engine, ui: Els, s: Snapshot, opened: string[] = [], e
         {/* 要你定的卡片只给三条路：照建议办、去会话里看、写你的决定。攒着一起发的「批注」只放在进度页。 */}
         {'Input' in ui && (
           <ui.Input key={`in${q.id}`} placeholder="不同意？写你的决定" submitLabel="发送" onSubmit={(v: string) => {
-            if (v.trim()) void tell($, `chief：问题 #${q.id} 的回答：${v.trim()}`, '你的决定')
+            if (v.trim()) void tell($, `chief：问题 #${q.id} 的回答：${v.trim()}`, '你的决定', true)
           }} />
         )}
       </Box>
@@ -300,6 +300,8 @@ export function replyCard($: Engine, ui: Els, s: Snapshot, edit: Record<string, 
             {md(ui, body.replace(/<@([UW][A-Z0-9]+)>/g, (_, id: string) => `**@${s.people?.[id] ?? id}**`))}
           </Box>
         ))}
+      {/* 主会话说你在会话里同意了，插件没核对上你亲口说过：不会自己发，等你点。 */}
+      {r.confirmAsk && <Text size="footnote" color="warning" wrap="wrap">主会话说你在会话里同意发这条，但没核对上你最近亲口说过话，所以没发：确认要发就点「发送」。</Text>}
       {/* 附的图：发之前让你看到会跟着发出去哪几张。 */}
       {(r.images ?? []).length > 0 && (
         <Text size="footnote" dimColor wrap="wrap">附图 {r.images!.length} 张（正文发完跟着发到同一个地方）：{r.images!.map(i => `${i.name}（${Math.max(1, Math.round(i.bytes / 1024))} KB）`).join('、')}</Text>
@@ -321,6 +323,13 @@ export function replyCard($: Engine, ui: Els, s: Snapshot, edit: Record<string, 
       )}
     </Box>
   )
+}
+
+// 发出去的这条是谁让发的：你在面板上点的、你在会话里说的（带你的原话）、还是规矩允许直接发的。
+function whoSent(r: ReplyRow): string {
+  if (r.by === 'policy') return '按规矩直接发'
+  if (r.confirm?.how === 'chat') return `你在会话里说「${short(r.confirm.said ?? '', 20)}」`
+  return r.original !== undefined ? '你改过再发' : '你点的发送'
 }
 
 export function outboxTab($: Engine, ui: Els, s: Snapshot, edit: Record<string, string>, opened: string[] = []) {
@@ -347,7 +356,7 @@ export function outboxTab($: Engine, ui: Els, s: Snapshot, edit: Record<string, 
       {sentToday.length > 0 && <Box marginTop="md"><Text weight="semibold">今天发出的（{sentToday.length}）</Text></Box>}
       {sentToday.slice(0, 10).map(r => (
         <Text key={`st${r.id}`} dimColor wrap="truncate-end">
-          {r.by === 'policy' ? '按规矩' : r.original !== undefined ? '你改过' : '你确认'} · {what(r)}{r.kind === 'approve' ? '' : `：${short(r.body, 60)}`}
+          {whoSent(r)} · {what(r)}{r.kind === 'approve' ? '' : `：${short(r.body, 60)}`}
         </Text>
       ))}
     </Box>
@@ -643,6 +652,20 @@ export function policyTab($: Engine, ui: Els, s: Snapshot, opened: string[]) {
 
       {section('sec-scenarios', '每种消息', '没对上「我加的情况」的，按消息的种类办',
         Object.entries(p.scenarios).map(([k, v]) => ruleRow(k, SCENARIO[k] ?? k, v)))}
+
+      {section('sec-quick', '固定回复：可以不问你直接发的话', '回复和下面某一句一字不差，才能不问你直接发（署名标 not reviewed）。多一个字、换个说法都要你确认。你写的规矩只管怎么写，不能让主会话直接发',
+        (p.quick ?? []).length === 0 && <Text key="qk-none" size="footnote" dimColor>还没有。</Text>,
+        (p.quick ?? []).map((x, i) => (
+          <Box key={`qk${i}`} flexDirection="row" gap="sm" alignItems="flex-start" paddingY="xs">
+            <Box flexGrow={1} flexShrink={1}><Text wrap="wrap">{x}</Text></Box>
+            <Button key={`rqk${i}`} plain onPress={() => removeQuick($, x)}>删除</Button>
+          </Box>
+        )),
+        'Input' in ui && (
+          <Box key="qk-add" width="100%"><ui.Input key="add-quick" placeholder="比如：approve 了 ✅" submitLabel="加上" onSubmit={(v: string) => {
+            if (v.trim()) void addQuick($, v.trim())
+          }} /></Box>
+        ))}
 
       {section('sec-style', '回复写法', '替你写的话都照这几条写；你在待发出里改过稿子，主会话会据此提议新的写法',
         (p.style ?? []).map((x, i) => (

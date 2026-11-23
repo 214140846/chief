@@ -5,6 +5,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface as Engine } from 'claude-code'
 
 import type { Handle, ReplyMode, ReplyRow, Tab, ThingRow } from '../types'
+import { confirmFromPanel, noteUserSaid } from './confirm'
 import { refresh, chiefDir } from './data'
 
 const note = atom({ plugin: 'chief', key: 'note' } as const, '')
@@ -79,8 +80,11 @@ export async function sendBasket($: Engine) {
 }
 
 // 交给主会话（hub skill 认这几句话）。
-export async function tell($: Engine, text: string, label: string) {
+// 替你把一句话交给主会话。decision：这是你对「要你定」的拍板（照建议办、写了你的决定），算你亲口说的，
+// 里面要替你发的回复插件凭它核对；导入、问进展、重读规则这类不算。
+export async function tell($: Engine, text: string, label: string, decision = false) {
   await update($, note, () => stamp(`${label}：已交给主会话`))
+  if (decision) await noteUserSaid($, `${label}（面板上点的）：${text}`)
   void $.prompt.submit({ text })
 }
 
@@ -106,7 +110,7 @@ export async function setEdit($: Engine, id: number, text: string) {
 // typed 是输入框回车时交来的当前文字（最准）；点按钮时用记下的修改；都没有就是原稿。
 export async function send($: Engine, r: ReplyRow, typed?: string) {
   if (r.kind === 'approve') {
-    if (await act($, `approve ${r.target.ref ?? 'PR'}`, ['reply', 'queue', String(r.id)])) {
+    if (await act($, `approve ${r.target.ref ?? 'PR'}`, ['reply', 'confirm', String(r.id)], await confirmFromPanel($))) {
       await update($, note, () => stamp(`5 秒后 approve ${r.target.ref ?? 'PR'}，现在还能撤回`))
     }
     return
@@ -120,7 +124,8 @@ export async function send($: Engine, r: ReplyRow, typed?: string) {
   if (edited) {
     if (!(await act($, '保存修改', ['reply', 'edit', String(r.id)], text))) return
   }
-  if (await act($, `回 ${r.context.who ?? r.context.where}`, ['reply', 'queue', String(r.id)])) {
+  // 你在面板上点的发送：插件带钥匙以你的名义发（主会话没有钥匙，发不了 confirmed by 你）。
+  if (await act($, `回 ${r.context.who ?? r.context.where}`, ['reply', 'confirm', String(r.id)], await confirmFromPanel($))) {
     await update($, edits, e => {
       const rest = { ...e }
       delete rest[String(r.id)]
@@ -189,6 +194,14 @@ export async function setBrief($: Engine, scenario: string, text: string) {
 
 export async function trust($: Engine, who: string, add: boolean) {
   await act($, add ? '加白名单' : '移出白名单', ['rules', 'trust', add ? 'add' : 'remove'], who)
+}
+
+export async function addQuick($: Engine, text: string) {
+  await act($, '加固定回复', ['rules', 'quick', 'add'], text)
+}
+
+export async function removeQuick($: Engine, text: string) {
+  await act($, '删固定回复', ['rules', 'quick', 'remove'], text)
 }
 
 export async function addStyle($: Engine, text: string) {

@@ -10,6 +10,7 @@ import { atom, read } from 'claude-code'
 import type { EngineInterface as Engine, Register } from 'claude-code'
 
 import { refresh, chiefDir } from './data'
+import { confirmAsked, ensureKey, noteUserSaid } from './confirm'
 import { autoUpdate, checkSetup, missing, readSetup, setupTab } from './setup'
 import { evalTab, header, nowTab, outboxTab, policyTab, thingsTab, type Els } from './views'
 
@@ -72,9 +73,26 @@ async function openPane($: Engine) {
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command.register({ name: 'chief', description: '打开 chief 面板：要你定的事、待发出、进度、策略、测评、设置' })
-    // 引擎跟着插件自动更新：放后台跑，不拖慢会话开起来。
-    void autoUpdate($).catch(() => {})
+    // 引擎跟着插件自动更新、配好「以你的名义发」的钥匙：放后台跑，不拖慢会话开起来。
+    void autoUpdate($).then(() => ensureKey($)).catch(() => {})
     return next(e)
+  })
+
+  // 你亲口说的话（Claude Code 标的来源是你在输入框敲的，或手机 / 网页端发的）记下来：你在会话里说「发」，插件凭这句核对。
+  // Slack 通知、插件塞的、别的会话发来的、斜杠命令都不记。
+  on('prompt.submit', async ($, e, next) => {
+    const from = e.origin?.kind
+    if ((from === 'composer' || from === 'bridge') && !e.command && !e.isMeta && e.text.trim() !== '') {
+      await noteUserSaid($, e.text).catch(() => {})
+    }
+    return next(e)
+  })
+
+  // 主会话跑了 chief reply ask-confirm：插件核对你说过话，再带钥匙以你的名义发。
+  on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
+    const ran = await next(e)
+    if (e.command.includes('ask-confirm')) await confirmAsked($).catch(() => {})
+    return ran
   })
 
   on('command.run', { command: 'chief' }, async $ => {

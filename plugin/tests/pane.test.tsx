@@ -1,11 +1,24 @@
 import { expect, test } from 'claude-code/testing'
 
+import { askedAfter } from '../hooks/confirm'
+import type { ReplyRow } from '../types'
+
 const PANE = {
   plugin: 'chief',
   component: 'Pane',
   requestId: 'chief',
   props: { title: 'chief', isFocused: false, bodyColumns: 70, placement: 'dock', scroll: { offset: 0, bodyRows: 60 }, view: {} },
 } as const
+
+// 插件自己的存储（钥匙放在这）：测试里用内存的。
+function memStore(on: Parameters<Parameters<typeof test>[1]>[1]) {
+  const kv = new Map<string, unknown>()
+  on('store.get', (_, e) => ({ value: kv.get(e.key) }))
+  on('store.set', (_, e) => {
+    kv.set(e.key, e.value)
+    return { value: undefined }
+  })
+}
 
 const now = new Date().toISOString()
 const FILES: Record<string, string> = {
@@ -49,6 +62,7 @@ test('面板：主会话状态、要你定、待发出；按钮各做各的', as
   on('command.register', () => ({ value: { command: 'chief' } }))
   on('ui.open', () => ({ value: { isPlaced: true } }))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
+  memStore(on)
   on('clock.every', () => ({ value: { cancel: () => {} } }))
   on('fs.read', (_, e) => {
     if (e.path === '/Users/me/chief/data/bin/chief') return { value: '#!/bin/sh' }
@@ -97,7 +111,7 @@ test('面板：主会话状态、要你定、待发出；按钮各做各的', as
 
   await ui.press({ key: 'tab-outbox' })
   expect(await ui.find({ type: 'Text', text: /压测那个你处理了吗/ })).toBeTruthy()
-  expect(await ui.find({ type: 'Text', text: /你确认 · 回 o\/r#3 修 bug：LGTM/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /你点的发送 · 回 o\/r#3 修 bug：LGTM/ })).toBeTruthy()
 
   // 稿子按发出去的样子显示，点「改稿」才变成输入框；改了再发：先存改后的稿子（标准输入），再排队。
   await ui.press({ key: 'ed5' })
@@ -105,7 +119,11 @@ test('面板：主会话状态、要你定、待发出；按钮各做各的', as
   await ui.press({ key: 'sd5' })
   const tail = runs.slice(-4).map(r => `${r.argv.slice(1).join(' ')}${r.stdin ? ` <${r.stdin}` : ''}`)
   expect(tail).toContain('reply edit 5 <处理了，报告发你私信了')
-  expect(tail).toContain('reply queue 5')
+  // 面板上点的发送：带着插件的钥匙以你的名义发（主会话自己发不了 confirmed by 你）。
+  const sent5 = runs.slice(-4).find(r => r.argv.slice(1).join(' ') === 'reply confirm 5')
+  expect(sent5).toBeTruthy()
+  expect(JSON.parse(sent5!.stdin ?? '{}')).toMatchObject({ how: 'panel' })
+  expect(JSON.parse(sent5!.stdin ?? '{}').key).toMatch(/^[0-9a-f]{64}$/)
   // 改过稿子才发：告诉主会话，让它从你的改动里学写法。
   expect(prompts.at(-1)).toBe('chief：回复 #5 你改过再发的')
 
@@ -123,7 +141,7 @@ test('面板：主会话状态、要你定、待发出；按钮各做各的', as
   // approve 也在待发出里，按钮写 approve。
   expect(await ui.find({ type: 'Text', text: /approve PR o\/r#44/ })).toBeTruthy()
   await ui.press({ key: 'sd7' })
-  expect(runs.at(-1)?.argv.slice(1).join(' ')).toBe('reply queue 7')
+  expect(runs.at(-1)?.argv.slice(1).join(' ')).toBe('reply confirm 7')
 
   // 进度：最上面一句重点；要关注的单独成卡，写清原因、还差什么，能直接动手。
   await ui.press({ key: 'tab-things' })
@@ -216,6 +234,7 @@ test('主会话没在听：说清楚怎么办，积多了能一键跳过', async
   on('command.register', () => ({ value: { command: 'chief' } }))
   on('ui.open', () => ({ value: { isPlaced: true } }))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
+  memStore(on)
   on('clock.every', () => ({ value: { cancel: () => {} } }))
   on('fs.read', (_, e) => {
     if (e.path === '/Users/me/chief/data/bin/chief') return { value: '#!/bin/sh' }
@@ -246,6 +265,7 @@ test('引擎还没装：只有设置页，按钮跑插件里的 setup.sh', async
   on('command.register', () => ({ value: { command: 'chief' } }))
   on('ui.open', () => ({ value: { isPlaced: true } }))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
+  memStore(on)
   on('clock.every', () => ({ value: { cancel: () => {} } }))
   on('fs.read', () => {
     throw new Error('missing')
@@ -272,6 +292,7 @@ function autoUpdateWorld(on: Parameters<Parameters<typeof test>[1]>[1], engineVe
   const toasts: string[] = []
   on('command.register', () => ({ value: { command: 'chief' } }))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
+  memStore(on)
   on('clock.every', () => ({ value: { cancel: () => {} } }))
   on('ui.toast', (_, e) => {
     toasts.push(e.text)
@@ -316,6 +337,7 @@ test('设置页：没记过 Slack 工作区时先问一句，填了从工作区�
   on('command.register', () => ({ value: { command: 'chief' } }))
   on('ui.open', () => ({ value: { isPlaced: true } }))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
+  memStore(on)
   on('clock.every', () => ({ value: { cancel: () => {} } }))
   on('ui.toast', () => ({ value: undefined }))
   on('fs.read', (_, e) => {
@@ -342,4 +364,19 @@ test('设置页：没记过 Slack 工作区时先问一句，填了从工作区�
   await ui.input({ key: 'slack-workspace', text: '' })
   expect(runs).toContain('/Users/me/chief/data/bin/chief connect slack')
   await ui.unmount()
+})
+
+// 你在会话里说了「发吧」：主会话只能 ask-confirm，插件只放行你说完以后提的请求，你的话 15 分钟内有效。
+test('会话里确认：只放行你说完话以后提的请求；还能发的才算；你的话过 15 分钟就不算了', async () => {
+  const said = { at: Date.parse('2026-11-23T10:00:00Z') }
+  const ask = (id: number, at: string, status = 'pending') => ({ id, status, confirmAsk: { at } }) as unknown as ReplyRow
+  const items = [
+    ask(1, '2026-11-23T09:59:00Z'),            // 你说话之前就提的
+    ask(2, '2026-11-23T10:00:05Z'),            // 你说完以后提的
+    ask(3, '2026-11-23T10:00:06Z', 'queued'),  // 已经在发了
+    { id: 4, status: 'pending' } as unknown as ReplyRow, // 主会话没请求
+  ]
+  expect(askedAfter(items, said, said.at + 60_000)).toEqual([2])
+  expect(askedAfter(items, said, said.at + 16 * 60_000)).toEqual([])
+  expect(askedAfter(items, null, said.at)).toEqual([])
 })

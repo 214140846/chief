@@ -10,6 +10,11 @@ export type ReplyRow = {
   target: Record<string, string>
   context: { who: string | null; where: string; said: string; url: string | null }
   body: string
+  custom?: number
+  // 以你的名义发是怎么确认的：panel 面板上点的；chat 你在会话里说的（said 是你的原话）。
+  confirm?: { how: 'panel' | 'chat'; said?: string; at: string }
+  // 主会话说你在会话里同意发了，插件还没核对上。
+  confirmAsk?: { at: string }
   // 附的图（只有 Slack）：正文发完发到同一个地方。file 是复制进 drafts/images 后的路径。
   images?: { file: string; name: string; bytes: number; mime: string }[]
   original?: string
@@ -71,6 +76,8 @@ export type Rule = { handle: Handle; reply: ReplyMode; brief?: string }
 
 export type PolicyFile = {
   scenarios: Record<string, Rule>
+  // 固定回复：回复和其中一句一字不差，才能不问你直接发。
+  quick?: string[]
   custom: (Rule & { id: number; when: string })[]
   notes: string[]
   signature?: string
@@ -140,6 +147,8 @@ export type Setup = {
   said: string
   // 本会话开在哪个目录：和工作目录对不上时，提醒消息中心换个地方开
   cwd: string
+  // 「以你的名义发」的钥匙：ok 配好了；mismatch 引擎记的是另一把（重装过插件），面板上的发送用不了；none 引擎还没装
+  key: 'ok' | 'mismatch' | 'none'
 }
 
 declare module 'claude-code' {
@@ -157,6 +166,8 @@ declare module 'claude-code' {
       // 攒着要一起发给主会话的批注：批在哪（t<事情号> / a<问题号> / r<回复号> / d<事件号> / note）、那是什么、你说的话。
       basket: { key: string; label: string; text: string }[]
       setup: Setup
+      // 你在这个会话里最近亲口说的一句话（插件核对「你在会话里说了发」用）。
+      said: { text: string; at: number } | null
     }
   }
 }

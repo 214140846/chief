@@ -5,10 +5,11 @@ import type { EngineInterface as Engine, RenderChildren } from 'claude-code'
 
 import type { Doctor, Setup, Snapshot } from '../types'
 import { act, engineDo, hubStop, showLogs, skipOld, tell, testMessage } from './actions'
+import { ensureKey } from './confirm'
 import { chiefDir, refresh } from './data'
 import { RELOAD_SKILL, SOURCE, ago, type Els } from './views'
 
-const setup = atom({ plugin: 'chief', key: 'setup' } as const, { installed: false, doctor: null, busy: '', said: '', cwd: '' } as Setup)
+const setup = atom({ plugin: 'chief', key: 'setup' } as const, { installed: false, doctor: null, busy: '', said: '', cwd: '', key: 'none' } as Setup)
 
 const INSTALL_MS = 10 * 60_000
 const LOGIN_MS = 6 * 60_000
@@ -46,7 +47,8 @@ export async function checkSetup($: Engine) {
     }
   }
   const cwd = await $.session.cwd().catch(() => '')
-  await update($, setup, s => ({ ...s, installed: has, doctor, cwd }))
+  const key = has ? await ensureKey($).catch((): Setup['key'] => 'mismatch') : 'none'
+  await update($, setup, s => ({ ...s, installed: has, doctor, cwd, key }))
 }
 
 export async function readSetup($: Engine) {
@@ -180,8 +182,12 @@ export function setupTab($: Engine, ui: Els, st: Setup, s: Snapshot | null, logT
   const elsewhere = d !== null && d.workspace.ready && st.cwd !== '' && st.cwd !== d.workspace.path
   const unhandled = s?.unhandled ?? 0
   const skip = unhandled > 0 && s ? <Button key="skip-old2" onPress={() => skipOld($, s.maxEvent)}>跳过积下的 {unhandled} 条</Button> : null
+  const keyWarn = st.key === 'mismatch'
+    ? note('面板上的「发送」现在用不了：chief 记的钥匙和这个插件的对不上（多半重装过插件）。在终端跑 ~/chief/data/bin/chief key reset，再输入 /reload-plugins。')
+    : null
   const hub = listening ? (
     <Box flexDirection="column" gap="xs">
+      {keyWarn}
       {note('在听，新消息进来会自动处理。停下以后新消息先攒着，在任何会话发 /chief:hub 接着处理。插件更新过的话点「重读规则」，主会话会读到新的做事方式，不用重新开张。')}
       {buttons(
         <Button key="hub-stop" onPress={() => hubStop($)}>停下主会话</Button>,

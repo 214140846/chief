@@ -21,6 +21,30 @@ function chief(h: string, ...args: string[]): string {
   return execFileSync(process.execPath, ["--import", TSX, CLI, ...args], { env: { ...process.env, CHIEF_HOME: h }, encoding: "utf8" });
 }
 
+// 「以你的名义发」要钥匙：测试里配一把，面板点发送就是带着它 confirm。
+const KEY = "ab".repeat(32);
+function withStdin(h: string, input: string, ...args: string[]): string {
+  return execFileSync(process.execPath, ["--import", TSX, CLI, ...args], { env: { ...process.env, CHIEF_HOME: h }, encoding: "utf8", input, stdio: ["pipe", "pipe", "pipe"] });
+}
+
+function sendByYou(h: string, id: string): string {
+  try {
+    withStdin(h, KEY, "key", "set");
+  } catch {
+    // 已经配过
+  }
+  return withStdin(h, JSON.stringify({ key: KEY, how: "panel" }), "reply", "confirm", id);
+}
+
+function sendByYouFails(h: string, id: string): string {
+  try {
+    sendByYou(h, id);
+  } catch (error) {
+    return String((error as { stderr?: string }).stderr);
+  }
+  throw new Error("没失败");
+}
+
 function chiefFails(h: string, ...args: string[]): string {
   try {
     chief(h, ...args);
@@ -110,14 +134,14 @@ describe("cli", () => {
     writeFileSync(join(h, "drafts", "1.md"), "好的，我来看");
     expect(JSON.parse(chief(h, "reply", "add", "--event", "1", "--file", join(h, "drafts", "1.md")))).toMatchObject({ id: 1, source: "slack", scenario: "slack_dm", policy: "ask" });
     execFileSync(process.execPath, ["--import", TSX, CLI, "reply", "edit", "1"], { env: { ...process.env, CHIEF_HOME: h }, input: "好的，下午看" });
-    chief(h, "reply", "queue", "1");
+    sendByYou(h, "1");
     let r = JSON.parse(chief(h, "reply", "list"))[0];
     expect(r).toMatchObject({ status: "queued", by: "you", body: "好的，下午看", original: "好的，我来看", context: { who: "Carol", where: "#dev" } });
     chief(h, "reply", "undo", "1");
     r = JSON.parse(chief(h, "reply", "list"))[0];
     expect(r.status).toBe("pending");
     chief(h, "reply", "drop", "1");
-    expect(chiefFails(h, "reply", "queue", "1")).toContain("dropped");
+    expect(sendByYouFails(h, "1")).toContain("dropped");
   });
 });
 
@@ -223,8 +247,8 @@ describe("审查找到的问题", () => {
     writeFileSync(join(h, "events.jsonl"), `${ev(1)}\n`);
     writeFileSync(join(h, "drafts", "1.md"), "好的");
     chief(h, "reply", "add", "--event", "1", "--file", join(h, "drafts", "1.md"));
-    chief(h, "reply", "queue", "1");
-    expect(chiefFails(h, "reply", "queue", "1")).toContain("不能发");
+    sendByYou(h, "1");
+    expect(sendByYouFails(h, "1")).toContain("不能发");
     chief(h, "reply", "undo", "1");
     expect(JSON.parse(chief(h, "reply", "list"))[0].status).toBe("pending");
   });
@@ -313,7 +337,7 @@ describe("测试消息", () => {
     expect(e.keys).toContain("PROJ-479");
     writeFileSync(join(h, "drafts", "5.md"), "可以");
     chief(h, "reply", "add", "--event", "5", "--file", join(h, "drafts", "5.md"));
-    expect(chiefFails(h, "reply", "queue", "1")).toContain("不会真的发出去");
+    expect(sendByYouFails(h, "1")).toContain("不会真的发出去");
   });
 });
 
@@ -340,7 +364,7 @@ describe("策略能自己加、approve、进度表", () => {
     run(h, "帮忙看下 https://github.com/o/r/pull/44", "test", "--from", "Alice", "--why", "mention");
     const a = JSON.parse(chief(h, "reply", "approve", "--event", "1", "--ref", "o/r#44", "--custom", "1"));
     expect(a).toMatchObject({ kind: "approve", ref: "o/r#44", policy: "auto" });
-    expect(chiefFails(h, "reply", "queue", String(a.id))).toContain("测试消息");
+    expect(sendByYouFails(h, String(a.id))).toContain("测试消息");
     expect(chiefFails(h, "reply", "approve", "--event", "1", "--ref", "$(x)")).toContain("--ref");
   });
 
@@ -401,7 +425,7 @@ describe("主动发消息", () => {
     expect(r).toMatchObject({ kind: "message", to: "U0ABC123" });
     const x = JSON.parse(chief(h, "reply", "list"))[0];
     expect(x).toMatchObject({ kind: "message", event: 0, target: { to: "U0ABC123" }, context: { who: "bob.lee", where: "新私信" } });
-    chief(h, "reply", "queue", String(r.id));
+    sendByYou(h, String(r.id));
     expect(JSON.parse(chief(h, "reply", "list"))[0].status).toBe("queued");
     expect(chiefFails(h, "reply", "new", "--to", "$(x)", "--file", join(h, "drafts", "n.md"))).toContain("--to");
   });
@@ -738,5 +762,71 @@ describe("回复附图", () => {
     fail = true;
     expect(await plugin.sendImages(sent, [{ file: join(d, "a.png"), name: "arch.png", mime: "image/png" }])).toEqual(["arch.png：file_uploads_disabled"]);
     await plugin.stop();
+  });
+});
+
+describe("谁能让回复发出去：引擎把关，不靠主会话自觉", () => {
+  const draft = (h: string, name: string, text: string) => {
+    mkdirSync(join(h, "drafts"), { recursive: true });
+    writeFileSync(join(h, "drafts", name), text);
+    return join(h, "drafts", name);
+  };
+  // 一条真的 Slack 私信（不是 chief test 造的：那种的回复本来就发不出去）。
+  const setup = () => {
+    const h = home();
+    const ev = { id: 1, at: "t", source: "slack", kind: "message.received", title: "Alice 的私信", url: null, from: "Alice", fromId: "U0ALICE", text: "帮我看下这个", why: ["dm"], keys: [], reply: { channel: "D0ALICE", ts: "1795079290.188699" } };
+    writeFileSync(join(h, "events.jsonl"), `${JSON.stringify(ev)}\n`);
+    return h;
+  };
+  const status = (h: string, id: number) => (JSON.parse(chief(h, "reply", "list", "--all")) as { id: number; status: string; by?: string; confirm?: { how: string; said?: string }; confirmAsk?: unknown }[]).find((r) => r.id === id)!;
+
+  it("不带 --policy 的 queue 拒掉，告诉主会话该怎么办", () => {
+    const h = setup();
+    chief(h, "reply", "add", "--event", "1", "--file", draft(h, "a.md", "好的，今天合"));
+    expect(chiefFails(h, "reply", "queue", "1")).toContain("ask-confirm");
+    expect(status(h, 1).status).toBe("pending");
+  });
+
+  it("--policy：引擎按规矩再算一遍，要问你的发不出去；场景设了直接发的放行", () => {
+    const h = setup();
+    chief(h, "reply", "add", "--event", "1", "--file", draft(h, "a.md", "好的，今天合"));
+    // 私信默认「回复先问你」：主会话说规矩允许也没用。
+    expect(chiefFails(h, "reply", "queue", "1", "--policy")).toContain("要你确认");
+    expect(status(h, 1).status).toBe("pending");
+    chief(h, "rules", "set", "slack_dm", "reply=auto");
+    expect(chief(h, "reply", "queue", "1", "--policy")).toContain("按规矩直接发");
+    expect(status(h, 1)).toMatchObject({ status: "queued", by: "policy" });
+  });
+
+  it("固定回复：一字不差才放行，多一个字都不行", () => {
+    const h = setup();
+    withStdin(h, "approve 了 ✅", "rules", "quick", "add");
+    chief(h, "reply", "add", "--event", "1", "--file", draft(h, "a.md", "approve 了 ✅，明天上线"));
+    expect(chiefFails(h, "reply", "queue", "1", "--policy")).toContain("要你确认");
+    chief(h, "reply", "add", "--event", "1", "--file", draft(h, "b.md", "approve 了 ✅"));
+    expect(chief(h, "reply", "queue", "2", "--policy")).toContain("固定回复");
+  });
+
+  it("以你的名义发要钥匙：不对的不行；配过的钥匙不能偷偷换，你 reset 了才能重配", () => {
+    const h = setup();
+    chief(h, "reply", "add", "--event", "1", "--file", draft(h, "a.md", "好的"));
+    withStdin(h, KEY, "key", "set");
+    const other = "cd".repeat(32);
+    expect(() => withStdin(h, other, "key", "set")).toThrow(/已经配过/);
+    expect(() => withStdin(h, JSON.stringify({ key: other, how: "panel" }), "reply", "confirm", "1")).toThrow(/钥匙对不上/);
+    expect(() => withStdin(h, JSON.stringify({ key: KEY, how: "chat" }), "reply", "confirm", "1")).toThrow(/原话/);
+    withStdin(h, JSON.stringify({ key: KEY, how: "chat", said: "发吧" }), "reply", "confirm", "1");
+    expect(status(h, 1)).toMatchObject({ status: "queued", by: "you", confirm: { how: "chat", said: "发吧" } });
+    chief(h, "key", "reset");
+    withStdin(h, other, "key", "set");
+    expect(withStdin(h, other, "key", "check")).toContain("对上了");
+  });
+
+  it("ask-confirm 只记下请求，不发：等插件核对你真的说过", () => {
+    const h = setup();
+    chief(h, "reply", "add", "--event", "1", "--file", draft(h, "a.md", "好的"));
+    chief(h, "reply", "ask-confirm", "1");
+    expect(status(h, 1).status).toBe("pending");
+    expect(status(h, 1).confirmAsk).toBeTruthy();
   });
 });
