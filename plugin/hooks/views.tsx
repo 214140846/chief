@@ -79,6 +79,18 @@ function dueLabel(due: string): { text: string; color: 'error' | 'warning' | und
 
 const live = (t: ThingRow) => t.status !== 'done' && t.status !== 'dropped'
 
+// 一条回复一句话说清：回谁、发给谁、approve 哪个 PR。
+function whatOf(r: ReplyRow): string {
+  return r.kind === 'approve' ? `approve PR ${r.target.ref ?? ''}` : r.kind === 'message' ? `发给 ${r.context.who ?? r.target.to ?? ''}` : `回 ${r.context.who ?? r.context.where}`
+}
+
+// 问题挂着的那条回复：回谁、说什么、现在发没发（不显示 chief 的回复号，用户看不懂）。
+const REPLY_STATE: Partial<Record<ReplyRow['status'], string>> = { queued: '马上发出', sending: '正在发', sent: '已发出', dropped: '不发了', redo: '在重写', failed: '没发出去' }
+export function replyGist(r: ReplyRow): string {
+  const state = REPLY_STATE[r.status]
+  return `${whatOf(r)}${r.kind === 'approve' ? '' : `「${short(r.body, 40)}」`}${state ? `（${state}）` : ''}`
+}
+
 // 一段话的要点：去掉表格和 Markdown 符号，取第一句。
 function gist(text: string, max = 70): string {
   const plain = text
@@ -190,7 +202,7 @@ export function header($: Engine, ui: Els, s: Snapshot, said: string, current: s
           {basket.map((x, i) => (
             <Box key={`bk-${i}`} flexDirection="row" gap="sm" alignItems="flex-start">
               <Box flexGrow={1} flexShrink={1}>
-                <Text size="footnote" wrap="wrap">{x.key === 'note' ? '' : <Text dimColor>{short(x.label, 30)}　</Text>}{x.text}</Text>
+                <Text size="footnote" wrap="wrap">{x.key === 'note' ? '' : <Text dimColor>{short(x.label.replace(/[#＃]\d+\s*/g, ''), 30)}　</Text>}{x.text}</Text>
               </Box>
               <Button key={`unb-${i}`} plain onPress={() => unannotate($, i)}>✕</Button>
             </Box>
@@ -219,6 +231,7 @@ export function nowTab($: Engine, ui: Els, s: Snapshot, opened: string[] = [], e
 
   const askCard = (q: AskRow) => {
     const t = thingOf(q.thing)
+    const linked = q.reply === undefined ? undefined : s.replies.find(r => r.id === q.reply)
     const { context, ask } = splitAsk(q.question)
     // listify 拆出来的：第一段是引子（加粗），后面是编号列表；没拆就整句加粗。
     const whole = listify(ask)
@@ -240,6 +253,7 @@ export function nowTab($: Engine, ui: Els, s: Snapshot, opened: string[] = [], e
             {md(ui, listify(q.suggest))}
           </Box>
         )}
+        {linked && <Text size="footnote" dimColor wrap="wrap">相关的待发出：{replyGist(linked)}</Text>}
         <Box flexDirection="row" gap="sm">
           {q.suggest !== '' && (
             <Button key={`ok${q.id}`} variant="primary" onPress={() => answerAsk($, q.id, '照建议办', '照建议办', `chief：问题 #${q.id} 照建议办`)}>照建议办</Button>
@@ -380,7 +394,6 @@ export function outboxTab($: Engine, ui: Els, s: Snapshot, edit: Record<string, 
   const dayStart = startOfToday()
   const sentToday = s.replies.filter(r => r.status === 'sent' && r.sentAt !== undefined && Date.parse(r.sentAt) >= dayStart).reverse()
   const thingOf = (id: number | undefined) => s.things.find(t => t.id === id)
-  const what = (r: ReplyRow) => (r.kind === 'approve' ? `approve PR ${r.target.ref ?? ''}` : r.kind === 'message' ? `发给 ${r.context.who ?? r.target.to ?? ''}` : `回 ${r.context.who ?? r.context.where}`)
 
   const card = (r: ReplyRow) => replyCard($, ui, s, edit, opened, r)
 
@@ -388,7 +401,7 @@ export function outboxTab($: Engine, ui: Els, s: Snapshot, edit: Record<string, 
     <Box flexDirection="column" marginTop="sm">
       {inFlight.map(r => (
         <Box key={`q${r.id}`} flexDirection="row" gap="sm" alignItems="center">
-          <Text color="suggestion">{r.status === 'sending' ? '正在发' : '马上发出'}：{what(r)}{r.kind === 'approve' ? '' : `「${short(r.body, 30)}」`}</Text>
+          <Text color="suggestion">{r.status === 'sending' ? '正在发' : '马上发出'}：{whatOf(r)}{r.kind === 'approve' ? '' : `「${short(r.body, 30)}」`}</Text>
           {r.status === 'queued' && <Button key={`ud${r.id}`} onPress={() => act($, '撤回', ['reply', 'undo', String(r.id)])}>撤回</Button>}
         </Box>
       ))}
@@ -397,7 +410,7 @@ export function outboxTab($: Engine, ui: Els, s: Snapshot, edit: Record<string, 
       {sentToday.length > 0 && <Box marginTop="md"><Text weight="semibold">今天发出的（{sentToday.length}）</Text></Box>}
       {sentToday.slice(0, 10).map(r => (
         <Text key={`st${r.id}`} dimColor wrap="truncate-end">
-          {whoSent(r)} · {what(r)}{r.kind === 'approve' ? '' : `：${short(r.body, 60)}`}
+          {whoSent(r)} · {whatOf(r)}{r.kind === 'approve' ? '' : `：${short(r.body, 60)}`}
         </Text>
       ))}
     </Box>

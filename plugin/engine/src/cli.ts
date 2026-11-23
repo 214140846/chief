@@ -26,11 +26,14 @@
 //   chief reply add|approve|new|list|edit|queue|confirm|ask-confirm|undo|drop|redo   回复 / approve / 主动发新消息：加进待发出、改、
 //                                      排队发（5 秒可撤回；queue --policy 按规矩直接发，引擎再核一遍；confirm 以你的名义发，要插件的钥匙；
 //                                      ask-confirm 你在会话里说了发，等插件核对）、撤回、不发、让它重写
+//                                      edit-yours 你在面板上自己改的稿子（带钥匙，不按「不许写 chief 编号」拦）
 //   chief key set|check|reset          「以你的名义发」的钥匙：插件配，原文不落在这里
 //                                      new --to 可以是一条 Slack 消息的链接：回到那条帖子的 thread 里
 //   chief slack who <名字>             找 Slack 上的人，拿到 <@U…>（写进稿子才会真的提醒到人）
 //   chief archive                      把办完超过 7 天的事件、判断、事情、回复搬进 ~/chief/data/archive（引擎每天自己搬一次）
 // 从标准输入给的文字（理由、进展、问题、稿子）不经过命令行参数：里面会引用别人的原文，不能让 shell 当成命令。
+// 写给用户看的话（问题、建议、事情标题和进展、回复正文）里带 chief 自己的编号（#98、问题 #63、回复 107）的一律拒收（见 plain.ts）；
+// 问题要提待发出里的某条，用 chief ask add --reply R 挂上。
 import { watch as fsWatch, closeSync, existsSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, realpathSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
@@ -50,6 +53,7 @@ import { GitHubSource, findGh, ghRunner } from "./sources/github";
 import { browserLogin, findChrome, workspaceUrl } from "./slack/login";
 import { JiraSource, acliRunner, findAcli } from "./sources/jira";
 import { NotionSource } from "./sources/notion";
+import { chiefIds, idsMessage, type IdsOptions } from "./plain";
 import {
   AUDIENCE_LABELS, HANDLE_LABELS, SCENARIOS, appendDecision, readEvents, expectOf, isTrusted, loadDecisions, appendEvent, ensureHome, loadCursor, loadDispatch, loadEnabled, loadPolicy, loadReplies, loadReviews, loadRoutes, loadThings,
   loadSettings, loadState, paths, workspaceDir, readJson, saveState, scenarioOf, updateJson, updateReplies, withLock, writeJson,
@@ -112,6 +116,13 @@ function title(text: string | null): string | null {
   const t = text.trim();
   if (!TITLE_OK.test(t)) fail("标题只能用字、数字、空格和 # . _ : / ( ) · 、， , + -，由你自己概括，不要抄对方原文");
   return t;
+}
+
+// 给用户看的话里有 chief 自己的编号（#98、问题 #63、回复 107）就拒收，告诉写的人改成一句话说清是哪一条。见 plain.ts。
+function plainOnly(text: string | null | undefined, what: string, opts: IdsOptions = {}, hint = ""): void {
+  if (!text) return;
+  const ids = chiefIds(text, opts);
+  if (ids.length > 0) fail(idsMessage(what, ids, hint));
 }
 
 function oneLine(text: string, max = 200): string {
@@ -431,10 +442,18 @@ const MAX_LOG = 30;
 
 // 主会话写的话（进展、问题、回答）从标准输入读：里面会引用别人的原文，不放进命令行参数，免得被 shell 当成命令。
 async function stdinText(): Promise<string> {
+  return (await stdinRaw()).replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, " ").trim().slice(0, MAX_TEXT);
+}
+
+// 标准输入原样读进来（最多 max 个字）。
+async function stdinRaw(max = Infinity): Promise<string> {
   if (process.stdin.isTTY) return "";
   let data = "";
-  for await (const chunk of process.stdin) data += String(chunk);
-  return data.replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, " ").trim().slice(0, MAX_TEXT);
+  for await (const chunk of process.stdin) {
+    data += String(chunk);
+    if (data.length > max) fail("标准输入太长了");
+  }
+  return data;
 }
 
 function thingStatus(text: string | null): Thing["status"] | null {
@@ -496,6 +515,11 @@ async function thing(args: string[]): Promise<void> {
       fail("标准输入的 JSON 看不懂：{\"progress\", \"next\", \"blocker\", \"result\"}");
     }
   } else if (raw) report = { progress: raw };
+  plainOnly(titleText, "标题", { title: true });
+  plainOnly(report.progress, "进展");
+  plainOnly(report.next, "下一步");
+  plainOnly(report.blocker, "卡在哪");
+  plainOnly(report.result, "结果");
   const text = report.progress ?? "";
   const at = new Date().toISOString();
   if (sub === "add") {
@@ -566,6 +590,11 @@ async function ask(args: string[]): Promise<void> {
     if (typeof body.question !== "string" || !body.question.trim()) fail("question 不能空");
     const question = body.question.trim().slice(0, MAX_TEXT);
     const suggest = typeof body.suggest === "string" ? body.suggest.trim().slice(0, MAX_TEXT) : "";
+    // 要提待发出里的哪条回复：用 --reply 挂上，面板在卡片上显示那条的摘要，不用在问题里写回复号。
+    const hint = "要提待发出里的某条回复，用 --reply R 把它挂在这个问题上，面板会在卡片上显示那条的摘要。";
+    plainOnly(question, "问题（question）", {}, hint);
+    plainOnly(suggest, "建议（suggest）", {}, hint);
+    if (replyId !== null && !loadReplies().items.some((r) => r.id === replyId)) fail(`没有回复 ${replyId}`);
     const newId = updateThings((t) => {
       const x = t.things.find((y) => y.id === thingId) ?? oops(`没有事情 ${thingId}`);
       const a: Ask = { id: t.nextAsk++, thing: x.id, question, suggest, status: "open", at: new Date().toISOString(), ...(replyId !== null ? { reply: replyId } : {}) };
@@ -1155,6 +1184,7 @@ async function reply(args: string[]): Promise<void> {
     // --image：附图，只有 Slack 能发（GitHub、Jira 的评论 chief 只发文字）。
     const imagePaths = flags(args, "--image");
     if (imagePaths.length > 0 && event.source !== "slack") fail(`只有 Slack 的回复能附图；${event.source} 的回复只发文字`);
+    plainOnly(body, "回复正文", { github: event.source === "github" });
     const images = imagesOf(imagePaths);
     const r = updateReplies((all) => {
       // 同一条消息只留一份待确认的稿子：新稿子替掉旧的。
@@ -1214,6 +1244,7 @@ async function reply(args: string[]): Promise<void> {
     const thingFlag = flag(args, "--thing");
     const thingId = thingFlag === null ? null : num(thingFlag, "--thing ");
     const body = draftText(flag(args, "--file") ?? fail("要 --file <drafts 里的文件>"));
+    plainOnly(body, "消息正文");
     const images = imagesOf(flags(args, "--image"));
     const r = updateReplies((all) => {
       const x: Reply = {
@@ -1241,9 +1272,30 @@ async function reply(args: string[]): Promise<void> {
     if (!r) throw new Error(`没有回复 ${id}`);
     return r;
   };
-  if (sub === "edit") {
-    const text = (await stdinText()).trim();
+  // chief reply edit R（标准输入给新稿子）：改稿。新稿子一样不许带 chief 的编号。
+  // chief reply edit-yours R（标准输入 JSON {key, text}，带插件的钥匙）：你在面板上自己改的稿子。你自己写的话照原样收，不拦；主会话没有钥匙。
+  // 单独一个子命令而不是 edit 加参数：插件比引擎新时，旧引擎认不出 edit-yours 直接报错，不会把带钥匙的 JSON 当成稿子存下来。
+  if (sub === "edit" || sub === "edit-yours") {
+    const yours = sub === "edit-yours";
+    let text: string;
+    if (yours) {
+      let req: { key?: unknown; text?: unknown };
+      try {
+        req = JSON.parse(await stdinRaw(MAX_REPLY * 2)) as typeof req;
+      } catch {
+        fail("edit-yours 的标准输入给 JSON：{\"key\": …, \"text\": …}");
+      }
+      if (typeof req.key !== "string" || !keyMatches(req.key)) fail("钥匙对不上：edit-yours 只给你在面板上自己改稿用");
+      text = typeof req.text === "string" ? req.text.replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, " ").trim() : "";
+      if (text.length > MAX_REPLY) fail("回复太长了");
+    } else {
+      text = (await stdinText()).trim();
+    }
     if (!text) fail("新稿子是空的（从标准输入给）");
+    if (!yours) {
+      const current = loadReplies().items.find((x) => x.id === id) ?? fail(`没有回复 ${id}`);
+      plainOnly(text, "回复正文", { github: current.source === "github" });
+    }
     updateReplies((all) => {
       const r = find(all);
       if (r.status !== "pending" && r.status !== "failed") throw new Error(`回复 ${id} 现在是 ${r.status}，不能改`);
@@ -1329,7 +1381,7 @@ async function reply(args: string[]): Promise<void> {
     });
     return;
   }
-  fail("chief reply add|approve|new|list|edit|queue|undo|drop|redo");
+  fail("chief reply add|approve|new|list|edit|edit-yours|queue|undo|drop|redo");
 }
 
 // ── 连来源 ──

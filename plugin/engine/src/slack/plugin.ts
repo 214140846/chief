@@ -55,11 +55,32 @@ export interface GabrielClientLike {
   readonly files?: { upload(opts: { filename: string; content: Uint8Array; mimeType?: string; channel?: string; threadTs?: string }): Promise<unknown> };
 }
 
-// 发出去落在哪：附的图跟着发到同一个对话、同一个 thread。
+// 发出去落在哪：附的图跟着正文发到同一个对话、同一个 thread。
 export interface SentTo {
   ref: string;
   channel: string;
+  // 正文这条消息自己的 ts。
+  ts: string;
+  // 正文发在哪个 thread 里；正文是对话里的顶层消息就没有。
   threadTs?: string;
+  // 私信、群聊（不是频道）：正文直接回在对话里时，图紧跟在下面就和正文在一起，不用进 thread。
+  direct?: boolean;
+}
+
+// 附的图发进哪个 thread（没有就是对话里的顶层）：
+//   - 正文在 thread 里（回别人的 thread、回到 thread、发到帖子的 thread）：图进同一个 thread。
+//   - 正文是频道里的顶层消息（发到频道的新消息、直接回在频道里）：图进正文自己的 thread。
+//     不然图成了频道里单独的几条，和正文之间可能插进别人的话，thread 视图里也看不到。
+//   - 私信、群聊里直接回在对话里的：图紧跟在正文下面，照旧顶层。
+export function imageThreadOf(to: SentTo): string | undefined {
+  return to.threadTs ?? (to.direct ? undefined : to.ts);
+}
+
+// 正文落在哪个 thread，写法和收消息时 classify 算的 threadKey 一样。chief 替你发出去以后登记成「你在的 thread」，
+// 别人在下面回复才会当成「我在的 thread 有后续」交给消息中心（chief 自己发的那条回显被当成自己发的挡掉了，走不到登记那一步）。
+export function sentThreadKey(to: SentTo): string {
+  if (to.direct) return to.threadTs ? `slack:${to.channel}:${to.threadTs}` : `slack:${to.channel}:dm`;
+  return `slack:${to.channel}:${to.threadTs ?? to.ts}`;
 }
 
 export interface CheckCookieResult {
@@ -215,7 +236,7 @@ export class SlackPlugin implements ChannelPlugin {
       channel = opened.channel.id;
     }
     const res = await client.chat.send({ channel, markdown: text, ...(threadTs ? { threadTs } : {}), attribution });
-    return { ref: `${res.channel}:${res.ts}`, channel: res.channel, ...(threadTs ? { threadTs } : {}) };
+    return { ref: `${res.channel}:${res.ts}`, channel: res.channel, ts: res.ts, ...(threadTs ? { threadTs } : {}), ...(channel.startsWith("D") ? { direct: true } : {}) };
   }
 
   // 在一条消息所在的线程里回一句，以你本人的身份。target 是那条消息交来时的 replyTarget；text 原样发。
@@ -226,17 +247,20 @@ export class SlackPlugin implements ChannelPlugin {
     const channel = target.channel!;
     const inThread = target.thread_ts ?? (inThreadOf ? target.ts : undefined);
     const res = await client.chat.send({ channel, markdown: text, ...(inThread ? { threadTs: inThread } : {}), attribution });
-    return { ref: `${res.channel}:${res.ts}`, channel: res.channel, ...(inThread ? { threadTs: inThread } : {}) };
+    const direct = target.audience ? target.audience !== "channel" : channel.startsWith("D");
+    return { ref: `${res.channel}:${res.ts}`, channel: res.channel, ts: res.ts, ...(inThread ? { threadTs: inThread } : {}), ...(direct ? { direct: true } : {}) };
   }
 
-  // 正文发完，把附的图一张张发到同一个地方。返回没发上的（名字和原因）；全发上了是空的。
+  // 图要和正文在一起，发到哪由 imageThreadOf 定。返回没发上的（名字和原因）；全发上了是空的。
+  // 一张一条：gabriel-slack 的 files.upload 一次只分享一个文件，几张合成一条要它支持了才行。
   async sendImages(to: SentTo, images: readonly { file: string; name: string; mime: string }[]): Promise<string[]> {
     const files = this.client?.files;
     if (!files) return images.map((i) => `${i.name}：这个 Slack 连接传不了文件`);
+    const threadTs = imageThreadOf(to);
     const failed: string[] = [];
     for (const img of images) {
       try {
-        await files.upload({ filename: img.name, content: readFileSync(img.file), mimeType: img.mime, channel: to.channel, ...(to.threadTs ? { threadTs: to.threadTs } : {}) });
+        await files.upload({ filename: img.name, content: readFileSync(img.file), mimeType: img.mime, channel: to.channel, ...(threadTs ? { threadTs } : {}) });
       } catch (error) {
         failed.push(`${img.name}：${error instanceof Error ? error.message.slice(0, 120) : String(error)}`);
       }

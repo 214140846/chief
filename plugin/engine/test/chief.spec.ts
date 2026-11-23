@@ -487,7 +487,7 @@ describe("Slack 署名放在正文上方的小字里", () => {
     const plugin = new SlackPlugin({ createClient: async () => fake });
     await plugin.start({ secrets: { cookie_d: "xoxd-x" }, deliver: async () => {}, threadSeen: () => false, status: () => {}, log: () => {} });
     const attribution = { text: "🤖 agent reply · confirmed by {self}", review: "confirmed" as const };
-    expect(await plugin.send({ channel: "C1", ts: "1.0" }, "好的，今天合", true, attribution)).toEqual({ ref: "C1:9.0", channel: "C1", threadTs: "1.0" });
+    expect(await plugin.send({ channel: "C1", ts: "1.0" }, "好的，今天合", true, attribution)).toEqual({ ref: "C1:9.0", channel: "C1", ts: "9.0", threadTs: "1.0" });
     await plugin.sendNew("U0ABC", "jk 你好", undefined, attribution);
     await plugin.send({ channel: "C1", ts: "1.0" }, "不加署名", false);
     expect(calls).toEqual([
@@ -528,6 +528,71 @@ describe("认出 chief 自己发的", () => {
     expect(startsWithSignature("_🤖 agent reply_\n出来了", "🤖 agent reply")).toBe(true);
     expect(startsWithSignature("帮我看看 agent reply", "🤖 agent reply")).toBe(false);
     expect(startsWithSignature("随便", "")).toBe(false);
+  });
+});
+
+describe("chief 替你发出去的帖子，别人在下面回复也收", () => {
+  it("新发到频道的、回到别人 thread 的、修之前发的：后面别人的回复当成「我在的 thread 有后续」；chief 自己的回显不收，你自己回的照旧", async () => {
+    const { SlackPlugin, sentThreadKey } = await import("../src/slack/plugin");
+    const { inYourThread, eventOfSlack } = await import("../src/engine");
+    const { scenarioOf } = await import("../src/store");
+    const handlers: Record<string, (evt: unknown) => Promise<void>> = {};
+    let n = 0;
+    const fake = {
+      selfUserId: "UME1",
+      core: { callWebApi: async () => ({}) },
+      on: (name: string, fn: (...args: never[]) => void) => { handlers[name] = fn as unknown as (evt: unknown) => Promise<void>; },
+      onError: () => {}, start: async () => {}, stop: async () => {},
+      chat: { send: async (opts: { channel: string }) => ({ channel: opts.channel, ts: `${++n}0.0` }) },
+      reactions: { add: async () => {} },
+    };
+    // 和引擎一样记：发出去的编号（sent）、正文落在的 thread（threads）。
+    const state = { threads: [] as string[], sent: ["C3:5.0"] };
+    const got: InboundMessage[] = [];
+    const plugin = new SlackPlugin({ createClient: async () => fake });
+    await plugin.start({ secrets: { cookie_d: "xoxd-x" }, deliver: async (m) => { got.push(m); }, threadSeen: (k) => inYourThread(k, state.threads, state.sent), status: () => {}, log: () => {} });
+    const sendAndRecord = (sent: Parameters<typeof sentThreadKey>[0]) => {
+      state.sent.push(sent.ref);
+      state.threads.push(sentThreadKey(sent));
+    };
+    const channel = { id: "C2", name: "proj", isIm: false, isMpim: false };
+    const msg = (over: Record<string, unknown>) => ({ channel, sender: { id: "UZING", displayName: "Zing", isBot: false }, origin: "other_user", isThreadReply: true, isMentioningMe: false, ...over });
+    const reply = (ts: string, root: string, over: Record<string, unknown> = {}) =>
+      handlers["message.created"]!(msg({ ts, text: "收到", markdown: "收到", thread: { rootTs: root, isReply: true }, eventId: `C2:${ts}:created`, ...over }));
+
+    // chief reply new --to <频道>：正文是频道里的新消息（ts 10.0）。
+    sendAndRecord(await plugin.sendNew("C2", "<@URYAN> 这个需求怎么定？"));
+    expect(state.threads).toEqual(["slack:C2:10.0"]);
+    // 它的回显（gabriel-slack 认得是自己这边发的）：不收。
+    await handlers["message.created"]!(msg({ ts: "10.0", origin: "this_client", sender: { id: "UME1", isBot: false }, text: "x", markdown: "x", thread: null, isThreadReply: false, eventId: "C2:10.0:created" }));
+    expect(got).toEqual([]);
+    // Zing 在它的 thread 里回：收，算「我在的 thread 有后续」。
+    await reply("11.0", "10.0");
+    expect(got).toHaveLength(1);
+    expect(got[0]).toMatchObject({ relevance: "thread", role: "message", sender: { name: "Zing" }, replyTarget: { channel: "C2", ts: "11.0", thread_ts: "10.0" } });
+    expect(scenarioOf(eventOfSlack(got[0]!, "UME1")!)).toBe("slack_thread");
+    // 你自己在下面回的：照旧是你自己说的（self），不当成找你的。
+    await reply("12.0", "10.0", { origin: "self_other_client", sender: { id: "UME1", isBot: false } });
+    expect(got[1]).toMatchObject({ role: "self", relevance: null });
+    // 回到别人帖子的 thread（帖子 1.0）：那个 thread 也算。
+    sendAndRecord(await plugin.send({ channel: "C2", ts: "1.0", audience: "channel" }, "好的", true));
+    await reply("21.0", "1.0");
+    expect(got[2]).toMatchObject({ relevance: "thread", replyTarget: { ts: "21.0", thread_ts: "1.0" } });
+    // 修之前发的（只在 sent 里记着发出编号 C3:5.0）：下面的回复也收。
+    await reply("6.0", "5.0", { channel: { id: "C3", name: "old", isIm: false, isMpim: false }, eventId: "C3:6.0:created" });
+    expect(got[3]).toMatchObject({ relevance: "thread", replyTarget: { channel: "C3", thread_ts: "5.0" } });
+    // 和你无关的 thread：照旧不收。
+    await reply("31.0", "30.0");
+    expect(got).toHaveLength(4);
+    await plugin.stop();
+  });
+
+  it("登记的 thread 写法和收消息时算的一样：频道按正文或它所在的 thread，私信里直接回的是整段对话", async () => {
+    const { sentThreadKey } = await import("../src/slack/plugin");
+    expect(sentThreadKey({ ref: "C2:10.0", channel: "C2", ts: "10.0" })).toBe("slack:C2:10.0");
+    expect(sentThreadKey({ ref: "C2:11.0", channel: "C2", ts: "11.0", threadTs: "1.0" })).toBe("slack:C2:1.0");
+    expect(sentThreadKey({ ref: "D1:3.0", channel: "D1", ts: "3.0", direct: true })).toBe("slack:D1:dm");
+    expect(sentThreadKey({ ref: "D1:4.0", channel: "D1", ts: "4.0", threadTs: "2.0", direct: true })).toBe("slack:D1:2.0");
   });
 });
 
@@ -765,6 +830,44 @@ describe("回复附图", () => {
     expect(await plugin.sendImages(sent, [{ file: join(d, "a.png"), name: "arch.png", mime: "image/png" }])).toEqual(["arch.png：file_uploads_disabled"]);
     await plugin.stop();
   });
+
+  it("图和正文在一起：发到频道的新消息、直接回在频道里的，图进正文自己的 thread；回 thread 的进同一个 thread；私信里直接回的图紧跟在下面", async () => {
+    const { SlackPlugin, imageThreadOf } = await import("../src/slack/plugin");
+    const uploads: { filename: string; channel: string | undefined; threadTs: string | undefined }[] = [];
+    let n = 0;
+    const fake = {
+      selfUserId: "U0ME",
+      core: { callWebApi: async (method: string) => (method === "conversations.open" ? { channel: { id: "D7" } } : {}) },
+      on: () => {}, onError: () => {}, start: async () => {}, stop: async () => {},
+      chat: { send: async (opts: { channel: string }) => ({ channel: opts.channel, ts: `${++n}0.0` }) },
+      reactions: { add: async () => {} },
+      files: { upload: async (opts: { filename: string; channel?: string; threadTs?: string }) => { uploads.push({ filename: opts.filename, channel: opts.channel, threadTs: opts.threadTs }); } },
+    };
+    const plugin = new SlackPlugin({ createClient: async () => fake });
+    await plugin.start({ secrets: { cookie_d: "xoxd-x" }, deliver: async () => {}, threadSeen: () => false, status: () => {}, log: () => {} });
+    const d = home();
+    writeFileSync(join(d, "a.png"), PNG);
+    const two = [{ file: join(d, "a.png"), name: "a.png", mime: "image/png" }, { file: join(d, "a.png"), name: "b.png", mime: "image/png" }];
+    const imagesOf = async (sent: Parameters<typeof imageThreadOf>[0]) => {
+      uploads.length = 0;
+      expect(await plugin.sendImages(sent, two)).toEqual([]);
+      return uploads.map((u) => `${u.filename}@${u.channel}/${u.threadTs ?? "顶层"}`);
+    };
+    // chief reply new --to <频道>：正文是频道里的新消息（ts 10.0），两张图都进它的 thread。
+    expect(await imagesOf(await plugin.sendNew("C2", "问下 PM"))).toEqual(["a.png@C2/10.0", "b.png@C2/10.0"]);
+    // 直接回在频道里（规矩把频道设成 inline）：图进这条回复自己的 thread。
+    expect(await imagesOf(await plugin.send({ channel: "C1", ts: "1.0", audience: "channel" }, "看图", false))).toEqual(["a.png@C1/20.0", "b.png@C1/20.0"]);
+    // 回到对方那条的 thread / 对方本来就在 thread 里：图进同一个 thread（原来就是这样）。
+    expect(await imagesOf(await plugin.send({ channel: "C1", ts: "1.0", audience: "channel" }, "看图", true))).toEqual(["a.png@C1/1.0", "b.png@C1/1.0"]);
+    expect(await imagesOf(await plugin.send({ channel: "C1", ts: "1.5", thread_ts: "1.0", audience: "channel" }, "看图", false))).toEqual(["a.png@C1/1.0", "b.png@C1/1.0"]);
+    // 发到帖子的 thread（reply new --to <消息链接>）：进那个 thread。
+    expect(await imagesOf(await plugin.sendNew("C2", "补一张图", "5.0"))).toEqual(["a.png@C2/5.0", "b.png@C2/5.0"]);
+    // 私信、群聊里直接回在对话里：图紧跟在正文下面，照旧顶层。
+    expect(await imagesOf(await plugin.send({ channel: "D1", ts: "2.0", audience: "direct" }, "看图", false))).toEqual(["a.png@D1/顶层", "b.png@D1/顶层"]);
+    expect(await imagesOf(await plugin.send({ channel: "C9", ts: "2.0", audience: "group" }, "看图", false))).toEqual(["a.png@C9/顶层", "b.png@C9/顶层"]);
+    expect(await imagesOf(await plugin.sendNew("U0ABC123", "jk 你好"))).toEqual(["a.png@D7/顶层", "b.png@D7/顶层"]);
+    await plugin.stop();
+  });
 });
 
 describe("谁能让回复发出去：引擎把关，不靠主会话自觉", () => {
@@ -830,5 +933,79 @@ describe("谁能让回复发出去：引擎把关，不靠主会话自觉", () =
     chief(h, "reply", "ask-confirm", "1");
     expect(status(h, 1).status).toBe("pending");
     expect(status(h, 1).confirmAsk).toBeTruthy();
+  });
+});
+
+describe("写给你看的话里不许有 chief 自己的编号", () => {
+  function fails(h: string, input: string, ...args: string[]): string {
+    try {
+      withStdin(h, input, ...args);
+    } catch (error) {
+      return String((error as { stderr?: string }).stderr);
+    }
+    throw new Error("没失败");
+  }
+  const slackEvent = (id: number) => JSON.stringify({ id, at: "t", source: "slack", kind: "message.received", title: "私信", url: null, from: "Joe", fromId: "U9", text: "能本周上线吗", why: ["dm"], keys: [], reply: { channel: "D1", ts: `${id}.0` } });
+  const githubEvent = (id: number) => JSON.stringify({ id, at: "t", source: "github", kind: "github.pr", title: "o/r#44", url: null, from: "bob", text: "看下", why: ["mention"], keys: [], reply: { ref: "o/r#44" } });
+
+  it("问题和建议：带 #98、回复 107 的拒收，什么都不记；提待发出的那条用 --reply 挂上", () => {
+    const h = home();
+    chief(h, "cursor");
+    writeFileSync(join(h, "events.jsonl"), `${slackEvent(1)}\n`);
+    withStdin(h, "", "thing", "add", "--title", "Joe 问上线时间");
+    writeFileSync(join(h, "drafts", "1.md"), "下周二上线");
+    chief(h, "reply", "add", "--event", "1", "--thing", "1", "--file", join(h, "drafts", "1.md"));
+    const err = fails(h, JSON.stringify({ question: "Joe 问能不能本周上线", suggest: "先发 #1，再回他" }), "ask", "add", "--thing", "1");
+    expect(err).toContain("建议（suggest）里有看的人看不懂的编号：「#1」");
+    expect(err).toContain("--reply");
+    expect(fails(h, JSON.stringify({ question: "回复 1 要不要发？", suggest: "发" }), "ask", "add", "--thing", "1")).toContain("「回复 1」");
+    expect(JSON.parse(chief(h, "ask", "list"))).toEqual([]);
+    // 一句话说清是哪条，再用 --reply 挂上那条回复。
+    withStdin(h, JSON.stringify({ question: "Joe 问能不能本周上线", suggest: "发给 Joe 的那条回复：下周二上线" }), "ask", "add", "--thing", "1", "--reply", "1");
+    expect(JSON.parse(chief(h, "ask", "list"))[0]).toMatchObject({ reply: 1, suggest: "发给 Joe 的那条回复：下周二上线" });
+    expect(fails(h, JSON.stringify({ question: "要发吗" }), "ask", "add", "--thing", "1", "--reply", "9")).toContain("没有回复 9");
+    // PR、Jira 单照常写。
+    expect(fails(h, JSON.stringify({ question: "o/r#44 能合吗？", suggest: "合" }), "ask", "add", "--thing", "1")).toContain("「o/r#44」");
+    withStdin(h, JSON.stringify({ question: "o/r#44（接口加字段）能合吗？PROJ-35189（下单接口加字段）要一起上", suggest: "合，见 https://github.com/o/r/pull/44" }), "ask", "add", "--thing", "1");
+    expect(JSON.parse(chief(h, "ask", "list"))).toHaveLength(2);
+  });
+
+  it("事情的标题、进展、下一步、卡在哪、结果：带 chief 编号的拒收", () => {
+    const h = home();
+    expect(fails(h, "", "thing", "add", "--title", "跟进 #63")).toContain("标题里有看的人看不懂的编号：「#63」");
+    // 标题本身就在说这个 PR 是什么：带仓库名的编号不用括号；单写的、光秃秃的编号照样拦。
+    expect(fails(h, "", "thing", "add", "--title", "o/r#12")).toContain("「o/r#12」");
+    expect(withStdin(h, "", "thing", "add", "--title", "o/r#12 登录超时 review").trim()).toBe("1");
+    expect(fails(h, "等事件 #552 的人回话", "thing", "update", "1")).toContain("进展里有");
+    expect(fails(h, JSON.stringify({ progress: "改完了", next: "等问题 #3 拍板" }), "thing", "update", "1")).toContain("下一步里有");
+    expect(fails(h, JSON.stringify({ blocker: "回复 12 没发出去" }), "thing", "update", "1")).toContain("卡在哪里有");
+    expect(fails(h, JSON.stringify({ result: "PR #45 开好了" }), "thing", "update", "1")).toContain("结果里有");
+    expect(JSON.parse(chief(h, "thing", "list"))[0]).toMatchObject({ progress: "", log: [] });
+    withStdin(h, JSON.stringify({ progress: "改完了", result: "[PR #45](https://github.com/o/r/pull/45) 开好了，PROJ-35189（下单接口加字段）已提测" }), "thing", "update", "1");
+    expect(JSON.parse(chief(h, "thing", "list"))[0]).toMatchObject({ progress: "改完了", results: ["[PR #45](https://github.com/o/r/pull/45) 开好了，PROJ-35189（下单接口加字段）已提测"] });
+  });
+
+  it("回复正文：Slack 的拒收 #12；回 GitHub 的放行 #12（GitHub 自己会链过去）；你在面板上自己改的稿子带钥匙照原样收", () => {
+    const h = home();
+    chief(h, "cursor");
+    writeFileSync(join(h, "events.jsonl"), `${slackEvent(1)}\n${githubEvent(2)}\n`);
+    writeFileSync(join(h, "drafts", "bad.md"), "已经在 #12 修了");
+    expect(chiefFails(h, "reply", "add", "--event", "1", "--file", join(h, "drafts", "bad.md"))).toContain("回复正文里有看的人看不懂的编号：「#12」");
+    expect(chiefFails(h, "reply", "new", "--to", "U0ABC123", "--file", join(h, "drafts", "bad.md"))).toContain("消息正文里有");
+    expect(JSON.parse(chief(h, "reply", "list"))).toEqual([]);
+    // GitHub 的评论里 #12 是同一个仓库的 PR。
+    expect(JSON.parse(chief(h, "reply", "add", "--event", "2", "--file", join(h, "drafts", "bad.md")))).toMatchObject({ id: 1, source: "github" });
+    writeFileSync(join(h, "drafts", "ok.md"), "已经在 acme/shop#12（登录超时那个 PR）修了：https://github.com/acme/shop/pull/12");
+    expect(JSON.parse(chief(h, "reply", "add", "--event", "1", "--file", join(h, "drafts", "ok.md")))).toMatchObject({ id: 2, source: "slack" });
+    // 主会话改稿一样拦。
+    expect(fails(h, "按回复 1 的意思改", "reply", "edit", "2")).toContain("「回复 1」");
+    expect(fails(h, "见 #12", "reply", "edit", "2")).toContain("「#12」");
+    withStdin(h, "见 #13", "reply", "edit", "1");
+    // 你在面板上自己改的：带钥匙照原样收；钥匙不对不收。
+    withStdin(h, KEY, "key", "set");
+    expect(fails(h, JSON.stringify({ key: "cd".repeat(32), text: "见 #12" }), "reply", "edit-yours", "2")).toContain("钥匙对不上");
+    withStdin(h, JSON.stringify({ key: KEY, text: "见 #12，我自己写的" }), "reply", "edit-yours", "2");
+    const items = JSON.parse(chief(h, "reply", "list")) as { id: number; body: string }[];
+    expect(items.map((r) => r.body)).toEqual(["见 #13", "见 #12，我自己写的"]);
   });
 });
