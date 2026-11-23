@@ -3,15 +3,9 @@
 // 这样也没法借「附图」把密钥之类的文件发出去：不是图片的一律拒收。
 import { closeSync, copyFileSync, lstatSync, mkdirSync, openSync, readSync } from "node:fs";
 import { basename, join } from "node:path";
+import type { ReplyImage } from "./shared/types";
 
-export interface ReplyImage {
-  // 复制进 drafts/images 后的路径（发的时候读这个）。
-  file: string;
-  // 给人看的名字（原文件名），也是发到 Slack 上的文件名。
-  name: string;
-  bytes: number;
-  mime: string;
-}
+export type { ReplyImage };
 
 export const MAX_IMAGES = 4;
 export const MAX_IMAGE_BYTES = 10 * 1024 * 1024;

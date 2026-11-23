@@ -8,8 +8,9 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { config } from "../config";
 import { runProgram } from "../program";
+import { SOURCE_META } from "../shared/sources";
 import type { SecretCheck } from "../slack/types";
-import { SourceError, plain, type Ask, type Source, type SourceItem } from "./types";
+import { SourceError, plain, type Ask, type Source, type SourceDescriptor, type SourceItem } from "./types";
 
 const ACLI_PATHS = ["/opt/homebrew/bin/acli", "/usr/local/bin/acli"];
 // twg 官方安装脚本装在 ~/.local/bin。
@@ -311,3 +312,33 @@ export class JiraSource implements Source {
   }
 
 }
+
+function need(): JiraSource {
+  const cli = findJiraCli();
+  if (!cli) throw new Error("没找到 acli 或 twg");
+  return new JiraSource(cli);
+}
+
+export const jira: SourceDescriptor = {
+  id: "jira",
+  meta: SOURCE_META.jira,
+  local: () => {
+    const cli = findJiraCli();
+    return cli ? new JiraSource(cli) : null;
+  },
+  build: async () => {
+    const cli = findJiraCli();
+    return cli ? new JiraSource(cli) : "没找到 acli 或 twg";
+  },
+  event: (item) => ({ key: String(item.payload.key ?? ""), reply: { key: String(item.payload.key ?? "") } }),
+  comment: async (target, body, signal) => ({ url: (await need().comment(target.key ?? "", body, signal)).url }),
+  async connect({ signal }) {
+    const cli = findJiraCli();
+    if (!cli) throw new Error("没找到 acli 或 twg：装 Atlassian 官方的 acli 再 acli jira auth login --web，或者装 twg 再 twg login");
+    return { checks: await new JiraSource(cli).check(signal) };
+  },
+  open: {
+    rank: 1,
+    list: async (signal) => (await need().open(signal)).map((it) => ({ key: it.key, title: it.title, state: it.status, url: it.url, updated: it.updated, due: it.due })),
+  },
+};

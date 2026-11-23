@@ -6,9 +6,11 @@
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { config } from "../config";
+import { keysOf } from "../keys";
 import { runProgram } from "../program";
+import { SOURCE_META } from "../shared/sources";
 import type { SecretCheck } from "../slack/types";
-import { SourceError, escapeRe, plain, type Ask, type Source, type SourceItem } from "./types";
+import { SourceError, escapeRe, plain, type Ask, type Source, type SourceDescriptor, type SourceItem } from "./types";
 
 const GH_PATHS = ["/opt/homebrew/bin/gh", "/usr/local/bin/gh", "/usr/bin/gh"];
 // 每次最多拉几条：config.json 的 items.github（默认 50）。
@@ -267,3 +269,35 @@ export class GitHubSource implements Source {
   }
 
 }
+
+function local(bots?: () => readonly string[]): GitHubSource | null {
+  const gh = findGh();
+  return gh ? new GitHubSource(ghRunner(gh), bots) : null;
+}
+
+function need(): GitHubSource {
+  const s = local();
+  if (!s) throw new Error("没找到 gh");
+  return s;
+}
+
+export const github: SourceDescriptor = {
+  id: "github",
+  meta: SOURCE_META.github,
+  local: () => local(),
+  build: async ({ bots }) => local(bots) ?? "没找到 gh",
+  event: (item) => ({ key: keysOf(item.url)[0] ?? item.url, reply: { ref: `${String(item.payload.repo)}#${String(item.payload.number)}` } }),
+  comment: async (target, body, signal) => ({ url: (await need().comment(target.ref ?? "", body, signal)).url }),
+  approve: async (ref, body, signal) => ({ url: (await need().approve(ref, body, signal)).url }),
+  async connect({ signal }) {
+    const s = local();
+    if (!s) throw new Error("没找到 gh：brew install gh，再 gh auth login");
+    return { checks: await s.check(signal) };
+  },
+  open: {
+    rank: 2,
+    list: async (signal) => (await need().open(signal)).map((it) => ({
+      key: keysOf(it.url)[0] ?? it.url, title: `${it.ref} ${it.title}`, state: it.mine ? "我开的 PR" : "等我 review", url: it.url, updated: it.updated,
+    })),
+  },
+};

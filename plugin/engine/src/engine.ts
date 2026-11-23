@@ -12,19 +12,17 @@ import { rotateLog } from "./logfile";
 import { scrubTokens } from "./scrub";
 import { KeychainStore, type SecretStore } from "./secrets";
 import { keysOf } from "./keys";
+import { DATA_HEALTH } from "./shared/rules";
+import { SOURCE_LABELS, type SourceId } from "./shared/sources";
 import { SlackPlugin, SLACK_COOKIE_D, sentThreadKey, type SlackAttribution } from "./slack/plugin";
 import type { ChannelStatus, InboundMessage } from "./slack/types";
-import { GitHubSource, findGh, ghRunner } from "./sources/github";
-import { JiraSource, findJiraCli } from "./sources/jira";
-import { NotionSource } from "./sources/notion";
+import { DESCRIPTORS, SOURCES, descriptorOf } from "./sources/registry";
 import type { Source, SourceItem } from "./sources/types";
-import { appendEvent, ensureHome, loadCorrupt, loadDispatch, loadEnabled, readEvents, readJson, loadPolicy, loadState, placementOf, paths, saveState, updateReplies, withLock, writeJson, type Enabled, type EngineState, type EventSource, type ChiefEvent, type Reply } from "./store";
+import { appendEvent, ensureHome, loadCorrupt, loadDispatch, loadEnabled, readEvents, readJson, loadPolicy, loadState, placementOf, paths, saveState, updateReplies, withLock, writeJson, type Enabled, type EngineState, type ChiefEvent, type Reply, type SourceHealth } from "./store";
 
 // 拉外部来源的间隔、第一次连上往回看多久：config.json 的 pollMinutes（默认 5 分钟）、firstLookbackHours（默认一天）。
 const pollMs = () => config().pollMinutes * 60_000;
 const firstLookbackMs = () => config().firstLookbackHours * 3600_000;
-
-export const SECRET = { slack: `slack.${SLACK_COOKIE_D}`, notion: "notion.token" } as const;
 
 // 弹一条 macOS 通知（只用在出了要你管的事时：回复没发出去、Slack 登录失效、数据文件坏了；新消息不弹，要不要打扰你由主会话判断）。
 // 文字当参数交给 osascript（不拼进脚本），对方写了什么都不会被当成脚本执行。
@@ -141,39 +139,27 @@ export function notifyCorrupt(now = Date.now(), notify: (title: string, body: st
   return { ok: false, at, fails: 2, error: left.map((r) => `${r.file.split("/").at(-1)} 坏了${r.critical ? "（没覆盖，修好或删掉它）" : "（已挪走，用的默认）"}：另存在 ${r.moved}`).join("；").slice(0, 400) };
 }
 
-// 按开关和钥匙串搭出要拉的外部来源。
+// 按开关和钥匙串搭出要拉的外部来源（来源注册表里有 build 的；Slack 是推送，见 startSlack）。
 export async function buildSources(enabled: Enabled, secrets: SecretStore): Promise<Source[]> {
   const out: Source[] = [];
-  if (enabled.github) {
-    const gh = findGh();
-    if (gh) out.push(new GitHubSource(ghRunner(gh), () => loadPolicy().bots));
-    else log("[github] 没找到 gh，跳过");
-  }
-  if (enabled.jira) {
-    const cli = findJiraCli();
-    if (cli) out.push(new JiraSource(cli));
-    else log("[jira] 没找到 acli 或 twg，跳过");
-  }
-  if (enabled.notion) {
-    const token = await secrets.get(SECRET.notion);
-    if (token) out.push(new NotionSource(token));
-    else log("[notion] 钥匙串里没有令牌，跳过");
+  for (const d of DESCRIPTORS) {
+    if (!enabled[d.id] || !d.build) continue;
+    const built = await d.build({ secrets, bots: () => loadPolicy().bots });
+    if (typeof built === "string") log(`[${d.id}] ${built}，跳过`);
+    else out.push(built);
   }
   return out;
 }
 
 // 外部来源的一条动态 → 事件。只有「有人找你」的（请你 review、指派给你、@ 你、评论了你的）才交给消息中心。
-export function eventOfItem(source: EventSource, item: SourceItem): Omit<ChiefEvent, "id"> | null {
+// 这件事自己的键、回复回到哪，由来源自己说（SourceDescriptor 的 event）。
+export function eventOfItem(source: SourceId, item: SourceItem): Omit<ChiefEvent, "id"> | null {
   if (!item.asks || item.asks.length === 0) return null;
-  const own = source === "jira" ? String(item.payload.key ?? "")
-    : source === "notion" ? `notion:${String(item.payload.pageId ?? "")}`
-    : keysOf(item.url)[0] ?? item.url;
-  const reply: Record<string, string> = source === "github" ? { ref: `${String(item.payload.repo)}#${String(item.payload.number)}` }
-    : source === "jira" ? { key: String(item.payload.key ?? "") }
-    : { page: String(item.payload.pageId ?? "") };
+  const to = SOURCES[source].event?.(item);
+  if (!to) return null;
   return {
     at: item.at, source, kind: item.kind, title: item.title, url: item.url, from: null,
-    text: item.summary, why: item.asks, keys: [...new Set([own, ...keysOf(`${item.title} ${item.summary}`)])], reply,
+    text: item.summary, why: item.asks, keys: [...new Set([to.key, ...keysOf(`${item.title} ${item.summary}`)])], reply: to.reply,
   };
 }
 
@@ -217,13 +203,7 @@ export interface EngineDeps {
   notify?: (title: string, body: string) => void;
 }
 
-export interface SourceHealth {
-  ok: boolean;
-  at: string;
-  // 连着失败了几次（成功一次就清零）。
-  fails: number;
-  error?: string;
-}
+export type { SourceHealth };
 
 export class Engine {
   private state: EngineState = loadState();
@@ -272,7 +252,7 @@ export class Engine {
       } catch (error) {
         log(`看坏了的数据文件没成：${error instanceof Error ? error.message : String(error)}`);
       }
-      writeJson(paths().engineAlive, { at: new Date().toISOString(), pid: process.pid, health: data ? { ...this.health, 数据文件: data } : this.health });
+      writeJson(paths().engineAlive, { at: new Date().toISOString(), pid: process.pid, health: data ? { ...this.health, [DATA_HEALTH]: data } : this.health });
     };
     beat();
     this.beatTimer = setInterval(beat, 20_000);
@@ -413,7 +393,7 @@ export class Engine {
 
   private async startSlack(): Promise<void> {
     if (!this.enabled.slack) return;
-    const cookie = await this.secrets.get(SECRET.slack);
+    const cookie = await this.secrets.get(SOURCES.slack.secret!);
     if (!cookie) {
       log("[slack] 钥匙串里没有 Cookie，跳过");
       return;
@@ -523,11 +503,12 @@ export class Engine {
 
   private async sendOne(r: Reply): Promise<SendResult> {
     const signal = AbortSignal.timeout(60_000);
+    const d = descriptorOf(r.source);
     if (r.kind === "approve") {
-      const gh = findGh();
-      if (!gh) throw new Error("没找到 gh");
-      return { url: (await new GitHubSource(ghRunner(gh)).approve(r.target.ref ?? "", r.body, signal)).url };
+      if (!d?.approve) throw new Error(`${SOURCE_LABELS[r.source]} 上不能 approve`);
+      return { url: (await d.approve(r.target.ref ?? "", r.body, signal)).url };
     }
+    // Slack 是推送的，发要用引擎连着的那个 SlackPlugin，不走注册表。
     if (r.source === "slack") {
       if (!this.slack) throw new Error("Slack 没连上（chief connect slack）");
       // 署名不进正文：放在正文上方的一行灰色小字里（Slack 的 context block），对方一眼看出是 agent 代回的。
@@ -544,17 +525,8 @@ export class Engine {
       const failed = r.images?.length ? await this.slack.sendImages(sent, r.images) : [];
       return { url: null, ...(failed.length > 0 ? { warning: `正文发出去了，图没发上：${failed.join("；")}` } : {}) };
     }
-    if (r.source === "github") {
-      const gh = findGh();
-      if (!gh) throw new Error("没找到 gh");
-      return { url: (await new GitHubSource(ghRunner(gh)).comment(r.target.ref ?? "", r.body, signal)).url };
-    }
-    if (r.source === "jira") {
-      const cli = findJiraCli();
-      if (!cli) throw new Error("没找到 acli 或 twg");
-      return { url: (await new JiraSource(cli).comment(r.target.key ?? "", r.body, signal)).url };
-    }
-    throw new Error("Notion 集成只读，请你到页面上自己回");
+    if (d?.comment) return { url: (await d.comment(r.target, r.body, signal)).url };
+    throw new Error(`${d?.meta.readOnly ?? `${SOURCE_LABELS[r.source]} 只读`}，请你到页面上自己回`);
   }
 
   private async pollAll(): Promise<void> {

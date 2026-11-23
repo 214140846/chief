@@ -48,21 +48,21 @@ import { tailLines } from "./logfile";
 import { migrateAll } from "./migrate";
 import { scrubTokens } from "./scrub";
 import { LineTail } from "./tail";
-import { Engine, SECRET, notifyCorrupt, say } from "./engine";
+import { Engine, notifyCorrupt, say } from "./engine";
 import { autoReason, prsOf, replyHash } from "./gate";
 import { MAX_IMAGES, takeImage, type ReplyImage } from "./images";
 import { KEY, keysOf } from "./keys";
 import { type ChildProcess, spawn } from "node:child_process";
 import { createHash, timingSafeEqual } from "node:crypto";
 import { LABEL, bootout, bootstrap, kickstart, plistPath, renderPlist, serviceState } from "./launchd";
-import { KeychainStore, isStorableSecret } from "./secrets";
+import { KeychainStore } from "./secrets";
+import { SOURCE_IDS, SOURCE_LABELS, isSourceId, type SourceMeta } from "./shared/sources";
+import type { Doctor, DoctorSource } from "./shared/types";
 import { findPeople, parsePermalink } from "./slack/people";
-import { SlackPlugin, SLACK_COOKIE_D } from "./slack/plugin";
 import type { SecretCheck } from "./slack/types";
-import { GitHubSource, findGh, ghRunner } from "./sources/github";
-import { browserLogin, findChrome, workspaceUrl } from "./slack/login";
-import { JiraSource, findJiraCli } from "./sources/jira";
-import { NotionSource } from "./sources/notion";
+import { findChrome } from "./slack/login";
+import { DESCRIPTORS, SOURCES } from "./sources/registry";
+import type { ImportItem } from "./sources/types";
 import { chiefIds, idsMessage, type IdsOptions } from "./plain";
 import {
   AUDIENCE_LABELS, CorruptFileError, HANDLE_LABELS, SCENARIOS, appendDecision, readEvents, expectOf, loadDecisions, appendEvent, ensureHome, loadCursor, loadDispatch, loadEnabled, loadPolicy, loadReplies, loadReviews, loadRoutes, loadThings,
@@ -72,7 +72,6 @@ import {
 } from "./store";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const SOURCES: readonly EventSource[] = ["slack", "github", "jira", "notion"];
 const SESSION = /^[\w-]{1,100}$/;
 const MAX_REPLY = 20_000;
 // 一条事件在 Monitor 通知里最多带这么多字，全文用 chief show 看。
@@ -670,7 +669,7 @@ async function slackCmd(args: string[]): Promise<void> {
   if (args[0] !== "who") fail("chief slack who <名字>");
   const query = args.slice(1).join(" ").trim();
   if (!query || query.length > 60 || /[\n<>]/.test(query)) fail("给一个名字（60 字以内），比如 chief slack who Dave");
-  const cookie = await new KeychainStore().get(SECRET.slack);
+  const cookie = await new KeychainStore().get(SOURCES.slack.secret!);
   if (!cookie) fail("Slack 还没连上（chief connect slack）");
   const found = await findPeople(cookie, query);
   if (found.length > 0) {
@@ -811,30 +810,18 @@ async function evals(args: string[]): Promise<void> {
 async function importCandidates(): Promise<void> {
   const signal = AbortSignal.timeout(90_000);
   const known = new Set(loadThings().things.filter((x) => x.status !== "done" && x.status !== "dropped").flatMap((x) => x.keys ?? []));
-  const out: { source: string; key: string; title: string; state: string; url: string; updated: string; known: boolean; due?: string | null }[] = [];
+  const out: ({ source: string; known: boolean } & ImportItem)[] = [];
   const errors: string[] = [];
   const enabled = loadEnabled();
-  if (enabled.jira) {
-    const cli = findJiraCli();
+  // 开着、能导入的来源（来源注册表里有 open 的），按 rank 排。
+  for (const d of DESCRIPTORS.filter((x) => x.open && enabled[x.id]).sort((x, y) => x.open!.rank - y.open!.rank)) {
     try {
-      if (!cli) throw new Error("没找到 acli 或 twg");
-      for (const it of await new JiraSource(cli).open(signal)) {
-        out.push({ source: "jira", key: it.key, title: it.title, state: it.status, url: it.url, updated: it.updated, known: known.has(it.key), due: it.due });
+      for (const it of await d.open!.list(signal)) {
+        const { due, ...rest } = it;
+        out.push({ source: d.id, ...rest, known: known.has(it.key), ...(due !== undefined ? { due } : {}) });
       }
     } catch (error) {
-      errors.push(`Jira：${error instanceof Error ? error.message : String(error)}`);
-    }
-  }
-  if (enabled.github) {
-    const gh = findGh();
-    try {
-      if (!gh) throw new Error("没找到 gh");
-      for (const it of await new GitHubSource(ghRunner(gh)).open(signal)) {
-        const key = keysOf(it.url)[0] ?? it.url;
-        out.push({ source: "github", key, title: `${it.ref} ${it.title}`, state: it.mine ? "我开的 PR" : "等我 review", url: it.url, updated: it.updated, known: known.has(key) });
-      }
-    } catch (error) {
-      errors.push(`GitHub：${error instanceof Error ? error.message : String(error)}`);
+      errors.push(`${d.meta.label}：${error instanceof Error ? error.message : String(error)}`);
     }
   }
   process.stdout.write(`${JSON.stringify({ items: out, errors })}\n`);
@@ -1269,7 +1256,8 @@ function queueReply(id: number, now: Date, mark: (r: Reply) => void): void {
     const r = all.items.find((x) => x.id === id);
     if (!r) throw new Error(`没有回复 ${id}`);
     if (r.status !== "pending" && r.status !== "failed") throw new Error(`回复 ${id} 现在是 ${r.status}，不能发`);
-    if (r.source === "notion") throw new Error("Notion 集成只读，这条请你到页面上自己回");
+    const readOnly = isSourceId(r.source) ? (SOURCES[r.source].meta as SourceMeta).readOnly : undefined;
+    if (readOnly) throw new Error(`${readOnly}，这条请你到页面上自己回`);
     if (Object.keys(r.target).length === 0) throw new Error("这是测试消息的回复，不会真的发出去");
     if (r.kind === "approve" && testEvents.has(r.event)) throw new Error("这是测试消息，不会真的 approve");
     r.status = "queued";
@@ -1532,64 +1520,33 @@ function printChecks(checks: SecretCheck[]): boolean {
   return checks.length > 0 && checks.every((c) => c.pass);
 }
 
+// chief connect <来源>：来源自己检查能不能用（SourceDescriptor 的 connect），都过了才存、才记成开着。
 async function connect(source: string | undefined, args: string[] = []): Promise<void> {
-  if (!source || !SOURCES.includes(source as EventSource)) fail(`chief connect ${SOURCES.join("|")}`);
-  const id = source as EventSource;
-  const secrets = new KeychainStore();
-  const signal = AbortSignal.timeout(60_000);
-  let ok: boolean;
-  if (id === "slack") {
-    // 默认开一个独立的 Chrome 窗口让你自己登录，拿到 Cookie 直接存进钥匙串，不经过剪贴板和聊天。
-    // --workspace acme：从工作区地址登（公司 SSO 要这样）；不给就用上次登录成功时记下的。
-    const given = flag(args, "--workspace");
-    const workspace = given ?? loadSettings().slackWorkspace;
-    if (given !== null) {
-      try {
-        workspaceUrl(given);
-      } catch (error) {
-        fail(error instanceof Error ? error.message : String(error));
-      }
-    }
-    const login = args.includes("--stdin")
-      ? { cookie: await readSecret("Slack 会话 Cookie（xoxd-…，输入不显示）：") }
-      : await browserLogin({ log: (line) => process.stdout.write(`${line}\n`), ...(workspace ? { workspace } : {}) }).catch((error: unknown) => fail(error instanceof Error ? error.message : String(error)));
-    const cookie = login.cookie;
-    if (!isStorableSecret(cookie)) fail("Cookie 里有不支持的字符");
-    ok = printChecks(await new SlackPlugin().test({ [SLACK_COOKIE_D]: cookie }));
-    if (ok) await secrets.set(SECRET.slack, cookie);
-    // 记下这次登的工作区（你给的，或登录时看出来的），下次重新登录直接从工作区地址打开。
-    const seen = given ?? ("workspace" in login ? login.workspace : undefined);
-    if (ok && seen) {
-      const name = new URL(workspaceUrl(seen)).hostname.split(".")[0]!;
-      updateJson<Partial<Settings>, void>(paths().settings, {}, (s) => { s.slackWorkspace = name; });
-    }
-  } else if (id === "notion") {
-    const token = await readSecret("Notion 集成令牌（输入不显示）：");
-    if (!isStorableSecret(token)) fail("令牌里有不支持的字符");
-    ok = printChecks(await new NotionSource(token).check(signal));
-    if (ok) await secrets.set(SECRET.notion, token);
-  } else if (id === "github") {
-    const gh = findGh() ?? fail("没找到 gh：brew install gh，再 gh auth login");
-    ok = printChecks(await new GitHubSource(ghRunner(gh)).check(signal));
-  } else {
-    const cli = findJiraCli() ?? fail("没找到 acli 或 twg：装 Atlassian 官方的 acli 再 acli jira auth login --web，或者装 twg 再 twg login");
-    ok = printChecks(await new JiraSource(cli).check(signal));
-  }
+  if (!source || !isSourceId(source)) fail(`chief connect ${SOURCE_IDS.join("|")}`);
+  const d = SOURCES[source];
+  const got = await d.connect({
+    flag: (name) => flag(args, name),
+    has: (name) => args.includes(name),
+    secrets: new KeychainStore(),
+    signal: AbortSignal.timeout(60_000),
+    readSecret,
+    log: (line) => process.stdout.write(`${line}\n`),
+  });
+  const ok = printChecks(got.checks);
+  if (ok) await got.save?.();
   if (!ok) fail("没通过，什么都没存");
-  const enabled: Enabled = { ...loadEnabled(), [id]: true };
-  writeJson(paths().sources, enabled);
+  writeJson(paths().sources, { ...loadEnabled(), [d.id]: true });
   await restartIfInstalled();
-  process.stdout.write(`${id} 连上了\n`);
+  process.stdout.write(`${d.id} 连上了\n`);
 }
 
 async function disconnect(source: string | undefined): Promise<void> {
-  if (!source || !SOURCES.includes(source as EventSource)) fail(`chief disconnect ${SOURCES.join("|")}`);
-  const id = source as EventSource;
-  writeJson(paths().sources, { ...loadEnabled(), [id]: false });
-  if (id === "slack") await new KeychainStore().delete(SECRET.slack);
-  if (id === "notion") await new KeychainStore().delete(SECRET.notion);
+  if (!source || !isSourceId(source)) fail(`chief disconnect ${SOURCE_IDS.join("|")}`);
+  const d = SOURCES[source];
+  writeJson(paths().sources, { ...loadEnabled(), [d.id]: false });
+  if (d.secret) await new KeychainStore().delete(d.secret);
   await restartIfInstalled();
-  process.stdout.write(`${id} 断开了\n`);
+  process.stdout.write(`${d.id} 断开了\n`);
 }
 
 async function restartIfInstalled(): Promise<void> {
@@ -1647,8 +1604,8 @@ async function status(): Promise<void> {
   const pending = loadReplies().items.filter((r) => r.status === "pending" || r.status === "failed");
   const lines = [
     `引擎：${svc.loaded ? (svc.running ? `在跑（pid ${svc.pid}）` : `装了但没在跑（上次退出 ${svc.lastExit ?? "?"}）`) : "没装（chief install）"}`,
-    `来源：${SOURCES.map((s) => `${s} ${enabled[s] ? "开" : "关"}`).join("，")}`,
-    `钥匙串：Slack Cookie ${(await secrets.has(SECRET.slack)) ? "有" : "没有"}，Notion 令牌 ${(await secrets.has(SECRET.notion)) ? "有" : "没有"}`,
+    `来源：${SOURCE_IDS.map((s) => `${s} ${enabled[s] ? "开" : "关"}`).join("，")}`,
+    `钥匙串：${(await Promise.all(DESCRIPTORS.filter((d) => d.secret).map(async (d) => `${d.meta.label} ${d.meta.secretLabel ?? "密钥"} ${(await secrets.has(d.secret!)) ? "有" : "没有"}`))).join("，")}`,
     `事件：一共 ${evts.length} 条，消息中心处理到 #${cursor}，还有 ${evts.filter((e) => e.id > cursor).length} 条没处理`,
     `对应表：${Object.keys(loadRoutes()).length} 个键`,
     `回复：${pending.length} 条等你`,
@@ -1656,7 +1613,7 @@ async function status(): Promise<void> {
   process.stdout.write(`${lines.join("\n")}\n`);
 }
 
-// 设置页用：一次看全「还差哪步」。gh / acli（或 twg）装了才去试登录，试不过的把原因带回去。
+// 设置页用：一次看全「还差哪步」。存钥匙的来源看钥匙串里有没有；用本机命令的（gh、acli 或 twg）装了才去试登录，试不过的把原因带回去。
 async function doctor(): Promise<void> {
   const svc = await serviceState();
   const secrets = new KeychainStore();
@@ -1671,23 +1628,26 @@ async function doctor(): Promise<void> {
       return { ok: false, detail: scrubTokens(error instanceof Error ? error.message : String(error)) };
     }
   };
-  const gh = findGh();
-  const jira = findJiraCli();
-  const out = {
+  const sources: Record<string, DoctorSource> = {};
+  for (const d of DESCRIPTORS) {
+    if (d.secret) {
+      sources[d.id] = { enabled: enabled[d.id] === true, ready: await secrets.has(d.secret) };
+    } else {
+      const local = d.local?.() ?? null;
+      sources[d.id] = { enabled: enabled[d.id] === true, tool: local !== null, ...(local ? await tried(() => local.check(signal)) : { ok: false, detail: "" }) };
+    }
+  }
+  const out: Doctor = {
     version: existsSync(join(ROOT, "VERSION")) ? readFileSync(join(ROOT, "VERSION"), "utf8").trim() : null,
     node: process.version,
     engine: svc.running ? "running" : svc.loaded ? "stopped" : "missing",
     chrome: findChrome() !== null,
-    sources: {
-      slack: { enabled: enabled.slack === true, ready: await secrets.has(SECRET.slack) },
-      github: { enabled: enabled.github === true, tool: gh !== null, ...(gh ? await tried(() => new GitHubSource(ghRunner(gh)).check(signal)) : { ok: false, detail: "" }) },
-      jira: { enabled: enabled.jira === true, tool: jira !== null, ...(jira ? await tried(() => new JiraSource(jira).check(signal)) : { ok: false, detail: "" }) },
-      notion: { enabled: enabled.notion === true, ready: await secrets.has(SECRET.notion) },
-    },
+    sources,
     hub: hubAlive(),
     awake: loadSettings().awake,
     slackWorkspace: loadSettings().slackWorkspace ?? null,
     workspace: { path: workspaceDir(), ready: existsSync(join(workspaceDir(), "CLAUDE.md")) },
+    list: DESCRIPTORS.map((d) => ({ id: d.id, label: SOURCE_LABELS[d.id], setup: d.meta.setup.kind, ...sources[d.id]! })),
   };
   process.stdout.write(`${JSON.stringify(out)}\n`);
 }
