@@ -122,7 +122,8 @@ export function readJson<T>(file: string, fallback: T): T {
   } catch {
     return fallback;
   }
-  if (text.trim() === "") return fallback;
+  // 空的：要紧的文件不会写出空的来（先写临时文件再改名），空了多半是以前断电留下的，当成坏了，免得编号从头算。
+  if (text.trim() === "" && !CRITICAL.has(basename(file))) return fallback;
   try {
     return JSON.parse(text) as T;
   } catch (error) {

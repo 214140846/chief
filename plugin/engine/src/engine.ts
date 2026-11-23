@@ -217,7 +217,15 @@ export function digestEvent(slot: keyof DigestTimes, date: string, now: Date): O
 // 引擎重启：上次停下时正在发的，不知道发出去没有，标成没发出去，让你去看一眼，不自动重发。
 export function recoverSending(): void {
   updateReplies((all) => {
-    for (const r of all.items) if (r.status === "sending") Object.assign(r, { status: "failed", error: "引擎重启时这条正在发，不确定对方收到没有，请去看一眼再决定重发" });
+    for (const r of all.items) {
+      if (r.status === "sending") Object.assign(r, { status: "failed", error: "引擎重启时这条正在发，不确定对方收到没有，请去看一眼再决定重发" });
+      // 旧版引擎排上的（你确认时没记下内容指纹）：放回待发出，你再点一次发送，不当成被改过。
+      else if (r.status === "queued" && r.by === "you" && !r.confirm?.hash) {
+        r.status = "pending";
+        delete r.sendAt;
+        delete r.by;
+      }
+    }
   });
 }
 

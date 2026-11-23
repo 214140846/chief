@@ -1,7 +1,7 @@
 // 数据文件的格式升级：每个文件记着自己的 version（writeJson 写的时候盖上，见 store.ts 的 SCHEMA），
 // chief 每次起来（cli 的入口）把旧的一步一步升到现在的版本。没有 version 的是 0（加版本号之前的文件）。
 // 每一步都要能重复跑（旧版 chief 写回去会把版本号盖回去，新版再跑一遍不能出错）。
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { basename } from "node:path";
 import { CorruptFileError, SCHEMA, paths, readJson, withLock, writeJson } from "./store";
 
@@ -57,6 +57,14 @@ export function migrateFile(file: string): boolean {
   const steps = MIGRATIONS[name];
   const target = SCHEMA[name];
   if (!steps || target === undefined || !existsSync(file)) return false;
+  // config.json 是你手改的：写坏了不挪走，等你改好（config.ts 会报出来），这里跳过。
+  if (name === "config.json") {
+    try {
+      JSON.parse(readFileSync(file, "utf8"));
+    } catch {
+      return false;
+    }
+  }
   const behind = (d: Data | null): d is Data => d !== null && typeof d === "object" && !Array.isArray(d) && (typeof d.version === "number" ? d.version : 0) < target;
   // 先不拿锁看一眼：每条命令都跑这里，已经是新的就别去抢锁。
   if (!behind(readJson<Data | null>(file, null))) return false;

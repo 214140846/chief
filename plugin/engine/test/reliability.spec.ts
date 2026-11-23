@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { loadConfig, setConfig, validateConfig, defaultConfig } from "../src/config";
-import { notifyCorrupt, slackDeadChanged } from "../src/engine";
+import { notifyCorrupt, recoverSending, slackDeadChanged } from "../src/engine";
 import { rotateLog, tailLines } from "../src/logfile";
 import { MIGRATIONS, migrateAll } from "../src/migrate";
 import { scrubTokens } from "../src/scrub";
@@ -40,10 +40,32 @@ function chiefFails(...args: string[]): string {
 }
 
 describe("坏了的数据文件", () => {
-  it("没有、空的：用默认的", () => {
+  it("没有的用默认的；空的：一般文件用默认的，要紧的当成坏了", () => {
     expect(readJson(join(h, "replies.json"), { nextId: 1 })).toEqual({ nextId: 1 });
+    writeFileSync(join(h, "dispatch.json"), "  \n");
+    expect(readJson(join(h, "dispatch.json"), {})).toEqual({});
     writeFileSync(join(h, "replies.json"), "  \n");
-    expect(readJson(join(h, "replies.json"), { nextId: 1 })).toEqual({ nextId: 1 });
+    expect(() => readJson(join(h, "replies.json"), { nextId: 1 })).toThrow(CorruptFileError);
+  });
+
+  it("手改的 config.json 写坏了：升级不挪走它", () => {
+    const bad = '{"pollMinutes": 2,}';
+    writeFileSync(paths().config, bad);
+    migrateAll();
+    expect(readFileSync(paths().config, "utf8")).toBe(bad);
+    expect(readdirSync(h).some((f) => f.startsWith("config.json.corrupt"))).toBe(false);
+  });
+
+  it("旧版引擎排上、没记内容指纹的：重启后放回待发出", () => {
+    writeJson(paths().replies, { nextId: 3, items: [
+      { id: 1, event: 1, source: "slack", target: { channel: "D1", ts: "1.1" }, body: "好", status: "queued", by: "you", sendAt: new Date().toISOString(), confirm: { how: "panel", at: new Date().toISOString() }, at: new Date().toISOString() },
+      { id: 2, event: 2, source: "slack", target: { channel: "D1", ts: "1.2" }, body: "嗯", status: "sending", by: "you", at: new Date().toISOString() },
+    ] });
+    recoverSending();
+    const [a, b] = loadReplies().items;
+    expect(a).toMatchObject({ status: "pending" });
+    expect(a!.by).toBeUndefined();
+    expect(b).toMatchObject({ status: "failed" });
   });
 
   it("要紧的（replies）坏了：报错、不覆盖，另存一份，只存一次，记进 corrupt.json", () => {
