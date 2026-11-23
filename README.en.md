@@ -56,7 +56,11 @@ Read [SECURITY.md](SECURITY.md) before using chief.
 - The plugin's own store (in Claude's plugin directory) holds the confirm key the panel uses to prove a send was yours; `~/chief/data` only has its fingerprint.
 - `~/Library/LaunchAgents/dev.chief.engine.plist` — the launchd agent.
 
-To remove everything: `chief uninstall`, delete `~/chief`, delete the two Keychain items, uninstall the plugin.
+Quiet hours and daily digests (`quietHours`, `digest.morning` / `digest.evening` in `config.json`, also settable in the panel's Setup tab, take effect immediately): during quiet hours the engine holds its notifications (except a corrupt data file or a changed confirm key) and the hub holds its pushes unless urgent; held items go into the next digest. Auto-sent replies are not affected. At digest times the hub posts a summary of what's waiting on you (`chief digest` prints the raw material).
+
+Backup: `chief export [--out <dir>]` writes `~/chief/exports/chief-export-<time>.tar.gz` (rules, config, CLAUDE.md, notes, data files, archives; no secrets).
+
+To remove everything: run `chief uninstall --purge` in a terminal and type `purge`. It unloads the engine, deletes `~/chief` (keeping `exports/`) and chief's Keychain items, and lists what it removed. Then uninstall the plugin in Claude (`/plugin` → chief → uninstall).
 
 ## Troubleshooting
 

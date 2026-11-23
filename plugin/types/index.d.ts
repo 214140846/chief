@@ -170,9 +170,12 @@ export type Doctor = {
   workspace: { path: string; ready: boolean }
   // 同样的来源状态排成一列（旧引擎没有）。
   list?: (DoctorSource & { id: string; label: string; setup: string })[]
+  // 免打扰时段（null 没设）、每天汇总的时间（null 不发）。旧引擎没有。
+  quietHours?: { start: string; end: string } | null
+  digest?: { morning: string | null; evening: string | null }
 }
 
-// 设置页：引擎装没装（~/chief/data/bin/chief 在不在）、doctor 的结果、正在做哪一步（engine、来源编号、awake、check）、上一步的输出。
+// 设置页：引擎装没装（~/chief/data/bin/chief 在不在）、doctor 的结果、正在做哪一步（engine、来源编号、awake、config、check）、上一步的输出。
 export type Setup = {
   installed: boolean
   doctor: Doctor | null

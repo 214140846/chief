@@ -40,7 +40,8 @@ export const TEMP_DIRS = ["/tmp/", "/private/tmp/", "/var/folders/", "/private/v
 export function keyChanged(what: KeyLogEntry["what"], tty: boolean): void {
   appendFileSync(paths().keyLog, `${JSON.stringify({ at: new Date().toISOString(), what, tty })}\n`, { mode: 0o600 });
   if (what === "first" || TEMP_DIRS.some((d) => paths().home.startsWith(d))) return;
-  say("chief · 「以你的名义发」的钥匙换了", what === "reset" ? "钥匙被清掉了。不是你在终端里清的，就是有人（可能是主会话）动了它。" : "配了一把新钥匙。不是你刚重新加载插件，就是有人（可能是主会话）换了它。");
+  // 要紧的：免打扰也弹。
+  say("chief · 「以你的名义发」的钥匙换了", what === "reset" ? "钥匙被清掉了。不是你在终端里清的，就是有人（可能是主会话）动了它。" : "配了一把新钥匙。不是你刚重新加载插件，就是有人（可能是主会话）换了它。", true);
 }
 
 // 在终端里问一句，要你亲手敲 reset。

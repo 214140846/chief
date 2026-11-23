@@ -69,7 +69,10 @@ chief 的东西都在 `~/chief` 里，消息中心也开在这里：
 | `data/logs/`、`data/drafts/` | 引擎日志、回复稿 |
 | `data/app/`、`data/bin/chief` | 引擎程序和命令行 |
 
-模板文件插件更新只补缺的，不覆盖你改过的。不想留了：先 `chief uninstall`，再删掉 `~/chief`（或只删 `data/archive/`）。
+模板文件插件更新只补缺的，不覆盖你改过的。
+
+- **留一份：** `chief export` 把规矩、设置、交代、笔记、数据文件和归档打成 `~/chief/exports/chief-export-<时间>.tar.gz`（`--out <目录>` 放到别处）。不含密钥：钥匙串里的凭证、「以你的名义发」的钥匙指纹都不在里面。
+- **不想留了：** 在终端里跑 `chief uninstall --purge`，敲 `purge` 确认：卸掉引擎，删掉 `~/chief`（`exports/` 留着）和钥匙串里 chief 的两项，最后列出删了什么。只删这几个认得的位置，路径不对劲（链接、主目录之类）就不删。插件本身和它的存储要在 Claude 里卸：`/plugin` → chief → 卸载。只想停用、数据留着就用 `chief uninstall`。
 
 不在 `~/chief` 里的只有这几样，都是系统规定的位置：
 
@@ -80,6 +83,11 @@ chief 的东西都在 `~/chief` 里，消息中心也开在这里：
 ## 设置
 
 引擎的设置在 `~/chief/config.json`。`chief config` 列出所有设置项和当前值，`chief config set <项> <值>` 改。规矩（`rules.json`）不在这里改，用面板的策略页或跟消息中心说。
+
+这两项在设置页「免打扰和每天汇总」里也能改，改了马上生效：
+
+- **免打扰**（`quietHours`，比如 `{"start":"22:00","end":"08:00"}`，可以跨半夜）：这段时间引擎不弹通知、主会话不推送，攒到下一份汇总里；免打扰一过，攒下的引擎通知合成一条弹出来。数据文件坏了、「以你的名义发」的钥匙被换了照样弹；你说过急的、截止就在这段时间里的，主会话照样推。规矩允许直接发的回复照常发（免打扰是不打扰你，不是不回别人）。
+- **每天汇总**（`digest.morning`、`digest.evening`，`"08:30"` 或 `null`，默认都不发）：到点主会话把等你的事、要你定的、待发出、这段时间的变化和免打扰时没弹的提醒写成一份，发在主会话里。电脑睡着错过了点，3 小时内醒来补一次，再晚就跳过；重启不会重复发。
 
 ## 命令行
 
@@ -92,7 +100,11 @@ chief logs              # 引擎日志最后 50 行
 chief config            # 引擎设置
 chief connect slack     # 开浏览器窗口登录；--workspace acme 直接从工作区登；--stdin 改成从标准输入贴 Cookie
 chief connect github    # 用本机登录的 gh
+chief quiet             # 现在是不是免打扰、到几点
+chief digest            # 汇总的材料（JSON）
+chief export            # 导出一份（不含密钥），默认放在 ~/chief/exports
 chief uninstall         # 从 launchd 卸掉（~/chief 的数据不删）
+chief uninstall --purge # 卸掉并删光 chief 的数据和钥匙串里的凭证（要在终端里敲 purge 确认）
 ```
 
 ## 出了问题

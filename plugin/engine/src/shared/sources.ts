@@ -80,7 +80,8 @@ export const SOURCE_META = {
 
 export type SourceId = keyof typeof SOURCE_META;
 // session：事情挂着的 Claude App 会话有了新进展（引擎看会话记录发现的），不是外部来源。
-export type EventSource = SourceId | "session";
+// chief：引擎自己交的（每天汇总到点了）。
+export type EventSource = SourceId | "session" | "chief";
 
 export const SOURCE_IDS = Object.keys(SOURCE_META) as SourceId[];
 
@@ -91,6 +92,7 @@ export function isSourceId(text: string): text is SourceId {
 export const SOURCE_LABELS: Readonly<Record<EventSource, string>> = {
   ...(Object.fromEntries(SOURCE_IDS.map((id) => [id, SOURCE_META[id].label])) as Record<SourceId, string>),
   session: "会话",
+  chief: "chief",
 };
 
 // 面板里的来源名（认不出的原样显示：引擎比面板新时可能有面板不认得的来源）。
@@ -122,6 +124,7 @@ export function isScenario(text: string): text is Scenario {
 
 export function scenarioOf(e: { source: EventSource; why: readonly string[] }): Scenario {
   if (e.source === "session") return "session_update";
+  if (e.source === "chief") return "other";
   const s = `${e.source}_${e.why[0] ?? ""}`;
   return isScenario(s) ? s : "other";
 }

@@ -304,4 +304,7 @@ export interface Doctor {
   workspace: { path: string; ready: boolean };
   // 同样的来源状态排成一列（带上编号、名字、怎么连），按来源名单的顺序。
   list: (DoctorSource & { id: string; label: string; setup: string })[];
+  // 免打扰时段（null 没设）、每天汇总的时间（null 不发）：设置页那一行显示、改。
+  quietHours: { start: string; end: string } | null;
+  digest: { morning: string | null; evening: string | null };
 }

@@ -456,6 +456,55 @@ test('设置页：没记过 Slack 工作区时先问一句，填了从工作区�
   await ui.unmount()
 })
 
+test('设置页：免打扰和每天汇总写进 config.json', async ($, on) => {
+  const runs: string[] = []
+  let toasts = 0
+  const doctor = {
+    version: '0.2.0', node: 'v24.0.0', engine: 'running', chrome: true,
+    sources: { slack: { enabled: true, ready: true } },
+    hub: { listening: true, lastAt: null }, awake: true, slackWorkspace: 'acme', workspace: { path: '/Users/me/chief', ready: true },
+    quietHours: null, digest: { morning: null, evening: '18:30' },
+  }
+  on('command.register', () => ({ value: { command: 'chief' } }))
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  memStore(on)
+  on('clock.every', () => ({ value: { cancel: () => {} } }))
+  on('ui.toast', () => {
+    toasts++
+    return { value: undefined }
+  })
+  on('fs.read', (_, e) => {
+    if (e.path === '/Users/me/chief/data/bin/chief') return { value: '#!/bin/sh' }
+    if (e.path.endsWith('/.claude-plugin/plugin.json')) return { value: JSON.stringify({ version: '0.2.0' }) }
+    if (e.path === '/Users/me/chief/data/app/VERSION') return { value: '0.2.0' }
+    throw new Error('missing')
+  })
+  on('process.run', (_, e) => {
+    const cmd = e.argv.join(' ')
+    runs.push(cmd)
+    if (e.argv[0] === '/usr/bin/env') return { value: { exitCode: 0, stdout: 'HOME=/Users/me\nPATH=/usr/bin\n', stderr: '' } }
+    if (cmd.endsWith(' doctor')) return { value: { exitCode: 0, stdout: JSON.stringify(doctor), stderr: '' } }
+    return { value: { exitCode: 0, stdout: '', stderr: '' } }
+  })
+
+  await $.session.start({ cwd: '/Users/me/chief', surface: 'desktop', isInteractive: true })
+  await $.command.run({ command: 'chief', args: '' })
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  await ui.press({ key: 'tab-setup' })
+  expect(await ui.find({ key: 'quiet-off' })).toBeFalsy()
+  await ui.input({ key: 'quiet-hours', text: '22:00-8:00' })
+  expect(runs).toContain('/Users/me/chief/data/bin/chief config set quietHours {"start":"22:00","end":"08:00"}')
+  const before = toasts
+  await ui.input({ key: 'quiet-hours', text: '晚上十点' })
+  expect(toasts).toBe(before + 1)
+  await ui.input({ key: 'digest-morning', text: '8:30' })
+  expect(runs).toContain('/Users/me/chief/data/bin/chief config set digest.morning 08:30')
+  await ui.input({ key: 'digest-evening', text: '' })
+  expect(runs).toContain('/Users/me/chief/data/bin/chief config set digest.evening null')
+  await ui.unmount()
+})
+
 // 你在会话里说了「发吧」：主会话只能 ask-confirm，插件只放行你说完以后提的请求，你的话 15 分钟内有效。
 test('会话里确认：只放行你说完话以后提的请求；还能发的才算；你的话过 15 分钟就不算了', async () => {
   const said = { at: Date.parse('2026-11-23T10:00:00Z') }

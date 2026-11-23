@@ -45,10 +45,12 @@ const DATA = {
   corrupt: "corrupt.json",
   // 主会话用掉的额度（面板的 hooks/usage.ts 记）。
   hubUsage: "hub-usage.json",
+  // 免打扰时没弹的通知（见 quiet.ts）：免打扰一结束合成一条弹出来，也进下一份汇总。
+  held: "held.json",
 } as const;
 
-// 放在 top 的：你的规矩、可调的数字和开关（见 config.ts）。
-const TOP = { policy: "rules.json", config: "config.json" } as const;
+// 放在 top 的：你的规矩、可调的数字和开关（见 config.ts）、chief export 导出的备份。
+const TOP = { policy: "rules.json", config: "config.json", exports: "exports" } as const;
 
 export type Layout = { home: string } & { [K in keyof typeof DATA | keyof typeof TOP]: string };
 

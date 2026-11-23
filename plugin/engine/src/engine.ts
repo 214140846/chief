@@ -6,13 +6,15 @@ import { execFile } from "node:child_process";
 import { readFileSync, watch as fsWatch, type FSWatcher } from "node:fs";
 import { sessionsRoot, syncActivity, type SessionUpdate } from "./activity";
 import { archiveOld, archivedEvent } from "./archive";
-import { config, loadConfig } from "./config";
+import { config, liveConfig, loadConfig } from "./config";
 import { sendCheck } from "./gate";
 import { rotateLog } from "./logfile";
+import { holdIfQuiet, takeHeld } from "./quiet";
 import { scrubTokens } from "./scrub";
 import { KeychainStore, type SecretStore } from "./secrets";
 import { keysOf } from "./keys";
 import { DATA_HEALTH } from "./shared/rules";
+import { DIGEST_LABELS, dueDigests, type DigestTimes } from "./shared/schedule";
 import { SOURCE_LABELS, type SourceId } from "./shared/sources";
 import { SlackPlugin, SLACK_COOKIE_D, sentThreadKey, type SlackAttribution } from "./slack/plugin";
 import type { ChannelStatus, InboundMessage } from "./slack/types";
@@ -28,8 +30,22 @@ const firstLookbackMs = () => config().firstLookbackHours * 3600_000;
 // 文字当参数交给 osascript（不拼进脚本），对方写了什么都不会被当成脚本执行。
 const NOTIFY = 'on run argv\ndisplay notification (item 2 of argv) with title (item 1 of argv)\nend run';
 
-export function say(title: string, body: string): void {
+function osascript(title: string, body: string): void {
   execFile("/usr/bin/osascript", ["-e", NOTIFY, title.slice(0, 80), body.replace(/\s+/g, " ").slice(0, 160)], { timeout: 10_000 }, () => {});
+}
+
+// 免打扰时段里先不弹、记下来（见 quiet.ts），critical（数据文件坏了、钥匙被换了）照样弹。返回弹没弹。
+export function say(title: string, body: string, critical = false, show: (title: string, body: string) => void = osascript): boolean {
+  if (!critical && holdIfQuiet(title, body)) return false;
+  show(title, body);
+  return true;
+}
+
+// 免打扰一过：攒下的合成一条弹出来。
+export function flushHeld(now = new Date(), show: (title: string, body: string) => void = osascript): number {
+  const held = takeHeld(now);
+  if (held.length > 0) show(`chief · 免打扰时攒下 ${held.length} 条提醒`, held.map((x) => x.title.replace(/^chief · /, "")).join("；"));
+  return held.length;
 }
 
 const SEND_CHECK_MS = 1_000;
@@ -105,9 +121,9 @@ export function slackDeadChanged(wasDead: boolean, s: ChannelStatus): { dead: bo
   return { dead: wasDead, notify: false };
 }
 
-// 数据文件坏了（见 store.ts 的 readJson，记在 corrupt.json）：没通知过的弹一次通知；还坏着的拼成一条 health 给面板标红。
+// 数据文件坏了（见 store.ts 的 readJson，记在 corrupt.json）：没通知过的弹一次通知（免打扰也弹）；还坏着的拼成一条 health 给面板标红。
 // 要紧的文件修好了（或删了）就不再算；其余的（已经挪走、用了默认的）标一天。
-export function notifyCorrupt(now = Date.now(), notify: (title: string, body: string) => void = say): SourceHealth | null {
+export function notifyCorrupt(now = Date.now(), notify: (title: string, body: string) => void = (t, b) => void say(t, b, true)): SourceHealth | null {
   const all = loadCorrupt();
   let changed = false;
   for (const [name, r] of Object.entries(all)) {
@@ -185,6 +201,14 @@ export function eventOfSlack(m: InboundMessage, selfId: string | null = null): O
     text, why: [m.relevance], keys: [m.conversation.threadKey, ...keysOf(m.text)],
     // 记下是哪种对话：回复放 thread 还是直接回在对话里，按它定（见 placementOf）。
     reply: { ...m.replyTarget, audience: self ? "self" : m.conversation.audience },
+  };
+}
+
+// 每天汇总的事件：不是外部来源（source 是 chief），主会话看到 kind 是 digest 就去 chief digest 拿材料。
+export function digestEvent(slot: keyof DigestTimes, date: string, now: Date): Omit<ChiefEvent, "id"> {
+  return {
+    at: now.toISOString(), source: "chief", kind: "digest", title: `${DIGEST_LABELS[slot]}（${date}）`, url: null, from: null,
+    text: `到点写${DIGEST_LABELS[slot]}了：chief digest --event <这条的编号> 拿材料，写一份汇总给用户。`, why: [slot], keys: [], reply: {},
   };
 }
 
@@ -280,6 +304,8 @@ export class Engine {
     void this.pollAll();
     this.timer = setInterval(() => void this.pollAll(), pollMs());
     this.healthTimer = setInterval(() => this.checkHealth(), HEALTH_MS);
+    // 睡醒、重启时错过的汇总先补上（见 dueDigests）。
+    this.digestTick();
     // 办完的旧东西每天搬一次（起来时先搬一次）。
     this.archive();
     this.archiveTimer = setInterval(() => this.archive(), ARCHIVE_MS);
@@ -306,6 +332,13 @@ export class Engine {
   // 每分钟对一次账：交出去的消息主会话有没有判断、主会话还在不在听。消息交出去不等于被处理了，这里兜底。
   private checkHealth(): void {
     this.rotateLog(config().logMaxMB * 1024 * 1024);
+    this.digestTick();
+    try {
+      const n = flushHeld();
+      if (n > 0) log(`免打扰过了，攒下的 ${n} 条提醒合成一条弹了`);
+    } catch (error) {
+      log(`弹免打扰时攒下的提醒没成：${error instanceof Error ? error.message : String(error)}`);
+    }
     try {
       const now = Date.now();
       const handled = loadDispatch();
@@ -331,6 +364,20 @@ export class Engine {
       }
     } catch (error) {
       log(`对账没成：${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  // 每天汇总：到点了交一条 digest 事件给主会话，它用 chief digest 拿材料写给你。每个时段每天一次（记在 state.json 的 digest，重启不重复）。
+  digestTick(now = new Date()): void {
+    try {
+      const fired = this.state.digest ?? {};
+      for (const d of dueDigests(liveConfig().digest, fired, now)) {
+        this.state.digest = { ...this.state.digest, [d.slot]: d.date };
+        this.emit(digestEvent(d.slot, d.date, now), `digest:${d.slot}:${d.date}`);
+        this.persist();
+      }
+    } catch (error) {
+      log(`看要不要发汇总没成：${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
@@ -455,7 +502,7 @@ export class Engine {
         log(`这一轮没拿到待发的回复：${error instanceof Error ? error.message : String(error)}`);
         return;
       }
-      const notify = this.deps.notify ?? say;
+      const notify = this.deps.notify ?? ((t: string, b: string) => void say(t, b));
       const pol = due.length > 0 ? loadPolicy() : null;
       const events = due.length > 0 ? readEvents() : [];
       for (const r of due) {
