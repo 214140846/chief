@@ -5,8 +5,9 @@
 import { execFile } from "node:child_process";
 import { readFileSync, watch as fsWatch, type FSWatcher } from "node:fs";
 import { sessionsRoot, syncActivity, type SessionUpdate } from "./activity";
-import { archiveOld } from "./archive";
+import { archiveOld, archivedEvent } from "./archive";
 import { config, loadConfig } from "./config";
+import { sendCheck } from "./gate";
 import { rotateLog } from "./logfile";
 import { scrubTokens } from "./scrub";
 import { KeychainStore, type SecretStore } from "./secrets";
@@ -84,12 +85,12 @@ export function inYourThread(key: string, threads: readonly string[], sent: read
 
 // 这条 Slack 消息是不是 chief（或别的 agent）替你发的，不是新消息：
 // - 记下的发出编号（存在 state.json，重启后补推的也认得）；
-// - 你自己账号发的、正文上方带 agent 署名行的（现在的发法；署名行谁都能写，所以只认你自己账号发的，别人的照常收）；
-// - 正文开头是署名的（以前的发法；Slack 回传时会把 _ 换成 *，比的时候去掉这些符号）。
+// - 你自己账号发的、正文上方带 agent 署名行的（现在的发法），或正文开头是署名的（以前的发法；Slack 回传时会把 _ 换成 *）。
+// 只看正文像不像署名不算：别人的消息开头写上署名就能让 chief 看不见它。
 export function isOwnAgentMessage(m: InboundMessage, sent: readonly string[], signature: string, selfId: string | null): boolean {
   if (sent.includes(`${m.replyTarget.channel}:${m.replyTarget.ts}`)) return true;
-  if (m.attribution !== undefined && selfId !== null && m.sender.id === selfId) return true;
-  return startsWithSignature(m.text, signature);
+  if (selfId === null || m.sender.id !== selfId) return false;
+  return m.attribution !== undefined || startsWithSignature(m.text, signature);
 }
 
 // 写进日志之前把像密钥的东西去掉（GitHub、Jira 命令出错时可能把令牌带出来）。
@@ -201,6 +202,21 @@ export function eventOfSlack(m: InboundMessage, selfId: string | null = null): O
   };
 }
 
+// 引擎重启：上次停下时正在发的，不知道发出去没有，标成没发出去，让你去看一眼，不自动重发。
+export function recoverSending(): void {
+  updateReplies((all) => {
+    for (const r of all.items) if (r.status === "sending") Object.assign(r, { status: "failed", error: "引擎重启时这条正在发，不确定对方收到没有，请去看一眼再决定重发" });
+  });
+}
+
+type SendResult = { url: string | null; warning?: string };
+
+// 测试换成假的：真的发出去、弹通知都换掉。
+export interface EngineDeps {
+  send?: (r: Reply) => Promise<SendResult>;
+  notify?: (title: string, body: string) => void;
+}
+
 export interface SourceHealth {
   ok: boolean;
   at: string;
@@ -232,6 +248,8 @@ export class Engine {
   private slackDead = false;
   private sessionWatcher: FSWatcher | null = null;
 
+  constructor(private readonly deps: EngineDeps = {}) {}
+
   async start(): Promise<void> {
     ensureHome();
     // 每次起来换一个日志文件（上一次的留在 engine.log.1），之后每分钟看一眼，超过 logMaxMB 再换。
@@ -239,11 +257,8 @@ export class Engine {
     for (const p of loadConfig().problems) log(`[config] ${p}`);
     this.sources = await buildSources(this.enabled, this.secrets);
     log(`开始：外部来源 ${this.sources.map((s) => s.id).join("、") || "没有"}；事件写在 ${paths().events}`);
-    // 上次停下时正在发的：不知道发出去没有，标成没发出去，让你去看一眼，不自动重发。
     try {
-      updateReplies((all) => {
-        for (const r of all.items) if (r.status === "sending") Object.assign(r, { status: "failed", error: "引擎重启时这条正在发，不确定对方收到没有，请去看一眼再决定重发" });
-      });
+      recoverSending();
     } catch (error) {
       log(`检查上次没发完的回复没成：${error instanceof Error ? error.message : String(error)}`);
     }
@@ -438,9 +453,10 @@ export class Engine {
 
   // 过了撤回期的回复：先标成 sending（拿着锁，不会发两次），再发，再记结果。
   // 发出去了但结果没记上（文件被占着）：记在 unrecorded 里下一轮再记，绝不因为记不上就当成没发出去。
-  private readonly unrecorded = new Map<number, { url: string | null }>();
+  private readonly unrecorded = new Map<number, SendResult>();
 
-  private async sendDue(): Promise<void> {
+  // 每秒跑一次（测试直接调）。发之前每条再核一遍（sendCheck）：核不过的标成没发出去，写明为什么，绝不发。
+  async sendDue(): Promise<void> {
     if (this.sending) return;
     this.sending = true;
     try {
@@ -459,19 +475,30 @@ export class Engine {
         log(`这一轮没拿到待发的回复：${error instanceof Error ? error.message : String(error)}`);
         return;
       }
+      const notify = this.deps.notify ?? say;
+      const pol = due.length > 0 ? loadPolicy() : null;
+      const events = due.length > 0 ? readEvents() : [];
       for (const r of due) {
-        let out: { url: string | null; warning?: string };
+        const event = r.kind === "message" ? null : events.find((e) => e.id === r.event) ?? archivedEvent(r.event) ?? null;
+        const bad = sendCheck(r, pol!, event);
+        if (bad !== null) {
+          if (!this.record(r.id, { status: "failed", error: bad })) log(`回复 ${r.id} 没核过，结果也没记上（下次引擎启动会标成要你看一眼）`);
+          log(`回复 ${r.id} 发之前没核过，没发：${bad}`);
+          notify("chief · 有条回复没发", `${r.context.who ?? r.context.where}：${bad}`);
+          continue;
+        }
+        let out: SendResult;
         try {
-          out = await this.sendOne(r);
+          out = await (this.deps.send ?? ((x: Reply) => this.sendOne(x)))(r);
         } catch (error) {
           const why = error instanceof Error ? error.message.slice(0, 200) : String(error);
           if (!this.record(r.id, { status: "failed", error: why })) log(`回复 ${r.id} 没发出去，结果也没记上（下次引擎启动会标成要你看一眼）`);
           log(`回复 ${r.id} 没发出去：${why}`);
-          say("chief · 回复没发出去", `${r.context.who ?? r.context.where}：${why}`);
+          notify("chief · 回复没发出去", `${r.context.who ?? r.context.where}：${why}`);
           continue;
         }
         log(`回复 ${r.id} 发出去了（${r.source}）${out.warning ? `；${out.warning}` : ""}`);
-        if (out.warning) say("chief · 回复的图没发上", `${r.context.who ?? r.context.where}：${out.warning}`);
+        if (out.warning) notify("chief · 回复的图没发上", `${r.context.who ?? r.context.where}：${out.warning}`);
         if (!this.record(r.id, { status: "sent", sentAt: new Date().toISOString(), ...(out.url ? { url: out.url } : {}), ...(out.warning ? { error: out.warning } : {}) })) this.unrecorded.set(r.id, out);
       }
     } catch (error) {
@@ -494,7 +521,7 @@ export class Engine {
     }
   }
 
-  private async sendOne(r: Reply): Promise<{ url: string | null; warning?: string }> {
+  private async sendOne(r: Reply): Promise<SendResult> {
     const signal = AbortSignal.timeout(60_000);
     if (r.kind === "approve") {
       const gh = findGh();

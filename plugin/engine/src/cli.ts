@@ -22,21 +22,24 @@
 //   chief eval add|from-event|list|remove|run|report  演练：拿例子测主会话会怎么办（不真的办），对结果
 //   chief import                       导入用：Jira 指派给你没做完的、GitHub 你开着的 / 等你 review 的 PR
 //   chief ask add|list|answer          要你定的
-//   chief rules [show|json|set|brief|add|remove|propose|accept|reject]  你的规矩（含每类活的交代），和主会话提议的规矩
+//   chief rules [show|json|set|brief|add|remove|propose|accept|reject]  你的规矩（含每类活的交代），和主会话提议的规矩；
+//                                      always add|remove：「一定问我」名单（这些人、对话的回复引擎一律不直接发）；
+//                                      放宽发送的改动（直接发、直接 approve、白名单、固定回复、署名、always remove）不带 --yours（插件的钥匙）只会变成提议，等你在面板上采纳
 //   chief review <事件号> ok|wrong     你给主会话的一次判断标对错（错的时候标准输入给应该怎样）
 //   chief reply add|approve|new|list|edit|queue|confirm|ask-confirm|undo|drop|redo   回复 / approve / 主动发新消息：加进待发出、改、
 //                                      排队发（5 秒可撤回；queue --policy 按规矩直接发，引擎再核一遍；confirm 以你的名义发，要插件的钥匙；
 //                                      ask-confirm 你在会话里说了发，等插件核对）、撤回、不发、让它重写
 //                                      edit-yours 你在面板上自己改的稿子（带钥匙，不按「不许写 chief 编号」拦）
-//   chief key set|check|reset          「以你的名义发」的钥匙：插件配，原文不落在这里
+//   chief key set|check|reset          「以你的名义发」的钥匙：插件配，原文不落在这里；reset 要你在终端里敲 reset 确认，清、换都会弹通知、面板挂提醒
 //                                      new --to 可以是一条 Slack 消息的链接：回到那条帖子的 thread 里
 //   chief slack who <名字>             找 Slack 上的人，拿到 <@U…>（写进稿子才会真的提醒到人）
 //   chief archive                      把办完超过 7 天的事件、判断、事情、回复搬进 ~/chief/data/archive（引擎每天自己搬一次）
 // 从标准输入给的文字（理由、进展、问题、稿子）不经过命令行参数：里面会引用别人的原文，不能让 shell 当成命令。
 // 写给用户看的话（问题、建议、事情标题和进展、回复正文）里带 chief 自己的编号（#98、问题 #63、回复 107）的一律拒收（见 plain.ts）；
 // 问题要提待发出里的某条，用 chief ask add --reply R 挂上。
-import { watch as fsWatch, closeSync, existsSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, realpathSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { watch as fsWatch, appendFileSync, closeSync, existsSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, realpathSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
+import { createInterface } from "node:readline/promises";
 import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { archiveOld, archivedEvent } from "./archive";
@@ -45,7 +48,8 @@ import { tailLines } from "./logfile";
 import { migrateAll } from "./migrate";
 import { scrubTokens } from "./scrub";
 import { LineTail } from "./tail";
-import { Engine, SECRET, notifyCorrupt } from "./engine";
+import { Engine, SECRET, notifyCorrupt, say } from "./engine";
+import { autoReason, prsOf, replyHash } from "./gate";
 import { MAX_IMAGES, takeImage, type ReplyImage } from "./images";
 import { KEY, keysOf } from "./keys";
 import { type ChildProcess, spawn } from "node:child_process";
@@ -61,7 +65,7 @@ import { JiraSource, findJiraCli } from "./sources/jira";
 import { NotionSource } from "./sources/notion";
 import { chiefIds, idsMessage, type IdsOptions } from "./plain";
 import {
-  AUDIENCE_LABELS, CorruptFileError, HANDLE_LABELS, SCENARIOS, appendDecision, readEvents, expectOf, isTrusted, loadDecisions, appendEvent, ensureHome, loadCursor, loadDispatch, loadEnabled, loadPolicy, loadReplies, loadReviews, loadRoutes, loadThings,
+  AUDIENCE_LABELS, CorruptFileError, HANDLE_LABELS, SCENARIOS, appendDecision, readEvents, expectOf, loadDecisions, appendEvent, ensureHome, loadCursor, loadDispatch, loadEnabled, loadPolicy, loadReplies, loadReviews, loadRoutes, loadThings,
   loadSettings, loadState, paths, workspaceDir, readJson, saveState, scenarioOf, updateJson, updateReplies, withLock, writeJson,
   type Ask, type Settings, type Decision, type Dispatch, type Enabled, type EventSource, type Handle, type Policy, type ChiefEvent, type RepliesFile,
   type Audience, type CustomScenario, type EvalCase, type EvalRun, type EvalsFile, type Expect, type Placement, type Reply, type ReplyMode, type Reviews, type ScenarioRule, type Routes, type Scenario, type Thing, type ThingsFile,
@@ -141,21 +145,7 @@ function eventById(id: number): ChiefEvent {
   return readEvents().find((e) => e.id === id) ?? archivedEvent(id) ?? fail(`没有事件 #${id}`);
 }
 
-// ── 谁能让回复发出去 ──
-// 规矩允许直接发（--policy）：引擎自己按规矩再算一遍，算出来要问你的发不出去，主会话怎么理解都没用。
-// 返回放行的理由；null 是这条要你确认。
-export function autoReason(r: Reply, pol: Policy, event: ChiefEvent | null): string | null {
-  const body = r.body.trim();
-  // 固定回复：一字不差才算，前后多一个字都不行。
-  if (body !== "" && pol.quick.some((q) => q.trim() === body)) return "固定回复";
-  if (r.kind === "message" || event === null) return null;
-  if (r.kind !== "approve" && isTrusted(pol.trusted, event.from, event.fromId)) return "白名单";
-  if (r.custom !== undefined) {
-    const c = pol.custom.find((x) => x.id === r.custom);
-    return c?.reply === "auto" ? `你加的情况 custom:${c.id}` : null;
-  }
-  return pol.scenarios[scenarioOf(event)].reply === "auto" ? `场景「${SCENARIOS[scenarioOf(event)]}」` : null;
-}
+// ── 谁能让回复发出去（规矩怎么算见 gate.ts）──
 
 // 以你的名义发（confirmed by 你）要带钥匙：钥匙原文只在 chief 插件自己的存储里，这里只存它的指纹。
 function keyHash(key: string): Buffer {
@@ -170,11 +160,51 @@ function keyMatches(key: string): boolean {
   return want.length === got.length && timingSafeEqual(want, got);
 }
 
+// 钥匙的记录：first 第一次配（不用提醒）；reset 清掉了；set 清掉以后又配了一把（换了钥匙）。
+type KeyLogEntry = { at: string; what: "first" | "reset" | "set"; tty?: boolean };
+
+function keyLog(): KeyLogEntry[] {
+  if (!existsSync(paths().keyLog)) return [];
+  return readFileSync(paths().keyLog, "utf8").split("\n").flatMap((l) => {
+    try {
+      return l.trim() ? [JSON.parse(l) as KeyLogEntry] : [];
+    } catch {
+      return [];
+    }
+  });
+}
+
+// 钥匙换了：记一行（面板一直挂着提醒，直到你在面板上点知道了），再弹一条通知。
+// 测试的数据目录在系统临时目录里：不弹（动的也不是你真的钥匙）。写死目录，不看 TMPDIR（那是谁都能设的）。
+const TEMP_DIRS = ["/tmp/", "/private/tmp/", "/var/folders/", "/private/var/folders/"];
+
+function keyChanged(what: KeyLogEntry["what"], tty: boolean): void {
+  appendFileSync(paths().keyLog, `${JSON.stringify({ at: new Date().toISOString(), what, tty })}\n`, { mode: 0o600 });
+  if (what === "first" || TEMP_DIRS.some((d) => paths().home.startsWith(d))) return;
+  say("chief · 「以你的名义发」的钥匙换了", what === "reset" ? "钥匙被清掉了。不是你在终端里清的，就是有人（可能是主会话）动了它。" : "配了一把新钥匙。不是你刚重新加载插件，就是有人（可能是主会话）换了它。");
+}
+
+// 在终端里问一句，要你亲手敲 reset。
+async function askInTerminal(prompt: string): Promise<string> {
+  const rl = createInterface({ input: process.stdin, output: process.stderr });
+  try {
+    return (await rl.question(prompt)).trim();
+  } finally {
+    rl.close();
+  }
+}
+
 // chief key set|check（标准输入给钥匙）| reset：插件第一次加载时 set；已经有一把就不让换，要换你在终端先 reset。
+// reset 要在终端里亲手敲 reset 确认，不给主会话悄悄清掉。主会话和你是同一个系统用户：它能造一个假终端、也能直接删钥匙文件，
+// 拦不死；所以每次清、换都记进 key-log.jsonl 并弹通知，面板一直挂着提醒，直到你在面板上点知道了（这一步记在插件自己的存储里）。
 async function keyCmd(args: string[]): Promise<void> {
   const sub = args.shift();
   if (sub === "reset") {
+    if (!process.stdin.isTTY) fail("chief key reset 要你在终端里亲手跑（会让你敲 reset 确认）；主会话不能替你清钥匙");
+    const typed = await askInTerminal("清掉「以你的名义发」的钥匙：插件重新加载前，面板上的发送都用不了。确认就敲 reset：");
+    if (typed !== "reset") fail("没清");
     if (existsSync(paths().confirmKey)) unlinkSync(paths().confirmKey);
+    keyChanged("reset", true);
     process.stdout.write("钥匙清掉了：chief 插件下次加载会配一把新的（在那之前面板上的发送用不了）\n");
     return;
   }
@@ -187,11 +217,16 @@ async function keyCmd(args: string[]): Promise<void> {
   }
   if (sub === "set") {
     if (existsSync(paths().confirmKey)) {
-      if (keyMatches(key)) return void process.stdout.write("已经是这把了\n");
+      if (keyMatches(key)) {
+        // 以前配的钥匙没有记录：补一行，之后被删了再配能认出是换了。
+        if (keyLog().length === 0) keyChanged("first", false);
+        return void process.stdout.write("已经是这把了\n");
+      }
       fail("已经配过另一把钥匙：要换，你在终端跑 chief key reset，再重新加载插件");
     }
     ensureHome();
     writeFileSync(paths().confirmKey, `${keyHash(key).toString("hex")}\n`, { mode: 0o600 });
+    keyChanged(keyLog().length === 0 ? "first" : "set", process.stdin.isTTY === true);
     process.stdout.write("钥匙配好了\n");
     return;
   }
@@ -838,17 +873,51 @@ function ruleLine(r: ScenarioRule): string {
   return `${HANDLES[r.handle]}${replyPart}${r.brief ? `；交代：${r.brief}` : ""}`;
 }
 
+// 放宽发送的改动（让更多回复、approve 不问你就发）要你点头。主会话读的是别人写的原文，可能被人带着改规矩：
+//   chief rules --yours <子命令…>：带 chief 插件的钥匙（面板上改的），标准输入给 JSON {key, text}，text 是这条命令本来从标准输入给的东西。直接生效。
+//   不带钥匙：放宽的改动不生效，记成提议放进面板「它提议的规矩」，你点采纳（面板带钥匙）才照原样生效。收紧的不用钥匙。
+// 算放宽的：场景 / 你加的情况改成 reply=auto 或 handle=approve|command，加这样的情况，白名单加人，固定回复加句子，改署名，「一定问我」名单删掉一项（always remove）。
+// 主会话和你是同一个系统用户，直接改 rules.json 拦不住；这里管的是它照正常路子（chief 命令）改规矩时不能自己放宽。
+type RulesOpts = { yours: boolean; text: string };
+
+// 放宽的改动没带钥匙：记成提议（说清改的是什么），告诉主会话还没生效。
+function proposeLoosen(argv: string[], input: string, text: string): void {
+  const id = updatePolicy((pp) => {
+    const x = { id: pp.nextProposal++, text, basis: "这条会放宽发送（更多东西不问你就发），主会话改不了，要你点采纳才生效", at: new Date().toISOString(), change: { args: argv, input } };
+    pp.proposals.push(x);
+    return x.id;
+  });
+  process.stdout.write(`没改：这条会放宽发送，要用户点头。已放进面板「它提议的规矩」（提议 ${id}），用户点采纳才生效\n`);
+}
+
 // chief rules：给消息中心读的规矩全文。
 // chief rules set <场景|custom:号> handle=… reply=ask|auto；chief rules brief <场景|custom:号>（标准输入）；
 // chief rules custom add（标准输入：一句「什么情况」，或 JSON {when, handle, reply, brief}）| custom remove <号>；
 // chief rules add（标准输入一句）；chief rules remove（标准输入给那一条的原文）
-async function rules(args: string[]): Promise<void> {
+// 放宽发送的（见上面）不带 --yours 只会变成提议。
+async function rules(args: string[], given?: RulesOpts): Promise<void> {
+  let opts = given;
+  if (opts === undefined && args[0] === "--yours") {
+    args.shift();
+    let req: { key?: unknown; text?: unknown };
+    try {
+      req = JSON.parse(await stdinRaw(MAX_TEXT * 4)) as typeof req;
+    } catch {
+      fail("--yours 的标准输入给 JSON：{\"key\": …, \"text\": …}");
+    }
+    if (typeof req.key !== "string" || !keyMatches(req.key)) fail("钥匙对不上：--yours 只给你在面板上改规矩用");
+    opts = { yours: true, text: typeof req.text === "string" ? req.text.replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, " ").trim().slice(0, MAX_TEXT) : "" };
+  }
+  const yours = opts?.yours === true;
+  const input = async () => (opts !== undefined ? opts.text : stdinText());
+  // 这条命令原样（提议采纳时再跑一遍）。
+  const argv = [...args];
   const sub = args.shift();
   const p = loadPolicy();
   // 第一次看规矩时把默认的写下来；老的文件缺后来加的东西（我加的情况、新场景）就补上。面板直接读这个文件。
   const onDisk = readJson<Partial<Policy>>(paths().policy, {});
   const missing = Object.keys(SCENARIOS).some((k) => !(k in (onDisk.scenarios ?? {})));
-  if (!existsSync(paths().policy) || onDisk.custom === undefined || missing || onDisk.placement === undefined || onDisk.style === undefined || onDisk.trusted === undefined || onDisk.bots === undefined || onDisk.quick === undefined) updatePolicy(() => undefined);
+  if (!existsSync(paths().policy) || onDisk.custom === undefined || missing || onDisk.placement === undefined || onDisk.style === undefined || onDisk.trusted === undefined || onDisk.askAlways === undefined || onDisk.bots === undefined || onDisk.quick === undefined) updatePolicy(() => undefined);
   if (sub === undefined || sub === "show") {
     const lines = ["# 我的规矩（chief rules）", "", "## 我加的情况（先对这些，对上了就照它办，比下面的场景表优先）", ""];
     if (p.custom.length === 0) lines.push("（没有）");
@@ -859,7 +928,9 @@ async function rules(args: string[]): Promise<void> {
     }
     lines.push("", "## 我写的规矩（比上面的场景表优先）", "");
     p.notes.forEach((n, i) => lines.push(`${i + 1}. ${n}`));
-    lines.push("", "## 白名单：回这些人的话直接发，不用我确认（我写的「一定问我」的规矩照样优先）", "");
+    lines.push("", "## 一定问我：这些人、这些对话的回复和 approve 都要我确认，什么规矩都不能让它直接发（比白名单优先）", "");
+    lines.push(p.askAlways.length > 0 ? p.askAlways.map((x) => `- ${x}`).join("\n") : "（没有）");
+    lines.push("", "## 白名单：回这些人的话直接发，不用我确认（「一定问我」名单里的照样问我）", "");
     lines.push(p.trusted.length > 0 ? p.trusted.map((x) => `- ${x}`).join("\n") : "（没有）");
     lines.push("", "## 固定回复：回复和这几句一字不差，才能不问我直接发（别的规矩只管怎么写，不能让你直接发）", "");
     lines.push(p.quick.length > 0 ? p.quick.map((x) => `- ${x}`).join("\n") : "（没有）");
@@ -886,6 +957,12 @@ async function rules(args: string[]): Promise<void> {
     });
     // 「当成我的指令」只给你自己发的话用：别人的消息不能被当成你的指令。
     if (target !== "slack_self" && changes.some(([k, v]) => k === "handle" && v === "command")) fail("「当成我的指令」只能用在你给自己发的私信（slack_self）上");
+    const cur = ruleOf(p, target);
+    const loosen = changes.some(([k, v]) => (k === "reply" && v === "auto" && cur.reply !== "auto") || (k === "handle" && (v === "approve" || v === "command") && cur.handle !== v));
+    if (loosen && !yours) {
+      const after = { ...cur, ...Object.fromEntries(changes) } as ScenarioRule;
+      return proposeLoosen(argv, "", `「${target in SCENARIOS ? SCENARIOS[target as Scenario] : target}」改成：${ruleLine(after)}`);
+    }
     const now = updatePolicy((pp) => {
       const r = ruleOf(pp, target);
       for (const [k, v] of changes) {
@@ -900,7 +977,7 @@ async function rules(args: string[]): Promise<void> {
   if (sub === "custom") {
     const what = args.shift();
     if (what === "add") {
-      const raw = await stdinText();
+      const raw = await input();
       let c: { when?: unknown; handle?: unknown; reply?: unknown; brief?: unknown };
       try {
         c = raw.startsWith("{") ? (JSON.parse(raw) as typeof c) : { when: raw };
@@ -913,6 +990,9 @@ async function rules(args: string[]): Promise<void> {
       const reply: ReplyMode = c.reply === "auto" ? "auto" : "ask";
       const brief = typeof c.brief === "string" && c.brief.trim() ? oneLine(c.brief, 500) : undefined;
       const when = oneLine(c.when, 200);
+      if ((reply === "auto" || handle === "approve") && !yours) {
+        return proposeLoosen(argv, raw, `加一种情况「${when}」：${ruleLine({ handle, reply, ...(brief ? { brief } : {}) })}`);
+      }
       const id = updatePolicy((pp) => {
         const x: CustomScenario = { id: pp.nextCustom++, when, handle, reply, ...(brief ? { brief } : {}) };
         pp.custom.push(x);
@@ -933,12 +1013,13 @@ async function rules(args: string[]): Promise<void> {
     }
     fail("chief rules custom add|remove");
   }
-  // chief rules trust add|remove（标准输入：Slack 用户编号 U… 或名字的一部分）：白名单
+  // chief rules trust add|remove（标准输入：Slack 用户编号 U…，或完整的显示名）：白名单。名字要一字不差（不分大小写），不认名字的一部分
   if (sub === "trust") {
     const what = args.shift();
-    const text = oneLine(await stdinText(), 80);
-    if (!text) fail("从标准输入给一个人：Slack 用户编号（U…）或名字的一部分");
+    const text = oneLine(await input(), 80);
+    if (!text) fail("从标准输入给一个人：Slack 用户编号（U…，最稳），或完整的显示名（一字不差，不分大小写）");
     if (what === "add") {
+      if (!yours && !p.trusted.includes(text)) return proposeLoosen(argv, text, `白名单加上 ${text}：回 ta 的话不用你确认直接发`);
       updatePolicy((pp) => {
         if (!pp.trusted.includes(text)) pp.trusted.push(text);
       });
@@ -956,12 +1037,36 @@ async function rules(args: string[]): Promise<void> {
     }
     fail("chief rules trust add|remove");
   }
+  // chief rules always add|remove（标准输入：Slack 用户编号 U…、频道 / 私信编号 C… D…，或完整的显示名）：「一定问我」名单。
+  // 加是收紧，直接生效；删是放宽，不带钥匙只会变成提议。
+  if (sub === "always") {
+    const what = args.shift();
+    const text = oneLine(await input(), 80);
+    if (!text) fail("从标准输入给一个人或一个对话：Slack 用户编号（U…）、频道 / 私信编号（C… / D…），或完整的显示名");
+    if (what === "add") {
+      updatePolicy((pp) => {
+        if (!pp.askAlways.includes(text)) pp.askAlways.push(text);
+      });
+      process.stdout.write(`加好了：${text} 的回复一定先问你\n`);
+      return;
+    }
+    if (what === "remove") {
+      if (!p.askAlways.includes(text)) fail("「一定问我」名单里没有这个");
+      if (!yours) return proposeLoosen(argv, text, `「一定问我」名单去掉 ${text}：回 ta 的话又可以按别的规矩直接发`);
+      updatePolicy((pp) => {
+        pp.askAlways = pp.askAlways.filter((x) => x !== text);
+      });
+      return;
+    }
+    fail("chief rules always add|remove");
+  }
   // chief rules quick add|remove（标准输入一句原文）：固定回复，一字不差才允许直接发
   if (sub === "quick") {
     const what = args.shift();
-    const text = (await stdinText()).trim();
+    const text = (await input()).trim();
     if (!text || text.length > 200) fail("从标准输入给一句原文（200 字以内）");
     if (what === "add") {
+      if (!yours && !p.quick.includes(text)) return proposeLoosen(argv, text, `固定回复加上「${text}」：回复正好是这句就不问你直接发`);
       updatePolicy((pp) => {
         if (!pp.quick.includes(text)) pp.quick.push(text);
       });
@@ -982,7 +1087,7 @@ async function rules(args: string[]): Promise<void> {
   // chief rules bot add|remove（标准输入一个 GitHub 登录名）：GitHub 上不报的机器人
   if (sub === "bot") {
     const what = args.shift();
-    const login = (await stdinText()).trim().toLowerCase();
+    const login = (await input()).trim().toLowerCase();
     // GitHub 登录名：字母、数字、连字符，最多 39 个字；机器人账号可能带 [bot]。
     if (!/^[a-z0-9](?:[a-z0-9-]{0,38})(?:\[bot\])?$/.test(login)) fail("从标准输入给一个 GitHub 登录名，比如 acme-review-bot");
     if (what === "add") {
@@ -1006,7 +1111,7 @@ async function rules(args: string[]): Promise<void> {
   // chief rules style add（标准输入一句）| style remove（标准输入那一条的原文）：回复写法
   if (sub === "style") {
     const what = args.shift();
-    const text = oneLine(await stdinText(), 300);
+    const text = oneLine(await input(), 300);
     if (!text) fail("从标准输入给那一条写法");
     if (what === "add") {
       updatePolicy((pp) => {
@@ -1041,8 +1146,10 @@ async function rules(args: string[]): Promise<void> {
     return;
   }
   // chief rules sign（标准输入给一行标识，显示在替你发到 Slack 的话正文上方；空的就是不加）
+  // 署名告诉对方这是 agent 代发的：改它（尤其清掉）算放宽，要你点头。
   if (sub === "sign") {
-    const text = oneLine(await stdinText(), 80);
+    const text = oneLine(await input(), 80);
+    if (!yours && text !== p.signature) return proposeLoosen(argv, text, text ? `Slack 回复的署名改成「${text}」` : "Slack 回复不再加署名（对方看不出是 agent 代发的）");
     updatePolicy((pp) => {
       pp.signature = text;
     });
@@ -1052,7 +1159,7 @@ async function rules(args: string[]): Promise<void> {
   // chief rules brief <场景|custom:号>（标准输入给交代的话；空的就是清掉）
   if (sub === "brief") {
     const target = args.shift() ?? fail("chief rules brief <场景|custom:号>");
-    const text = oneLine(await stdinText(), 500);
+    const text = oneLine(await input(), 500);
     updatePolicy((pp) => {
       const r = ruleOf(pp, target);
       if (text) r.brief = text;
@@ -1062,7 +1169,7 @@ async function rules(args: string[]): Promise<void> {
     return;
   }
   if (sub === "add") {
-    const text = oneLine(await stdinText(), 300);
+    const text = oneLine(await input(), 300);
     if (!text) fail("规矩是空的（从标准输入给一句）");
     const n = updatePolicy((pp) => {
       if (!pp.notes.includes(text)) pp.notes.push(text);
@@ -1073,7 +1180,7 @@ async function rules(args: string[]): Promise<void> {
   }
   // 按原文删（标准输入给那一条）：连点两下也只删这一条，不会删到下一条。
   if (sub === "remove") {
-    const text = oneLine(await stdinText(), 300);
+    const text = oneLine(await input(), 300);
     if (!text) fail("从标准输入给要删的那一条的原文");
     const gone = updatePolicy((pp) => {
       const before = pp.notes.length;
@@ -1087,7 +1194,7 @@ async function rules(args: string[]): Promise<void> {
   if (sub === "propose") {
     let body: { text?: unknown; basis?: unknown };
     try {
-      body = JSON.parse(await stdinText()) as typeof body;
+      body = JSON.parse(await input()) as typeof body;
     } catch {
       fail('标准输入要是 JSON：{"text": "…", "basis": "…"}');
     }
@@ -1102,18 +1209,22 @@ async function rules(args: string[]): Promise<void> {
     process.stdout.write(`${id}\n`);
     return;
   }
+  // 采纳放宽发送的提议要钥匙（你在面板上点）：主会话不能自己提、自己采纳。不要（拒掉）不用。
   if (sub === "accept" || sub === "reject") {
     const id = num(args.shift(), "提议号");
+    const pending = p.proposals.find((y) => y.id === id);
+    if (sub === "accept" && pending?.change && !yours) fail("这条会放宽发送：要用户自己在面板上点采纳");
     const x = updatePolicy((pp) => {
       const found = pp.proposals.find((y) => y.id === id) ?? oops(`没有提议 ${id}（可能已经处理了）`);
       pp.proposals = pp.proposals.filter((y) => y.id !== id);
-      if (sub === "accept" && !pp.notes.includes(found.text)) pp.notes.push(found.text);
+      if (sub === "accept" && !found.change && !pp.notes.includes(found.text)) pp.notes.push(found.text);
       return found;
     });
+    if (sub === "accept" && x.change) await rules([...x.change.args], { yours: true, text: x.change.input });
     process.stdout.write(sub === "accept" ? `采纳了：${x.text}\n` : "不要了\n");
     return;
   }
-  fail("chief rules [show|json|set|brief|sign|place|style|trust|custom|add|remove|propose|accept|reject]");
+  fail("chief rules [--yours] [show|json|set|brief|sign|place|style|trust|always|quick|bot|custom|add|remove|propose|accept|reject]");
 }
 
 // ── 你给判断标对错 ──
@@ -1195,10 +1306,9 @@ async function reply(args: string[]): Promise<void> {
       all.items.push(x);
       return x;
     });
-    // 回复按哪条规矩发：对方在白名单里就直接发；否则按这个场景的设置。
-    const pol = loadPolicy();
-    const trusted = isTrusted(pol.trusted, event.from, event.fromId);
-    process.stdout.write(`${JSON.stringify({ id: r.id, source: r.source, scenario: scenarioOf(event), policy: trusted ? "auto" : pol.scenarios[scenarioOf(event)].reply, ...(trusted ? { trusted: true } : {}) })}\n`);
+    // 回复按哪条规矩发：引擎按规矩算（和 queue --policy 一样），auto 就可以直接 queue --policy。
+    const why = autoReason(r, loadPolicy(), event);
+    process.stdout.write(`${JSON.stringify({ id: r.id, source: r.source, scenario: scenarioOf(event), policy: why === null ? "ask" : "auto", ...(why === "白名单" ? { trusted: true } : {}) })}\n`);
     return;
   }
   // chief reply approve --event N --ref owner/repo#号 [--thing T] [--custom 号]：放一条「approve 这个 PR」进待发出。
@@ -1207,11 +1317,14 @@ async function reply(args: string[]): Promise<void> {
     const event = eventById(num(flag(args, "--event") ?? undefined, "--event "));
     const ref = flag(args, "--ref") ?? fail("要 --ref owner/repo#号");
     if (!/^[\w.-]{1,100}\/[\w.-]{1,100}#\d{1,9}$/.test(ref)) fail("--ref 写成 owner/repo#号");
+    // 只能 approve 这条消息自己的 PR：GitHub 的事件就是那个 PR，Slack 里的是消息里贴的 PR 链接。
+    const own = prsOf(event);
+    if (!own.includes(ref.toLowerCase())) fail(own.length === 0 ? `事件 #${event.id} 里没有 PR，不能 approve` : `--ref 要是这条消息自己的 PR：${own.join(" / ")}`);
     const thingFlag = flag(args, "--thing");
     const thingId = thingFlag === null ? null : num(thingFlag, "--thing ");
     const customFlag = flag(args, "--custom");
     const pol = loadPolicy();
-    const rule = customFlag !== null ? pol.custom.find((c) => c.id === num(customFlag, "--custom ")) ?? fail(`没有你加的情况 ${customFlag}`) : pol.scenarios[scenarioOf(event)];
+    if (customFlag !== null && !pol.custom.some((c) => c.id === num(customFlag, "--custom "))) fail(`没有你加的情况 ${customFlag}`);
     const r = updateReplies((all) => {
       for (const old of all.items) if (old.event === event.id && old.kind === "approve" && old.status === "pending") old.status = "dropped";
       const x: Reply = {
@@ -1223,7 +1336,7 @@ async function reply(args: string[]): Promise<void> {
       all.items.push(x);
       return x;
     });
-    process.stdout.write(`${JSON.stringify({ id: r.id, kind: "approve", ref, policy: rule.reply })}\n`);
+    process.stdout.write(`${JSON.stringify({ id: r.id, kind: "approve", ref, policy: autoReason(r, pol, event) === null ? "ask" : "auto" })}\n`);
     return;
   }
   // chief reply new --to <Slack 用户编号 U… / 邮箱 / 频道编号 C…> [--name 对方名字] [--thing T] --file <drafts 里的文件>：
@@ -1332,7 +1445,7 @@ async function reply(args: string[]): Promise<void> {
     if (how === "chat" && !said) fail("会话里确认的要带上你的原话");
     queueReply(id, now, (r) => {
       r.by = "you";
-      r.confirm = { how, ...(said ? { said } : {}), at: now.toISOString() };
+      r.confirm = { how, ...(said ? { said } : {}), at: now.toISOString(), hash: replyHash(r) };
       delete r.confirmAsk;
     });
     process.stdout.write(`5 秒后发出，之前可以 chief reply undo ${id}\n`);

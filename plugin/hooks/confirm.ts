@@ -75,3 +75,9 @@ export async function confirmFromPanel($: Engine): Promise<string> {
 export async function editFromPanel($: Engine, text: string): Promise<string> {
   return JSON.stringify({ key: await confirmKey($), text })
 }
+
+// 面板上改规矩：放宽发送的（直接发、直接 approve、白名单、固定回复、署名、采纳这类提议）要带钥匙才直接生效（chief rules --yours），
+// 不带钥匙的（主会话改的）只会变成提议等你点。text 是这条命令本来从标准输入给的东西。
+export async function rulesFromPanel($: Engine, text = ''): Promise<string> {
+  return JSON.stringify({ key: await confirmKey($), text })
+}

@@ -51,6 +51,7 @@ const FILES: Record<string, string> = {
     { at: now, event: 2, scenario: 'slack_thread', verdict: 'noted', reason: 'Alice 只是同步看板 ready', what: { source: 'slack', title: '#proj', from: 'Alice', text: '看板 ready 了' } },
     { at: now, event: 3, scenario: 'slack_thread', verdict: 'ignored', reason: '没点你名的闲聊' },
   ].map(d => JSON.stringify(d)).join('\n'),
+  '/Users/me/chief/data/key-log.jsonl': [{ at: '2026-01-01T00:00:00.000Z', what: 'first' }, { at: now, what: 'reset' }].map(x => JSON.stringify(x)).join('\n'),
   '/Users/me/chief/data/reviews.json': JSON.stringify({ 3: { ok: true, at: now } }),
   '/Users/me/chief/data/sources.json': JSON.stringify({ slack: true, github: true }),
   '/Users/me/chief/data/activity.json': JSON.stringify({ local_abc: { at: new Date(Date.now() + 1000).toISOString(), title: 'x', last: '接口联调完了，在等后端发版', permissionMode: 'bypassPermissions', archived: false }, _hub: { permissionMode: 'auto' } }),
@@ -58,6 +59,8 @@ const FILES: Record<string, string> = {
     scenarios: { slack_self: { handle: 'command', reply: 'auto' }, slack_dm: { handle: 'dispatch', reply: 'ask' }, slack_thread: { handle: 'note', reply: 'ask' } },
     custom: [{ id: 1, when: 'Slack 里有人发 PR 链接让我看', handle: 'approve', reply: 'auto' }],
     notes: ['涉及排期的都要问我'],
+    trusted: ['U0BOB1234'],
+    askAlways: ['C0BOSS123'],
     proposals: [{ id: 1, text: 'Alice 在项目频道问进度时派活', basis: '你标错了 #2', at: now }],
   }),
 }
@@ -107,6 +110,11 @@ test('面板：主会话状态、要你定、待发出；按钮各做各的', as
   }
 
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  // 钥匙被清过：一直挂着红框，点了知道了才收起；第一次配的不提醒。
+  expect(await ui.find({ type: 'Text', text: /钥匙被动过/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /钥匙被清掉了/ })).toBeTruthy()
+  await ui.press({ key: 'ack-key' })
+  expect(await ui.find({ type: 'Text', text: /钥匙被动过/ })).toBeFalsy()
   // 问题挂着的回复：显示回谁、说什么，不显示回复号。
   expect(await ui.find({ type: 'Text', text: /相关的待发出：回 Bob Chen「处理了，报告在 thread 里」/ })).toBeTruthy()
   expect(await ui.find({ type: 'Text', text: /#5/ })).toBeFalsy()
@@ -194,21 +202,31 @@ test('面板：主会话状态、要你定、待发出；按钮各做各的', as
   // 策略：改场景、加情况、加规矩、采纳提议。
   await ui.press({ key: 'tab-policy' })
   await ui.select({ key: 'h-custom:1', value: 'dispatch' })
-  expect(runs.at(-1)?.argv.slice(1).join(' ')).toBe('rules set custom:1 handle=dispatch')
+  expect(runs.at(-1)?.argv.slice(1).join(' ')).toBe('rules --yours set custom:1 handle=dispatch')
+  // 改规矩带插件的钥匙：放宽发送的才能直接生效。
+  expect(JSON.parse(runs.at(-1)?.stdin ?? '{}').key).toMatch(/^[0-9a-f]{64}$/)
   await ui.input({ key: 'add-custom', text: 'Jira 上 QA 提的 bug 指给我' })
   expect(runs.some(r => r.argv.slice(1).join(' ') === 'rules custom add' && r.stdin === 'Jira 上 QA 提的 bug 指给我')).toBe(true)
   await ui.press({ key: 'rmc-custom:1' })
   expect(runs.at(-1)?.argv.slice(1).join(' ')).toBe('rules custom remove 1')
   expect(await ui.find({ type: 'Text', text: /Alice 在项目频道问进度时派活/ })).toBeTruthy()
   await ui.select({ key: 'm-slack_dm', value: 'auto' })
-  expect(runs.at(-1)?.argv.slice(1).join(' ')).toBe('rules set slack_dm reply=auto')
+  expect(runs.at(-1)?.argv.slice(1).join(' ')).toBe('rules --yours set slack_dm reply=auto')
   await ui.press({ key: 'eb-slack_dm' })
   await ui.input({ key: 'bf-slack_dm', text: '先查清楚再回，回复用中文' })
   expect(runs.some(r => r.argv.slice(1).join(' ') === 'rules brief slack_dm' && r.stdin === '先查清楚再回，回复用中文')).toBe(true)
   await ui.input({ key: 'add-rule', text: 'Bob 问进度可以直接回' })
   expect(runs.some(r => r.argv.slice(1).join(' ') === 'rules add' && r.stdin === 'Bob 问进度可以直接回')).toBe(true)
   await ui.press({ key: 'pa1' })
-  expect(runs.at(-1)?.argv.slice(1).join(' ')).toBe('rules accept 1')
+  expect(runs.at(-1)?.argv.slice(1).join(' ')).toBe('rules --yours accept 1')
+  // 白名单、「一定问我」名单都画出来；移出「一定问我」带钥匙。
+  expect(await ui.find({ type: 'Text', text: 'U0BOB1234' })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: 'C0BOSS123' })).toBeTruthy()
+  await ui.press({ key: 'raa0' })
+  expect(runs.at(-1)?.argv.slice(1).join(' ')).toBe('rules --yours always remove')
+  expect(JSON.parse(runs.at(-1)?.stdin ?? '{}')).toMatchObject({ text: 'C0BOSS123', key: expect.stringMatching(/^[0-9a-f]{64}$/) })
+  await ui.input({ key: 'add-always', text: 'U0EVE9999' })
+  expect(runs.some(r => r.argv.slice(1).join(' ') === 'rules --yours always add' && JSON.parse(r.stdin ?? '{}').text === 'U0EVE9999')).toBe(true)
   await ui.press({ key: 'rm0' })
   expect(runs.some(r => r.argv.slice(1).join(' ') === 'rules remove' && r.stdin === '涉及排期的都要问我')).toBe(true)
 

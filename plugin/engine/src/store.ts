@@ -16,6 +16,7 @@
 //   activity.json 事情挂着的 Claude App 会话最近的动静（引擎每分钟看一次，见 activity.ts）。
 //   rules.json    你的规矩（结构化）：每个场景怎么处理、回复要不要你确认，加上你写的自由规矩、主会话提议的规矩。
 //   confirm-key.sha256  「以你的名义发」用的钥匙的指纹：钥匙原文只在 chief 插件自己的存储里，主会话拿不到（见 cli.ts 的 chief key）。
+//   key-log.jsonl 钥匙什么时候配的、清的、换的，只追加；面板拿它提醒你钥匙被换过。
 //   reviews.json  你给主会话的判断标的对错（事件号 → 对 / 错和你说的应该怎样）。
 // 几个进程（引擎、主会话的命令、面板的命令）会同时写的文件（replies、things、policy、dispatch、routes、reviews、hub），都拿着 <文件>.lock 读改写。
 // 引擎只写 events.jsonl、state.json；命令行（消息中心在用）只写另外几个。两边不抢同一个文件。
@@ -45,6 +46,8 @@ export function paths(home = chiefHome()) {
     sources: join(home, "sources.json"),
     settings: join(home, "settings.json"),
     confirmKey: join(home, "confirm-key.sha256"),
+    // 钥匙换过的记录（一行一次，只追加）：面板看到没确认过的就一直挂着提醒，见 cli.ts 的 chief key。
+    keyLog: join(home, "key-log.jsonl"),
     routes: join(home, "routes.json"),
     hub: join(home, "hub.json"),
     dispatch: join(home, "dispatch.json"),
@@ -317,7 +320,8 @@ export interface Reply {
   // approve：按哪条「你加的情况」办的（引擎算能不能直接发时用）。
   custom?: number;
   // 以你的名义发（署名 confirmed by 你）是怎么确认的：panel 你在面板上点了发送；chat 你在主会话里说的（said 是你的原话，插件记的）。
-  confirm?: { how: "panel" | "chat"; said?: string; at: string };
+  // hash：确认那一刻发什么、发到哪的指纹（见 gate.ts 的 replyHash），引擎发之前对一遍。
+  confirm?: { how: "panel" | "chat"; said?: string; at: string; hash?: string };
   // 主会话说你在会话里同意发了：等 chief 插件核对你那一轮真的说过话，再以你的名义发；核对不上就留着等你在面板上点。
   confirmAsk?: { at: string };
   // 附的图（只有 Slack）：先发正文，再把图发到同一个地方。收下时已经复制进 drafts/images（见 images.ts）。
@@ -500,6 +504,8 @@ export interface Proposal {
   // 依据：你哪几次纠正了它。
   basis: string;
   at: string;
+  // 主会话想放宽发送（见 cli.ts 的 chief rules --yours）：没带钥匙就记成提议，采纳时照原样再跑一遍这条命令。
+  change?: { args: string[]; input: string };
 }
 
 // Slack 对话的种类：一对一私信、群聊、频道、和你自己的私信。
@@ -517,14 +523,30 @@ export function placementOf(target: Readonly<Record<string, string>>, placement:
   return placement[audience] ?? "thread";
 }
 
-// 这个人在不在白名单里：编号完全一样，或者名字里包含白名单写的那段（不分大小写）。
+// Slack 编号：U / W 开头是人，C / G / D 开头是对话；大写字母和数字，至少带一个数字（免得把全大写的名字当成编号）。
+const SLACK_ID = /^[UWCGD][A-Z0-9]{6,20}$/;
+
+export function isSlackId(text: string): boolean {
+  return SLACK_ID.test(text) && /\d/.test(text);
+}
+
+// 名单里的一项是不是这个人：写的是编号就只认编号；写的是名字就要和显示名完全一样（不分大小写、去掉前后空格），不认名字的一部分。
+// 显示名谁都能改成别人的，编号改不了：名单里最好写编号。
+function samePerson(entry: string, from: string | null | undefined, fromId: string | null | undefined): boolean {
+  const k = entry.trim();
+  if (!k) return false;
+  if (isSlackId(k)) return fromId === k;
+  return !!from && from.trim().toLowerCase() === k.toLowerCase();
+}
+
+// 这条消息在不在「一定问我」名单里：说话的人（编号或完整显示名），或者所在的对话（频道 / 私信编号）。
+export function mustAsk(list: readonly string[], event: Pick<ChiefEvent, "from" | "fromId" | "reply">): boolean {
+  return list.some((t) => samePerson(t, event.from, event.fromId) || (isSlackId(t.trim()) && event.reply.channel === t.trim()));
+}
+
+// 这个人在不在白名单里。
 export function isTrusted(trusted: readonly string[], from: string | null | undefined, fromId: string | null | undefined): boolean {
-  return trusted.some((t) => {
-    const k = t.trim().toLowerCase();
-    if (!k) return false;
-    if (fromId && fromId.toLowerCase() === k) return true;
-    return !!from && from.toLowerCase().includes(k);
-  });
+  return trusted.some((t) => samePerson(t, from, fromId));
 }
 
 export interface ScenarioRule {
@@ -551,8 +573,10 @@ export interface Policy {
   style: string[];
   // 固定回复：一字不差是这几句之一的回复，引擎允许直接发（署名 not reviewed）。别的文字规矩只管怎么写，不能放行直接发。
   quick: string[];
-  // 白名单：回这些人的话不用你确认，直接发（仍有 5 秒能撤回）。写 Slack 用户编号（U…）或名字的一部分。你写的「一定问我」的规矩照样优先。
+  // 白名单：回这些人的话不用你确认，直接发（仍有 5 秒能撤回）。写 Slack 用户编号（U…），或完整的显示名（一字不差，不分大小写）。
   trusted: string[];
+  // 一定问我：这些人（Slack 用户编号、完整显示名）、这些对话（频道 / 私信编号）的回复，不管别的规矩怎么写，引擎都不直接发。比白名单优先。
+  askAlways: string[];
   // GitHub 上不报的机器人：注册成普通用户、名字又不带 bot 的（比如公司的 AI 代码评审），写登录名。它们的 review、评论都不算有人找你。
   bots: string[];
   // 替你发到 Slack 的话正文上方那行灰色小字署名（让对方一眼知道是 agent 代回的，不进正文）；空字符串 = 不加。
@@ -578,6 +602,7 @@ export function defaultPolicy(): Policy {
     },
     signature: "🤖 agent reply",
     trusted: [],
+    askAlways: [],
     bots: [],
     quick: [],
     style: [
@@ -608,6 +633,7 @@ export function loadPolicy(): Policy {
     scenarios: { ...base.scenarios, ...(p.scenarios ?? {}) }, notes: p.notes ?? base.notes, signature: p.signature ?? base.signature,
     style: p.style ?? base.style,
     trusted: p.trusted ?? base.trusted,
+    askAlways: p.askAlways ?? base.askAlways,
     bots: p.bots ?? base.bots,
     quick: p.quick ?? base.quick,
     placement: { ...base.placement, ...(p.placement ?? {}) },

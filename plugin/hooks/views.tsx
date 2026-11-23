@@ -3,7 +3,7 @@ import type { EngineInterface as Engine, RenderChildren } from 'claude-code'
 
 import type { AskRow, DecisionRow, Handle, HubUsage, ReplyMode, ReplyRow, Rule, Snapshot, ThingRow } from '../types'
 import {
-  act, answerAsk, openImage, addCustom, addRule, addQuick, addStyle, removeCase, runEvals, saveCase, trust, annotate, clearBasket, openSession, removeQuick, removeStyle, sendBasket, setPlacement, setSignature, unannotate, decideProposal, engineDo, finish, hubStop, markRight, markWrong, redo, removeCustom, removeRule, send, setBrief,
+  ackKeyAlerts, act, answerAsk, askAlways, openImage, addCustom, addRule, addQuick, addStyle, removeCase, runEvals, saveCase, trust, annotate, clearBasket, openSession, removeQuick, removeStyle, sendBasket, setPlacement, setSignature, unannotate, decideProposal, engineDo, finish, hubStop, markRight, markWrong, redo, removeCustom, removeRule, send, setBrief,
   setEdit, setScenario, setTab, showLogs, skipOld, tell, testMessage, toggle,
 } from './actions'
 import { EVAL_DAYS, MINUTES, chartSvg, statsOf } from './data'
@@ -182,6 +182,14 @@ export function header($: Engine, ui: Els, s: Snapshot, said: string, current: s
           : broken.length > 0 ? <Text size="caption" color="error">{broken.map(k => SOURCE[k as keyof typeof SOURCE] ?? k).join('、')} 连不上</Text>
           : s.unhandled > 0 ? <Text size="caption" dimColor>{s.unhandled} 条等判断</Text> : <Text size="caption" dimColor>引擎在跑</Text>}
       </Box>
+      {s.keyAlerts.length > 0 && (
+        <Box flexDirection="column" borderStyle="round" borderColor="error" paddingX="md" paddingY="sm" gap="xs">
+          <Text weight="semibold" color="error">「以你的名义发」的钥匙被动过</Text>
+          {s.keyAlerts.map((x, i) => <Text key={`ka-${i}`} size="footnote" wrap="wrap">{ago(x.at)}：{x.what === 'reset' ? '钥匙被清掉了' : '配了一把新钥匙'}</Text>)}
+          <Text size="footnote" dimColor wrap="wrap">是你自己在终端里 chief key reset、再重新加载了插件，就点知道了。不是你：有人（可能是被消息带偏的主会话）想以你的名义发东西，先停下主会话，到「待发出」看有没有你没点过的，再在终端里 chief key reset、重新加载插件。</Text>
+          <Button key="ack-key" onPress={() => ackKeyAlerts($, s.keyAlerts.at(-1)!.at)}>是我换的，知道了</Button>
+        </Box>
+      )}
       {!s.hub.listening && (
         <Box flexDirection="column" borderStyle="round" borderColor="warning" paddingX="md" paddingY="sm" gap="xs">
           <Text weight="semibold">新消息现在没人判断</Text>
@@ -681,7 +689,7 @@ export function policyTab($: Engine, ui: Els, s: Snapshot, opened: string[]) {
         </Box>
       )}
 
-      {section('sec-trusted', '白名单：回这些人直接发', '名单里的人，替你写好的回复不用你确认就发（仍有 5 秒能撤回）；你写的「一定问我」的规矩照样优先。写名字的一部分或 Slack 用户编号',
+      {section('sec-trusted', '白名单：回这些人直接发', '名单里的人，替你写好的回复不用你确认就发（仍有 5 秒能撤回）；「一定问我」名单里的照样问你。写 Slack 用户编号（U…，最稳：显示名谁都能改），或完整的显示名（一字不差，不分大小写）',
         (p.trusted ?? []).length === 0 && <Text key="tr-none" size="footnote" dimColor>还没有。</Text>,
         (p.trusted ?? []).map((x, i) => (
           <Box key={`tr${i}`} flexDirection="row" justifyContent="space-between" alignItems="center" paddingY="xs">
@@ -690,8 +698,22 @@ export function policyTab($: Engine, ui: Els, s: Snapshot, opened: string[]) {
           </Box>
         )),
         'Input' in ui && (
-          <Box key="tr-add" width="100%"><ui.Input key="add-trusted" placeholder="加一个人，比如：Bob Chen" submitLabel="加上" onSubmit={(v: string) => {
+          <Box key="tr-add" width="100%"><ui.Input key="add-trusted" placeholder="Slack 用户编号或完整显示名，比如：U0123ABCD" submitLabel="加上" onSubmit={(v: string) => {
             if (v.trim()) void trust($, v.trim(), true)
+          }} /></Box>
+        ))}
+
+      {section('sec-always', '一定问我：这些人、对话的回复都要你点头', '名单里的人、频道和私信，回复和 approve 一律等你确认，白名单、固定回复、直接发的规矩都不管用（引擎发之前会再核一遍）。写 Slack 用户编号（U…）、频道 / 私信编号（C… / D…），或完整的显示名',
+        (p.askAlways ?? []).length === 0 && <Text key="aa-none" size="footnote" dimColor>还没有。</Text>,
+        (p.askAlways ?? []).map((x, i) => (
+          <Box key={`aa${i}`} flexDirection="row" justifyContent="space-between" alignItems="center" paddingY="xs">
+            <Text>{x}</Text>
+            <Button key={`raa${i}`} plain onPress={() => askAlways($, x, false)}>移出</Button>
+          </Box>
+        )),
+        'Input' in ui && (
+          <Box key="aa-add" width="100%"><ui.Input key="add-always" placeholder="比如：U0123ABCD 或 C0123ABCD" submitLabel="加上" onSubmit={(v: string) => {
+            if (v.trim()) void askAlways($, v.trim(), true)
           }} /></Box>
         ))}
 
@@ -747,7 +769,7 @@ export function policyTab($: Engine, ui: Els, s: Snapshot, opened: string[]) {
           ? <ui.Input key="signature" value={p.signature ?? '🤖 agent reply'} submitLabel="存" onSubmit={(v: string) => void setSignature($, v.trim())} />
           : <Text key="sig">{p.signature ?? '🤖 agent reply'}</Text>)}
 
-      {section('sec-notes', '我的规矩', '一句话，最优先',
+      {section('sec-notes', '我的规矩', '一句话，主会话判断时最优先。只有主会话读，引擎不认：写「一定问我」管不住直接发，要拦住某个人或对话，加进上面的「一定问我」名单',
         p.notes.length === 0 && <Text key="nt-none" size="footnote" dimColor>还没有。</Text>,
         p.notes.map((n, i) => (
           <Box key={`nt${i}`} flexDirection="row" gap="sm" alignItems="flex-start" paddingY="xs">

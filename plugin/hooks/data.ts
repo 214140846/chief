@@ -73,6 +73,10 @@ export async function refresh($: Engine) {
     readJson<Record<string, string>>($, `${dir}/people.json`, {}),
     readJson<HubUsage>($, `${dir}/hub-usage.json`, { days: {} }),
   ])
+  // 钥匙清过、换过的记录：你点过「知道了」的（记在插件自己的存储里，主会话改不了 chief 的数据就能抹掉它）不再提醒。
+  const keyAck = await $.store.get('keyAck').catch(() => null)
+  const keyAlerts = (await readLines<{ at: string; what: string }>($, `${dir}/key-log.jsonl`))
+    .filter((x): x is Snapshot['keyAlerts'][number] => (x.what === 'reset' || x.what === 'set') && (typeof keyAck !== 'string' || x.at > keyAck))
   const maxEvent = (state.nextId ?? 1) - 1
   const since = Date.now() - EVAL_DAYS * 86_400_000
   const next: Snapshot = {
@@ -93,6 +97,7 @@ export async function refresh($: Engine) {
     activity: Object.fromEntries(Object.entries(activity).filter(([k]) => k !== '_hub')),
     people,
     hubUsage,
+    keyAlerts,
     hubMode: ((activity as Record<string, unknown>)._hub as { permissionMode?: string | null } | undefined)?.permissionMode ?? null,
   }
   await update($, snap, () => next)
@@ -101,7 +106,7 @@ export async function refresh($: Engine) {
 // rules.json 还没写过时，场景表在 chief 里有默认值：问 chief 要一份完整的。
 async function policyOf($: Engine, p: PolicyFile): Promise<PolicyFile> {
   // 旧的 rules.json 里没有后来加的场景和「我加的情况」：问 chief 要一份补全的。
-  if (Object.keys(p.scenarios ?? {}).length > 0 && p.custom !== undefined && 'slack_self' in p.scenarios) return { scenarios: p.scenarios, custom: p.custom, notes: p.notes ?? [], proposals: p.proposals ?? [] }
+  if (Object.keys(p.scenarios ?? {}).length > 0 && p.custom !== undefined && 'slack_self' in p.scenarios) return { ...p, notes: p.notes ?? [], proposals: p.proposals ?? [] }
   return fullPolicy($)
 }
 

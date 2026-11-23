@@ -85,8 +85,11 @@ export type PolicyFile = {
   signature?: string
   style?: string[]
   trusted?: string[]
+  // 一定问我：这些人、对话的回复引擎一律不直接发（比白名单优先）。
+  askAlways?: string[]
   placement?: Record<'direct' | 'group' | 'channel' | 'self', 'inline' | 'thread'>
-  proposals: { id: number; text: string; basis: string; at: string }[]
+  // change：放宽发送的改动（主会话没带钥匙改的），你采纳才生效。
+  proposals: { id: number; text: string; basis: string; at: string; change?: { args: string[]; input: string } }[]
 }
 
 export type Reviews = Record<string, { ok: boolean; note?: string; at: string }>
@@ -118,6 +121,8 @@ export type Snapshot = {
   dryDecisions: DecisionRow[]
   // 主会话用掉的订阅额度（hub-usage.json）。
   hubUsage: HubUsage
+  // 「以你的名义发」的钥匙被清过 / 换过、你还没在面板上点知道了的（key-log.jsonl）。
+  keyAlerts: { at: string; what: 'reset' | 'set' }[]
 }
 
 // 主会话一天用掉的额度（hooks/usage.ts 记）：five / week 是 5 小时、每周窗口涨了几个百分点（量到的加估的），

@@ -5,7 +5,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface as Engine } from 'claude-code'
 
 import type { Handle, ReplyMode, ReplyRow, Tab, ThingRow } from '../types'
-import { confirmFromPanel, editFromPanel, noteUserSaid } from './confirm'
+import { confirmFromPanel, editFromPanel, noteUserSaid, rulesFromPanel } from './confirm'
 import { refresh, chiefDir } from './data'
 
 const note = atom({ plugin: 'chief', key: 'note' } as const, '')
@@ -161,10 +161,11 @@ export async function finish($: Engine, t: ThingRow, how: 'done' | 'dropped') {
 }
 
 // ── 策略 ──
+// 放宽发送的改动带钥匙（--yours）：你在面板上改的直接生效；主会话不带钥匙改的只会变成提议。
 
 // target：内置场景名（slack_dm），或你加的情况 custom:<号>。
 export async function setScenario($: Engine, target: string, field: 'handle' | 'reply', value: Handle | ReplyMode) {
-  await act($, '改规矩', ['rules', 'set', target, `${field}=${value}`])
+  await act($, '改规矩', ['rules', '--yours', 'set', target, `${field}=${value}`], await rulesFromPanel($))
 }
 
 export async function addCustom($: Engine, when: string) {
@@ -173,6 +174,12 @@ export async function addCustom($: Engine, when: string) {
 
 export async function removeCustom($: Engine, id: number) {
   await act($, '删情况', ['rules', 'custom', 'remove', String(id)])
+}
+
+// 钥匙换过的提醒：你点了知道了才收起（记在插件自己的存储里）。
+export async function ackKeyAlerts($: Engine, upto: string) {
+  await $.store.set('keyAck', upto)
+  await refresh($)
 }
 
 // ── 控制 ──
@@ -200,11 +207,16 @@ export async function setBrief($: Engine, scenario: string, text: string) {
 }
 
 export async function trust($: Engine, who: string, add: boolean) {
-  await act($, add ? '加白名单' : '移出白名单', ['rules', 'trust', add ? 'add' : 'remove'], who)
+  await act($, add ? '加白名单' : '移出白名单', ['rules', '--yours', 'trust', add ? 'add' : 'remove'], await rulesFromPanel($, who))
+}
+
+// 「一定问我」名单：加是收紧，直接改；删是放宽，带钥匙。
+export async function askAlways($: Engine, who: string, add: boolean) {
+  await act($, add ? '加进一定问我' : '移出一定问我', ['rules', '--yours', 'always', add ? 'add' : 'remove'], await rulesFromPanel($, who))
 }
 
 export async function addQuick($: Engine, text: string) {
-  await act($, '加固定回复', ['rules', 'quick', 'add'], text)
+  await act($, '加固定回复', ['rules', '--yours', 'quick', 'add'], await rulesFromPanel($, text))
 }
 
 export async function removeQuick($: Engine, text: string) {
@@ -224,7 +236,7 @@ export async function setPlacement($: Engine, audience: string, place: 'inline' 
 }
 
 export async function setSignature($: Engine, text: string) {
-  await act($, '改署名', ['rules', 'sign'], text)
+  await act($, '改署名', ['rules', '--yours', 'sign'], await rulesFromPanel($, text))
 }
 
 export async function addRule($: Engine, text: string) {
@@ -236,7 +248,7 @@ export async function removeRule($: Engine, text: string) {
 }
 
 export async function decideProposal($: Engine, id: number, accept: boolean) {
-  await act($, accept ? '采纳' : '不要', ['rules', accept ? 'accept' : 'reject', String(id)])
+  await act($, accept ? '采纳' : '不要', ['rules', '--yours', accept ? 'accept' : 'reject', String(id)], await rulesFromPanel($))
 }
 
 // ── 测评 ──
