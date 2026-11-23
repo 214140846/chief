@@ -610,6 +610,97 @@ test('设置页：免打扰和每天汇总写进 config.json', async ($, on) => 
   await ui.unmount()
 })
 
+// config.json 写了 locale: en：面板整个是英文；设置页能换回中文（chief config set locale zh），换了马上重画。
+test('英文界面：locale 是 en 时页签、卡片、设置页都是英文；能换回中文', async ($, on) => {
+  const CJK = /[　-〿一-鿿＀-￯]/
+  const runs: string[] = []
+  const files: Record<string, string> = { ...FILES, '/Users/me/chief/config.json': JSON.stringify({ locale: 'en' }) }
+  const doctor = {
+    version: '0.2.0', node: 'v24.0.0', engine: 'running', chrome: true,
+    sources: { slack: { enabled: true, ready: true } },
+    hub: { listening: true, lastAt: null }, awake: true, slackWorkspace: 'acme', workspace: { path: '/Users/me/chief', ready: true },
+    quietHours: null, digest: { morning: null, evening: '18:30' },
+  }
+  on('command.register', () => ({ value: { command: 'chief' } }))
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  memStore(on)
+  on('clock.every', () => ({ value: { cancel: () => {} } }))
+  on('fs.read', (_, e) => {
+    if (e.path === '/Users/me/chief/data/bin/chief') return { value: '#!/bin/sh' }
+    const text = files[e.path]
+    if (text === undefined) throw new Error('missing')
+    return { value: text }
+  })
+  on('process.run', (_, e) => {
+    const cmd = e.argv.join(' ')
+    runs.push(cmd)
+    if (e.argv[0] === '/usr/bin/env') return { value: { exitCode: 0, stdout: 'HOME=/Users/me\nPATH=/usr/bin\n', stderr: '' } }
+    if (cmd.endsWith(' doctor')) return { value: { exitCode: 0, stdout: JSON.stringify(doctor), stderr: '' } }
+    // 换语言：chief config set 写进 config.json，面板接着重读。
+    if (cmd.endsWith(' config set locale zh')) files['/Users/me/chief/config.json'] = JSON.stringify({ locale: 'zh' })
+    return { value: { exitCode: 0, stdout: '', stderr: '' } }
+  })
+  on('prompt.submit', (_, e) => ({ text: e.text }))
+
+  await $.session.start({ cwd: '/Users/me/chief', surface: 'desktop', isInteractive: true })
+  await $.command.run({ command: 'chief', args: '' })
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+
+  // 找不到时说清是哪一句（英文的字都写全，顺便确认里面没有中文）。
+  const must = async (text: string | RegExp, types: string[] = ['Text']) => {
+    if (typeof text === 'string') expect(CJK.test(text)).toBe(false)
+    const re = typeof text === 'string' ? new RegExp(`^${text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`) : text
+    for (const type of types) if (await ui.find({ type, text: re })) return
+    throw new Error(`没找到：${String(text)}`)
+  }
+
+  // 页签（当前页是字，别的是按钮）和顶上一行。
+  await must('For you 1')
+  for (const label of ['Outbox 2', 'Progress', 'Policy 1', 'Eval', 'Setup']) await must(label, ['Button', 'Text'])
+  await must('● Hub is listening')
+  await must('2 waiting to be judged')
+  // 「现在要你」：今天的一行、要你定的卡片、等你确认的回复。问题原文是数据，照原样。
+  await must('Today: judged 3 · handed off 1 · noted 1 · ignored 1 · sent for you 1')
+  await must('Suggestion')
+  await must(/^Related outbox item: reply to Bob Chen "处理了，报告在 thread 里"$/)
+  await must('Waiting for your OK to send · 2')
+  await must(/Joe 问能不能本周上线/)
+  // 「照建议办」记进 chief 的回答照旧是中文（hub 认它），按钮上的字是英文。
+  await must('Go with the suggestion', ['Button'])
+  await ui.press({ key: 'ok3' })
+  expect(runs).toContain('/Users/me/chief/data/bin/chief ask answer 3')
+
+  await ui.press({ key: 'tab-outbox' })
+  await must('reply to Bob Chen')
+  await must(/^You clicked send · reply to o\/r#3 修 bug: LGTM$/)
+  await must(/^Slack · Bob Chen 的私信 · Thing: PROJ-479 接口改造 · inline in the conversation$/)
+  for (const b of ['Send', 'Edit', 'Rewrite', "Don't send"]) await must(b, ['Button'])
+
+  await ui.press({ key: 'tab-things' })
+  await must(/^Most urgent: PROJ-479 接口改造 — /)
+  await must('1 in progress · 1 need attention · 1 done in the last 7 days')
+  await must('Import', ['Button'])
+
+  await ui.press({ key: 'tab-policy' })
+  await must('Slack DMs')
+  await must('Messages I send myself on Slack')
+  await must('Trusted: send replies to these people directly')
+
+  await ui.press({ key: 'tab-eval' })
+  await must('Accuracy: 100% (1 reviewed, 0 wrong)')
+
+  // 设置页：标题都是英文；语言下拉换回中文，马上重画成中文。
+  await ui.press({ key: 'tab-setup' })
+  for (const title of ['Background engine (receives messages, sends replies)', 'Sources', 'Hub', 'Quiet hours and daily digest']) await must(new RegExp(title.replace(/[()]/g, '\\$&')))
+  await must(/Language · 语言/)
+  await ui.select({ key: 'language', value: 'zh' })
+  expect(runs).toContain('/Users/me/chief/data/bin/chief config set locale zh')
+  await must(/^设置$/)
+  await must(/后台引擎（收消息、发回复）/)
+  await ui.unmount()
+})
+
 // 你在会话里说了「发吧」：主会话只能 ask-confirm，插件只放行你说完以后提的请求，你的话 15 分钟内有效。
 test('会话里确认：只放行你说完话以后提的请求；还能发的才算；你的话过 15 分钟就不算了', async () => {
   const said = { at: Date.parse('2026-11-23T10:00:00Z') }

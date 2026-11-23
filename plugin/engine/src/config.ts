@@ -1,6 +1,6 @@
 // 可调的数字和开关：~/chief/config.json（和 rules.json 放一起；用 CHIEF_HOME 时放在那个目录里）。没有这个文件就全用默认值。
 // 不认得的键不管；值不对（类型不对、格式不对）用默认值，超出范围的取最近的边界，都在 problems 里说一句（引擎启动时写进日志）。
-// 改了以后重启引擎才生效（chief engine restart）；免打扰和每天汇总例外，引擎每分钟现读（见 liveConfig）。chief config 打出现在生效的值，chief config set <键> <值> 改一项。
+// 改了以后重启引擎才生效（chief engine restart）；免打扰、每天汇总和语言例外，引擎用到时现读（见 liveConfig）。chief config 打出现在生效的值，chief config set <键> <值> 改一项。
 //   pollMinutes        每隔几分钟拉一次 GitHub / Jira / Notion                 默认 5     1–120
 //   firstLookbackHours 第一次连上一个来源，往回看几小时                          默认 24    1–720
 //   missedMinutes      交给主会话多久还没判断算漏掉了（再交一次）                默认 10    1–1440
@@ -12,7 +12,7 @@
 //   items.jira         每次最多拉几张 Jira 单                                     默认 50    1–200
 //   slackCatchUpHours  Slack 连上以后补收最近几小时的私信、群聊                   默认 48    0–168
 //   logMaxMB           engine.log 超过多少 MB 就换一个（留 .1 .2 两份旧的）        默认 10    1–500
-//   locale             界面和通知的语言："zh" | "en"                               默认 "zh"
+//   locale             面板、通知、主会话跟你说话的语言："zh" | "en"（见 messages.ts、shared/i18n.ts） 默认 "zh"
 //   quietHours         免打扰时段：{"start":"22:00","end":"08:00"} 或 null         默认 null
 //   digest             每天汇总：{"morning":"HH:MM" 或 null, "evening":"HH:MM" 或 null} 默认都是 null
 import { existsSync, readFileSync } from "node:fs";
@@ -144,7 +144,7 @@ export function liveConfig(): Config {
 }
 
 // 改了马上生效、不用重启引擎的键。
-export const LIVE_KEYS = ["quietHours", "digest"];
+export const LIVE_KEYS = ["quietHours", "digest", "locale"];
 
 // 命令行给的值：能当 JSON 读的（数字、null、对象、带引号的字符串）就当 JSON，否则当字符串（08:30、en）。
 function parseValue(text: string): unknown {

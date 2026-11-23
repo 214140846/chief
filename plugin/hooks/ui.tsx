@@ -2,22 +2,20 @@
 // 元素来自当前界面（App / 终端）的元素表；App 才有的（输入框、下拉、Markdown、图）没有时退回纯文字。
 import type { EngineInterface as Engine } from 'claude-code'
 
-import { SCENARIOS } from '../engine/src/shared/sources'
 import type { DecisionRow, ReplyRow, ThingRow } from '../types'
 import { annotate, toggle } from './actions'
+import { L, t } from './i18n'
 
 export type Els = ReturnType<Engine['ui']['resolve']>
 
-export const STATUS: Record<ThingRow['status'], string> = {
-  waiting_you: '等你定', doing: '在做', waiting_others: '等别人', done: '办完了', dropped: '不做了',
+// 判断的名字、场景的名字：和 chief 命令行同一份（engine/src/shared/），按当前语言。
+export function verdictName(v: DecisionRow['verdict']): string {
+  return L().verdict[v]
 }
 
-export const VERDICT: Record<DecisionRow['verdict'], string> = {
-  forwarded: '送进会话', opened: '开了新会话', asked: '问你', noted: '只记下', ignored: '忽略',
+export function scenarioName(k: string): string {
+  return (L().scenario as Record<string, string>)[k] ?? k
 }
-
-// 场景的名字和 chief 命令行用同一份（engine/src/shared/sources.ts）。
-export const SCENARIO: Record<string, string> = SCENARIOS
 
 export function short(text: string, max: number): string {
   const one = text.replace(/\s+/g, ' ').trim()
@@ -25,12 +23,13 @@ export function short(text: string, max: number): string {
 }
 
 export function ago(iso: string | null | undefined): string {
-  if (!iso) return '从没'
+  const w = t().time
+  if (!iso) return w.never
   const s = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 1000))
-  if (s < 60) return '刚刚'
-  if (s < 3600) return `${Math.round(s / 60)} 分钟前`
-  if (s < 86400) return `${Math.round(s / 3600)} 小时前`
-  return `${Math.round(s / 86400)} 天前`
+  if (s < 60) return w.justNow
+  if (s < 3600) return w.minutes(Math.round(s / 60))
+  if (s < 86400) return w.hours(Math.round(s / 3600))
+  return w.days(Math.round(s / 86400))
 }
 
 export function startOfToday(): number {
@@ -47,10 +46,11 @@ export function daysLeft(due: string): number {
 
 export function dueLabel(due: string): { text: string; color: 'error' | 'warning' | undefined } {
   const n = daysLeft(due)
-  if (n < 0) return { text: `过期 ${-n} 天（${due}）`, color: 'error' }
-  if (n === 0) return { text: `今天截止`, color: 'error' }
-  if (n <= 2) return { text: `${n} 天后截止（${due}）`, color: 'warning' }
-  return { text: `${due} 截止`, color: undefined }
+  const w = t().time
+  if (n < 0) return { text: w.overdue(-n, due), color: 'error' }
+  if (n === 0) return { text: w.dueToday, color: 'error' }
+  if (n <= 2) return { text: w.dueIn(n, due), color: 'warning' }
+  return { text: w.dueOn(due), color: undefined }
 }
 
 export const live = (t: ThingRow) => t.status !== 'done' && t.status !== 'dropped'
@@ -66,20 +66,20 @@ export function wakeLabel(iso: string): string {
   const d = new Date(iso)
   const hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
   const days = Math.round((new Date(d).setHours(0, 0, 0, 0) - startOfToday()) / 86_400_000)
-  return days === 0 ? `今天 ${hm}` : days === 1 ? `明天 ${hm}` : `${d.getMonth() + 1}/${d.getDate()} ${hm}`
+  return days === 0 ? t().time.today(hm) : days === 1 ? t().time.tomorrow(hm) : `${d.getMonth() + 1}/${d.getDate()} ${hm}`
 }
 
 // 一条回复一句话说清：回谁、发给谁、approve 哪个 PR。
 export function whatOf(r: ReplyRow): string {
-  return r.kind === 'approve' ? `approve PR ${r.target.ref ?? ''}` : r.kind === 'message' ? `发给 ${r.context.who ?? r.target.to ?? ''}` : `回 ${r.context.who ?? r.context.where}`
+  const w = t().reply
+  return r.kind === 'approve' ? w.approve(r.target.ref ?? '') : r.kind === 'message' ? w.message(r.context.who ?? r.target.to ?? '') : w.reply(r.context.who ?? r.context.where)
 }
 
 // 问题挂着的那条回复：回谁、说什么、现在发没发（不显示 chief 的回复号，用户看不懂）。
-export const REPLY_STATE: Partial<Record<ReplyRow['status'], string>> = { queued: '马上发出', sending: '正在发', sent: '已发出', dropped: '不发了', redo: '在重写', failed: '没发出去' }
-
 export function replyGist(r: ReplyRow): string {
-  const state = REPLY_STATE[r.status]
-  return `${whatOf(r)}${r.kind === 'approve' ? '' : `「${short(r.body, 40)}」`}${state ? `（${state}）` : ''}`
+  const w = t()
+  const state = w.reply.state[r.status]
+  return `${whatOf(r)}${r.kind === 'approve' ? '' : w.quote(short(r.body, 40))}${state ? w.paren(state) : ''}`
 }
 
 // 一段话的要点：去掉表格和 Markdown 符号，取第一句。
@@ -94,7 +94,7 @@ export function gist(text: string, max = 70): string {
 // 批注：一个 💬 按钮，点开一个整行的输入框，写完记进待发的批注里（不马上发）。
 export function annotateButton($: Engine, ui: Els, key: string, opened: string[]) {
   const { Button } = ui
-  return <Button key={`an-${key}`} onPress={() => toggle($, `an-${key}`)}>{opened.includes(`an-${key}`) ? '收起批注' : '💬 批注'}</Button>
+  return <Button key={`an-${key}`} onPress={() => toggle($, `an-${key}`)}>{opened.includes(`an-${key}`) ? t().annotate.close : t().annotate.open}</Button>
 }
 
 export function annotateBox($: Engine, ui: Els, key: string, label: string, opened: string[]) {
@@ -102,7 +102,7 @@ export function annotateBox($: Engine, ui: Els, key: string, label: string, open
   if (!opened.includes(`an-${key}`) || !('Input' in ui)) return null
   return (
     <Box width="100%">
-      <ui.Input key={`ai-${key}`} autoFocus rows={2} placeholder="写一句批注：要它做什么、哪里不对……先攒着，在顶上一起发给主会话" submitLabel="记下"
+      <ui.Input key={`ai-${key}`} autoFocus rows={2} placeholder={t().annotate.placeholder} submitLabel={t().annotate.submit}
         onSubmit={(v: string) => { if (v.trim()) { void annotate($, key, label, v.trim()); void toggle($, `an-${key}`) } }} />
     </Box>
   )
@@ -124,9 +124,12 @@ export function listify(text: string): string {
 }
 
 // 问题常是「背景……。要你定的事？」：从第一个问号往前找最后一个句号，前面是背景（淡一点），后面才是要你定的。
+// 英文的问题（「Context. Should we ship?」）没有中文句号：找最后一个后面跟空格的 . 或 !。
 export function splitAsk(question: string): { context: string; ask: string } {
   const q = question.search(/[？?]/)
-  const cut = q < 0 ? -1 : question.lastIndexOf('。', q)
+  const zhCut = q < 0 ? -1 : question.lastIndexOf('。', q)
+  const enCut = q < 0 || zhCut >= 0 ? -1 : Math.max(-1, ...[...question.slice(0, q).matchAll(/[.!](?=\s)/g)].map(m => m.index))
+  const cut = zhCut >= 0 ? zhCut : enCut
   return cut < 0 ? { context: '', ask: question.trim() } : { context: question.slice(0, cut + 1).trim(), ask: question.slice(cut + 1).trim() }
 }
 

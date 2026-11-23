@@ -4,6 +4,7 @@ import { appendFileSync, existsSync, readFileSync, unlinkSync, writeFileSync } f
 import { createInterface } from "node:readline/promises";
 import { fail, stdinText } from "../args";
 import { say } from "../engine";
+import { msg } from "../messages";
 import { ensureHome, paths } from "../store";
 
 // 以你的名义发（confirmed by 你）要带钥匙：钥匙原文只在 chief 插件自己的存储里，这里只存它的指纹。
@@ -41,7 +42,7 @@ export function keyChanged(what: KeyLogEntry["what"], tty: boolean): void {
   appendFileSync(paths().keyLog, `${JSON.stringify({ at: new Date().toISOString(), what, tty })}\n`, { mode: 0o600 });
   if (what === "first" || TEMP_DIRS.some((d) => paths().home.startsWith(d))) return;
   // 要紧的：免打扰也弹。
-  say("chief · 「以你的名义发」的钥匙换了", what === "reset" ? "钥匙被清掉了。不是你在终端里清的，就是有人（可能是主会话）动了它。" : "配了一把新钥匙。不是你刚重新加载插件，就是有人（可能是主会话）换了它。", true);
+  say(msg().keyTitle, what === "reset" ? msg().keyReset : msg().keySet, true);
 }
 
 // 在终端里问一句，要你亲手敲 reset。

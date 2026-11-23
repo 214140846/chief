@@ -2,6 +2,7 @@
 // 做的时候往 undo.json 记一笔（撤回要用的原样：事情原来的状态、每条消息原来怎么处理的），只留最近 MAX_UNDO 笔。
 // chief undo 照原样改回去，再交给主会话一条 chief.undo：撤回的消息重新算没判断，要它重新办；撤回的「不做了」要它告诉会话接着做。
 import { readLines, rewriteLines } from "./archive";
+import { msg } from "./messages";
 import { addEvent, loadDispatch, paths, readEvents, readJson, updateJson, withLock, type ChiefEvent, type Decision, type Dispatch, type Thing, type ThingsFile, type UndoEntry, type UndoFile } from "./store";
 
 export const MAX_UNDO = 50;
@@ -24,19 +25,19 @@ export function recordUndo(e: Omit<UndoEntry, "id">): number {
   });
 }
 
-const VERB: Partial<Record<Decision["verdict"], string>> = { ignored: "忽略", noted: "只记下" };
+const verbOf = (v: Decision["verdict"]): string | undefined => (v === "ignored" ? msg().undoIgnored : v === "noted" ? msg().undoNoted : undefined);
 
 // 一条消息给人看的样子：在哪、谁说的。
-const where = (e: ChiefEvent) => `${e.title}${e.from ? `（${e.from}）` : ""}`.slice(0, 60);
+const where = (e: ChiefEvent) => (e.from ? msg().undoFrom(e.title, e.from) : e.title).slice(0, 60);
 
 // 主会话 chief mark 了几条消息：只记下、忽略的能撤（派出去的已经送进会话了，撤了也收不回来）。演练、chief 自己的提醒不记。
 export function recordMark(verdict: Decision["verdict"], at: string, events: ChiefEvent[], before: Record<string, Dispatch>, thing: number | null): void {
-  const verb = VERB[verdict];
+  const verb = verbOf(verdict);
   const real = events.filter((e) => !e.dryrun && !e.kind.startsWith("chief."));
   if (!verb || real.length === 0) return;
   recordUndo({
     at, kind: "mark",
-    label: `${verb}：${where(real[0]!)}${real.length > 1 ? ` 等 ${real.length} 条` : ""}`,
+    label: msg().undoMark(verb, where(real[0]!), real.length),
     events: real.map((e) => ({ id: e.id, before: before[e.id] ?? null })),
     ...(thing !== null ? { addedTo: { thing, events: real.map((e) => e.id) } } : {}),
   });
@@ -44,11 +45,11 @@ export function recordMark(verdict: Decision["verdict"], at: string, events: Chi
 
 export function recordSkip(at: string, ids: number[]): void {
   if (ids.length === 0) return;
-  recordUndo({ at, kind: "skip", label: `跳过积下的 ${ids.length} 条旧消息`, events: ids.map((id) => ({ id, before: null })) });
+  recordUndo({ at, kind: "skip", label: msg().undoSkip(ids.length), events: ids.map((id) => ({ id, before: null })) });
 }
 
 export function recordDrop(at: string, thing: Pick<Thing, "id" | "title">, status: Thing["status"]): void {
-  recordUndo({ at, kind: "drop", label: `不做了：${thing.title}`, thing: { id: thing.id, status } });
+  recordUndo({ at, kind: "drop", label: msg().undoDrop(thing.title), thing: { id: thing.id, status } });
 }
 
 const EMPTY_THINGS: ThingsFile = { nextThing: 1, nextAsk: 1, things: [], asks: [] };
@@ -124,7 +125,7 @@ function undoMarks(entry: UndoEntry, at: string): string {
     const first = present.get(reopened[0]!)!;
     const text = entry.kind === "skip"
       ? `用户撤回了「跳过积下的旧消息」：${reopened.length} 条消息重新算没判断（#${reopened[0]} 到 #${reopened.at(-1)}）。用 chief events --after ${reopened[0]! - 1} 打出来（只打没判断的），照平常的办法一条条判断、mark，再 chief cursor；这条提醒 mark noted。`
-      : `用户撤回了你对 ${reopened.length} 条消息的判断（${entry.label.split("：")[0]}）：${reopened.map((id) => `#${id}`).join("、")} 重新算没判断，用户多半觉得不该这么办。chief show 看原文，照平常的办法重新判断、mark；这条提醒也 mark noted。`;
+      : `用户撤回了你对 ${reopened.length} 条消息的判断（${entry.label.split(/：|: /)[0]}）：${reopened.map((id) => `#${id}`).join("、")} 重新算没判断，用户多半觉得不该这么办。chief show 看原文，照平常的办法重新判断、mark；这条提醒也 mark noted。`;
     addEvent({
       at, source: first.source, kind: "chief.undo", title: `撤回了判断：${entry.label}`.slice(0, 200), url: reopened.length === 1 ? first.url : null, from: "你",
       text, why: ["undo"], keys: reopened.length === 1 ? first.keys : [], reply: {},

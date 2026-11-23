@@ -8,7 +8,9 @@ import { setConfig } from "../src/config";
 import { digestMaterial } from "../src/commands/digest";
 import { checkTarget, exportList, exportTo, purgePlan, runPurge } from "../src/commands/export";
 import { Engine, flushHeld, say } from "../src/engine";
+import { msg } from "../src/messages";
 import { heldSince, holdIfQuiet, takeHeld } from "../src/quiet";
+import { loadUndo, recordDrop, recordSkip } from "../src/undo";
 import { MemorySecretStore } from "../src/secrets";
 import { dueDigests, parseQuietRange, quietState } from "../src/shared/schedule";
 import { appendEvent, loadState, paths, readEvents, writeJson } from "../src/store";
@@ -99,6 +101,27 @@ describe("免打扰时段", () => {
     expect(typeof q.quiet).toBe("boolean");
     chief("config", "set", "quietHours", "null");
     expect(JSON.parse(chief("quiet")).hours).toBeNull();
+  });
+});
+
+describe("通知的语言（config.json 的 locale）", () => {
+  it("默认中文；改成 en 马上生效：攒下的提醒、钥匙、数据文件坏了、「最近做的」都是英文", () => {
+    setConfig("quietHours", '{"start":"22:00","end":"08:00"}');
+    holdIfQuiet("chief · x", "y", local(23, 23));
+    holdIfQuiet("chief · z", "w", local(23, 23));
+    const shown: [string, string][] = [];
+    const show = (t: string, b: string) => void shown.push([t, b]);
+    expect(msg().hubDownTitle).toBe("chief · 主会话没在听");
+    expect(chief("config", "set", "locale", "en")).toMatch(/马上生效/);
+    expect(flushHeld(local(24, 9), show)).toBe(2);
+    expect(shown).toEqual([["chief · 2 notifications held during quiet hours", "x; z"]]);
+    expect(msg().keyTitle).toBe('chief · The "send as you" key changed');
+    expect(msg().corruptHealth("state.json", false, "/tmp/x")).toBe("state.json is broken (moved away, using defaults): copy at /tmp/x");
+    recordSkip(new Date().toISOString(), [1, 2, 3]);
+    recordDrop(new Date().toISOString(), { id: 1, title: "PROJ-123 load test" }, "doing");
+    expect(loadUndo().items.map((x) => x.label)).toEqual(["Skipped 3 backlog messages", "Dropped: PROJ-123 load test"]);
+    setConfig("locale", "zh");
+    expect(msg().wokeTitle).toBe("chief · 稍后再说的事到点了");
   });
 });
 

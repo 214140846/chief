@@ -9,6 +9,7 @@ import { archiveOld, archivedEvent } from "./archive";
 import { config, liveConfig, loadConfig } from "./config";
 import { sendCheck } from "./gate";
 import { rotateLog } from "./logfile";
+import { msg } from "./messages";
 import { holdIfQuiet, takeHeld } from "./quiet";
 import { scrubTokens } from "./scrub";
 import { wakeDue } from "./snooze";
@@ -45,7 +46,7 @@ export function say(title: string, body: string, critical = false, show: (title:
 // 免打扰一过：攒下的合成一条弹出来。
 export function flushHeld(now = new Date(), show: (title: string, body: string) => void = osascript): number {
   const held = takeHeld(now);
-  if (held.length > 0) show(`chief · 免打扰时攒下 ${held.length} 条提醒`, held.map((x) => x.title.replace(/^chief · /, "")).join("；"));
+  if (held.length > 0) show(msg().heldTitle(held.length), held.map((x) => x.title.replace(/^chief · /, "")).join(msg().sep));
   return held.length;
 }
 
@@ -144,9 +145,7 @@ export function notifyCorrupt(now = Date.now(), notify: (title: string, body: st
       continue;
     }
     if (!r.notified) {
-      notify(`chief · ${name} 坏了`, r.critical
-        ? `${name} 不是合法的 JSON，chief 没覆盖它，用到它的功能会停下。坏的那份另存在 ${r.moved}，修好原文件或删掉它。`
-        : `${name} 不是合法的 JSON，已挪到 ${r.moved}，先用默认的接着跑。`);
+      notify(msg().corruptTitle(name), r.critical ? msg().corruptCritical(name, r.moved) : msg().corruptMoved(name, r.moved));
       r.notified = true;
       changed = true;
     }
@@ -155,7 +154,7 @@ export function notifyCorrupt(now = Date.now(), notify: (title: string, body: st
   const left = Object.values(all);
   if (left.length === 0) return null;
   const at = left.map((r) => r.at).sort().at(-1)!;
-  return { ok: false, at, fails: 2, error: left.map((r) => `${r.file.split("/").at(-1)} 坏了${r.critical ? "（没覆盖，修好或删掉它）" : "（已挪走，用的默认）"}：另存在 ${r.moved}`).join("；").slice(0, 400) };
+  return { ok: false, at, fails: 2, error: left.map((r) => msg().corruptHealth(r.file.split("/").at(-1) ?? r.file, r.critical, r.moved)).join(msg().sep).slice(0, 400) };
 }
 
 // 按开关和钥匙串搭出要拉的外部来源（来源注册表里有 build 的；Slack 是推送，见 startSlack）。
@@ -323,7 +322,7 @@ export class Engine {
     try {
       for (const t of wakeDue(now)) {
         log(`事情 ${t.id} 稍后再说的时间到了`);
-        (this.deps.notify ?? say)("chief · 稍后再说的事到点了", t.title);
+        (this.deps.notify ?? say)(msg().wokeTitle, t.title);
         this.emit({
           at: new Date(now).toISOString(), source: "session", kind: "thing.woke", title: `到点了：${t.title}`.slice(0, 200), url: null, from: null,
           text: `事情 #${t.id}「${t.title}」用户之前说稍后再说，现在到点了，已经拿回进行中。看一眼现状（chief thing list；有会话的可以问它进展），跟用户说一句这件事回来了、现在卡在哪、下一步是什么；要他拍板的 chief ask add。这条 mark noted --thing ${t.id}。`,
@@ -384,7 +383,7 @@ export class Engine {
       if (down && waiting > 0 && now - this.startedAt >= hubDownMs() && now - this.lastHubNag >= hubNagMs()) {
         this.lastHubNag = now;
         log(`主会话没在听，有 ${waiting} 条消息等着`);
-        say("chief · 主会话没在听", `有 ${waiting} 条消息等着处理。到「chief 消息中心」会话里发 /chief:hub 接着听。`);
+        say(msg().hubDownTitle, msg().hubDown(waiting));
       }
     } catch (error) {
       log(`对账没成：${error instanceof Error ? error.message : String(error)}`);
@@ -425,7 +424,7 @@ export class Engine {
 
   private sessionUpdate(u: SessionUpdate): void {
     // 会话停在问你的对话框上：先弹个通知（不等主会话），再交给主会话登记成「要你定」。
-    if (u.waiting) say(`chief · 会话在等你回答`, `${u.title}：${u.waiting}`);
+    if (u.waiting) say(msg().sessionWaitingTitle, `${u.title}${msg().colon}${u.waiting}`);
     const last = this.lastSessionEvent.get(u.session) ?? 0;
     if (!u.asking && Date.now() - last < SESSION_EVENT_MS) return;
     this.lastSessionEvent.set(u.session, Date.now());
@@ -497,7 +496,7 @@ export class Engine {
         else if (s.state === "connected") this.sourceResult("slack");
         const dead = slackDeadChanged(this.slackDead, s);
         this.slackDead = dead.dead;
-        if (dead.notify) say("chief · Slack 登录失效了", "收不到 Slack 消息、也发不出回复了。打开 /chief 面板的「设置」页，点 Slack 那行的「重新登录」。");
+        if (dead.notify) say(msg().slackDeadTitle, msg().slackDead);
       },
       log: (line) => log(`[slack] ${line}`),
     });
@@ -536,7 +535,7 @@ export class Engine {
         if (bad !== null) {
           if (!this.record(r.id, { status: "failed", error: bad })) log(`回复 ${r.id} 没核过，结果也没记上（下次引擎启动会标成要你看一眼）`);
           log(`回复 ${r.id} 发之前没核过，没发：${bad}`);
-          notify("chief · 有条回复没发", `${r.context.who ?? r.context.where}：${bad}`);
+          notify(msg().replyBlockedTitle, `${r.context.who ?? r.context.where}${msg().colon}${bad}`);
           continue;
         }
         let out: SendResult;
@@ -546,11 +545,11 @@ export class Engine {
           const why = error instanceof Error ? error.message.slice(0, 200) : String(error);
           if (!this.record(r.id, { status: "failed", error: why })) log(`回复 ${r.id} 没发出去，结果也没记上（下次引擎启动会标成要你看一眼）`);
           log(`回复 ${r.id} 没发出去：${why}`);
-          notify("chief · 回复没发出去", `${r.context.who ?? r.context.where}：${why}`);
+          notify(msg().replyFailedTitle, `${r.context.who ?? r.context.where}${msg().colon}${why}`);
           continue;
         }
         log(`回复 ${r.id} 发出去了（${r.source}）${out.warning ? `；${out.warning}` : ""}`);
-        if (out.warning) notify("chief · 回复的图没发上", `${r.context.who ?? r.context.where}：${out.warning}`);
+        if (out.warning) notify(msg().imageFailedTitle, `${r.context.who ?? r.context.where}${msg().colon}${out.warning}`);
         if (!this.record(r.id, { status: "sent", sentAt: new Date().toISOString(), ...(out.url ? { url: out.url } : {}), ...(out.warning ? { error: out.warning } : {}) })) this.unrecorded.set(r.id, out);
       }
     } catch (error) {

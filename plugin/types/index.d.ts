@@ -141,6 +141,8 @@ export type Snapshot = {
   sources: Record<string, boolean>
   // 事情挂着的会话最近的动静（引擎读 Claude App 的会话记录得来）。
   activity: Record<string, { at: string; saidAt?: string | null; waiting?: string | null; title: string; last: string; permissionMode: string | null; archived: boolean }>
+  // 界面语言（config.json 的 locale，没写是 zh）：变了面板跟着重画。
+  locale: 'zh' | 'en'
   // 主会话的权限模式（和工作会话不是同一类时，主会话转告过去的消息会被扣住）。
   hubMode: string | null
   // 查过的 Slack 人：用户编号 → 名字（稿子里的 <@U…> 显示成 @名字）。

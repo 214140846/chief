@@ -4,12 +4,14 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface as Engine, RenderChildren } from 'claude-code'
 
 import { HHMM, parseQuietRange } from '../engine/src/shared/schedule'
-import { SOURCE_IDS, SOURCE_META, sourceLabel, type SetupMeta, type SourceId } from '../engine/src/shared/sources'
+import type { Locale } from '../engine/src/shared/i18n'
+import { SOURCE_IDS, SOURCE_META, type SetupMeta, type SourceId } from '../engine/src/shared/sources'
 import type { Doctor, Setup, Snapshot } from '../types'
-import { act, engineDo, hubStop, showLogs, skipOld, tell, testMessage } from './actions'
+import { act, engineDo, hubStop, setLanguage, showLogs, skipOld, tell, testMessage } from './actions'
 import { ensureKey } from './confirm'
 import { chiefDir, refresh } from './data'
-import { RELOAD_SKILL, ago, type Els } from './ui'
+import { locale, sourceName, t } from './i18n'
+import { RELOAD_SKILL, ago, select, type Els } from './ui'
 
 const setup = atom({ plugin: 'chief', key: 'setup' } as const, { installed: false, doctor: null, busy: '', said: '', cwd: '', key: 'none' } as Setup)
 
@@ -69,7 +71,7 @@ async function step($: Engine, busy: Setup['busy'], run: () => Promise<{ exitCod
   let said: string
   try {
     const out = await run()
-    said = out === null ? '' : out.exitCode === 0 ? '' : (out.stderr.trim() || out.stdout.trim().split('\n').slice(-3).join('\n') || '没说为什么').slice(0, 400)
+    said = out === null ? '' : out.exitCode === 0 ? '' : (out.stderr.trim() || out.stdout.trim().split('\n').slice(-3).join('\n') || t().noReason).slice(0, 400)
   } catch (error) {
     said = error instanceof Error ? error.message : String(error)
   }
@@ -111,12 +113,12 @@ export async function autoUpdate($: Engine) {
   }
   if (have === wanted) return
   if (!engineBehind(have, wanted)) {
-    void $.ui.toast(`这个会话的 chief 插件是 ${wanted}，比引擎（${have}）旧，没动引擎。重开会话或更新插件就好`)
+    void $.ui.toast(t().setup.pluginOlder(wanted, have))
     return
   }
   const out = await $.process.run(['/bin/sh', `${$.plugin.root}/setup.sh`], { timeoutMs: INSTALL_MS }).catch(() => null)
-  if (out?.exitCode === 0 && !out.stdout.includes('已经有别的会话在更新引擎了')) void $.ui.toast(`chief 引擎更新到 ${wanted} 了`)
-  else if (out === null || out.exitCode !== 0) void $.ui.toast('chief 引擎没更新成功：打开 /chief 的设置页，点「更新引擎」看看哪里不对')
+  if (out?.exitCode === 0 && !out.stdout.includes('已经有别的会话在更新引擎了')) void $.ui.toast(t().setup.updated(wanted))
+  else if (out === null || out.exitCode !== 0) void $.ui.toast(t().setup.updateFailed)
   await checkSetup($).catch(() => {})
 }
 
@@ -150,13 +152,13 @@ function setConfig($: Engine, key: string, value: string) {
 function setQuiet($: Engine, text: string) {
   if (text.trim() === '') return setConfig($, 'quietHours', 'null')
   const q = parseQuietRange(text)
-  if (!q) return void $.ui.toast('免打扰写成 22:00-08:00 这样：开始-结束，可以跨半夜')
+  if (!q) return void $.ui.toast(t().setup.quietFormat)
   return setConfig($, 'quietHours', JSON.stringify(q))
 }
 
 function setDigest($: Engine, slot: 'morning' | 'evening', text: string) {
   const t = text.trim().replace(/^(\d):/, '0$1:')
-  if (t !== '' && !HHMM.test(t)) return void $.ui.toast('时间写成 08:30 这样（24 小时制）')
+  if (t !== '' && !HHMM.test(t)) return void $.ui.toast(t().setup.timeFormat)
   return setConfig($, `digest.${slot}`, t === '' ? 'null' : t)
 }
 
@@ -175,14 +177,18 @@ function startHub($: Engine) {
 // 插件自己开不了别的会话（插件接口里没有），但 Claude App 的会话有 start_session 工具：
 // 让这个会话替你在工作目录开一个新会话当主会话。工具不在（终端里）就让它告诉你怎么手动开。
 function openHubThere($: Engine, path: string) {
-  void $.prompt.submit({ text: `用 start_session 在 ${path} 开一个新会话当 chief 消息中心：标题「chief 消息中心」，第一句话就是「开 chief 消息中心」。开好马上 detach_session 把它移到侧边栏顶层，然后告诉我去那个会话、把它的权限模式改成 bypass permissions。看不到 start_session 这个工具的话，什么都别做，只告诉我：在 Claude App 里新建会话，文件夹选 ${path}，权限模式选 bypass permissions，在那个会话里打 /chief 再点「开消息中心」。` })
+  void $.prompt.submit({ text: t().setup.openHubThere(path) })
 }
+
+// 语言选项：各用自己的语言写，看不懂当前语言的人也认得出。
+const LANGUAGES: { value: Locale; label: string }[] = [{ value: 'zh', label: '中文' }, { value: 'en', label: 'English' }]
 
 // 设置页（原来的「控制」也并进来了）：主会话、后台引擎、来源、这台电脑、试一下，一块一块框起来。
 // 每块标题前打勾：好了是 ✓、边框变绿；还要你弄的是 ○。第一次装时从上往下点就行。
 // 引擎还没装时没有 Snapshot（s 是 null），只看 doctor 和装没装。
 export function setupTab($: Engine, ui: Els, st: Setup, s: Snapshot | null, logText = '') {
   const { Box, Text, Button } = ui
+  const w = t().setup
   const d = st.doctor
   const busy = st.busy !== ''
   const note = (text: string) => <Text size="footnote" dimColor wrap="wrap">{text}</Text>
@@ -193,7 +199,7 @@ export function setupTab($: Engine, ui: Els, st: Setup, s: Snapshot | null, logT
   const buttons = (...items: RenderChildren[]) => <Box flexDirection="row" gap="sm" flexWrap="wrap">{items}</Box>
   const block = (key: string, done: boolean | null, title: string, body: RenderChildren, optional = false) => (
     <Box key={key} flexDirection="column" borderStyle="round" borderColor={done ? 'success' : 'inactive'} paddingX="md" paddingY="sm" gap="xs">
-      <Text weight="semibold">{done === null ? '' : done ? <Text color="success">✓ </Text> : '○ '}{title}{optional ? <Text dimColor>（可选）</Text> : ''}</Text>
+      <Text weight="semibold">{done === null ? '' : done ? <Text color="success">✓ </Text> : '○ '}{title}{optional ? <Text dimColor>{w.optional}</Text> : ''}</Text>
       {body}
     </Box>
   )
@@ -205,25 +211,25 @@ export function setupTab($: Engine, ui: Els, st: Setup, s: Snapshot | null, logT
   const running = s !== null ? s.engineAt !== null : d?.engine === 'running'
   const engineOk = st.installed && d !== null && running && !outdated
   const engine = st.busy === 'engine'
-    ? note('正在装：复制引擎、装依赖、装进后台服务。第一次要一两分钟。')
+    ? note(w.installing)
     : !st.installed ? (
       <Box flexDirection="column" gap="xs">
-        {note('把收消息的后台程序装到这台电脑上，开机自动跑。chief 的东西都放在工作目录 ~/chief 里。要先装好 Node 24 以上。')}
-        {buttons(button('setup-engine', '装引擎', !busy, () => void installEngine($)))}
+        {note(w.installHelp)}
+        {buttons(button('setup-engine', w.install, !busy, () => void installEngine($)))}
       </Box>
     ) : (
       <Box flexDirection="column" gap="xs">
-        <Text wrap="wrap">{running ? `在跑${s?.engineAt ? ` · ${ago(s.engineAt)}报到` : ''}` : '没在跑'}{d ? <Text dimColor>{`（${d.version ?? '?'}，Node ${d.node}）`}</Text> : ''}</Text>
-        {outdated && note(`插件是 ${wanted ?? '?'}，引擎还是 ${d?.version ?? '旧版'}，点「更新引擎」。`)}
-        {ahead && note(`引擎是 ${d?.version ?? '?'}，比这个会话的插件（${wanted}）新：别的会话用新插件更新过引擎，不用往回装。重开会话或更新插件就一致了。`)}
-        {d?.workspace.ready && note(`工作目录 ${d.workspace.path}：CLAUDE.md 写你的交代，rules.json 是规矩，notes/ 是助理记的，data/ 是进展和消息。`)}
+        <Text wrap="wrap">{running ? w.running(s?.engineAt ? ago(s.engineAt) : null) : w.stopped}{d ? <Text dimColor>{w.version(d.version ?? '?', d.node)}</Text> : ''}</Text>
+        {outdated && note(w.outdated(wanted ?? '?', d?.version ?? w.oldVersion))}
+        {ahead && note(w.ahead(d?.version ?? '?', wanted ?? '?'))}
+        {d?.workspace.ready && note(w.workspace(d.workspace.path))}
         {buttons(
-          outdated ? button('setup-engine', '更新引擎', !busy, () => void installEngine($)) : null,
-          running ? <Button key="eng-stop" onPress={() => engineDo($, 'stop')}>停引擎</Button> : <Button key="eng-start" variant="primary" onPress={() => engineDo($, 'start')}>开引擎</Button>,
-          <Button key="eng-restart" onPress={() => engineDo($, 'restart')}>重启引擎</Button>,
-          <Button key="logs" onPress={() => showLogs($)}>看日志</Button>,
-          d?.workspace.ready ? <Button key="setup-workspace" onPress={() => openWorkspace($, d.workspace.path)}>打开工作目录</Button> : null,
-          !outdated ? button('setup-engine', '重装引擎', !busy, () => void installEngine($), false) : null,
+          outdated ? button('setup-engine', w.update, !busy, () => void installEngine($)) : null,
+          running ? <Button key="eng-stop" onPress={() => engineDo($, 'stop')}>{w.stop}</Button> : <Button key="eng-start" variant="primary" onPress={() => engineDo($, 'start')}>{w.start}</Button>,
+          <Button key="eng-restart" onPress={() => engineDo($, 'restart')}>{w.restart}</Button>,
+          <Button key="logs" onPress={() => showLogs($)}>{w.logs}</Button>,
+          d?.workspace.ready ? <Button key="setup-workspace" onPress={() => openWorkspace($, d.workspace.path)}>{w.openWorkspace}</Button> : null,
+          !outdated ? button('setup-engine', w.reinstall, !busy, () => void installEngine($), false) : null,
         )}
         {logText !== '' && ('Code' in ui ? <ui.Code source={logText} language="text" /> : <Text dimColor wrap="wrap">{logText}</Text>)}
       </Box>
@@ -234,28 +240,28 @@ export function setupTab($: Engine, ui: Els, st: Setup, s: Snapshot | null, logT
   // 消息中心最好开在工作目录里：那样才读得到 CLAUDE.md、notes/ 和那里的 skill。
   const elsewhere = d !== null && d.workspace.ready && st.cwd !== '' && st.cwd !== d.workspace.path
   const unhandled = s?.unhandled ?? 0
-  const skip = unhandled > 0 && s ? <Button key="skip-old2" onPress={() => skipOld($, s.maxEvent)}>跳过积下的 {unhandled} 条</Button> : null
+  const skip = unhandled > 0 && s ? <Button key="skip-old2" onPress={() => skipOld($, s.maxEvent)}>{w.skipOld(unhandled)}</Button> : null
   const keyWarn = st.key === 'mismatch'
-    ? note('面板上的「发送」现在用不了：chief 记的钥匙和这个插件的对不上（多半重装过插件）。在终端跑 ~/chief/data/bin/chief key reset，再输入 /reload-plugins。')
+    ? note(w.keyMismatch)
     : null
   const hub = listening ? (
     <Box flexDirection="column" gap="xs">
       {keyWarn}
-      {note('在听，新消息进来会自动处理。停下以后新消息先攒着，在任何会话发 /chief:hub 接着处理。插件更新过的话点「重读规则」，主会话会读到新的做事方式，不用重新开张。')}
+      {note(w.listening)}
       {buttons(
-        <Button key="hub-stop" onPress={() => hubStop($)}>停下主会话</Button>,
-        <Button key="hub-reload" onPress={() => tell($, RELOAD_SKILL, '重读规则')}>重读规则</Button>,
+        <Button key="hub-stop" onPress={() => hubStop($)}>{w.hubStop}</Button>,
+        <Button key="hub-reload" onPress={() => tell($, RELOAD_SKILL, w.reload)}>{w.reload}</Button>,
         skip,
       )}
     </Box>
   ) : (
     <Box flexDirection="column" gap="xs">
       {note(elsewhere
-        ? `这个会话开在 ${st.cwd}，消息中心要开在工作目录 ${d!.workspace.path}（那里才读得到你的交代和助理记的东西）。点「在工作目录开主会话」，这个会话会替你开好；也可以自己在 App 里新建会话、文件夹选 ${d!.workspace.path}、权限模式选 bypass permissions，在那里打 /chief 再点「开消息中心」。`
-        : '用这个会话当主会话：点下面的按钮，它会挂上监听、改名叫「chief 消息中心」。这个会话之后就一直开着，权限模式选 bypass permissions。')}
+        ? w.elsewhere(st.cwd, d!.workspace.path)
+        : w.useThis)}
       {buttons(
-        elsewhere && engineOk ? button('setup-hub-there', '在工作目录开主会话', !busy, () => openHubThere($, d!.workspace.path)) : null,
-        button('setup-hub', !engineOk ? '开消息中心（先装好引擎）' : elsewhere ? '就用这个会话' : '开消息中心', !busy && engineOk, () => startHub($), !elsewhere),
+        elsewhere && engineOk ? button('setup-hub-there', w.hubThere, !busy, () => openHubThere($, d!.workspace.path)) : null,
+        button('setup-hub', !engineOk ? w.hubNeedsEngine : elsewhere ? w.hubThis : w.hubStart, !busy && engineOk, () => startHub($), !elsewhere),
         skip,
       )}
     </Box>
@@ -265,16 +271,16 @@ export function setupTab($: Engine, ui: Els, st: Setup, s: Snapshot | null, logT
   const on = (src: SourceId) => s !== null ? s.sources[src] === true : d?.sources[src]?.enabled === true
   const fails = (src: SourceId) => (s?.health[src]?.fails ?? 0)
   const state = (src: SourceId) => on(src) && fails(src) > 0
-    ? <Text color="error">连不上（连着 {fails(src)} 次）</Text>
-    : <Text color={on(src) ? 'success' : undefined} dimColor={!on(src)}>{on(src) ? '开着' : '没开'}</Text>
+    ? <Text color="error">{w.failing(fails(src))}</Text>
+    : <Text color={on(src) ? 'success' : undefined} dimColor={!on(src)}>{on(src) ? w.on : w.off}</Text>
   const line = (src: SourceId, ...rest: RenderChildren[]) => (
     <Box key={`src-${src}`} flexDirection="row" gap="sm" alignItems="center" flexWrap="wrap">
-      <Text>{sourceLabel(src)}</Text>
+      <Text>{sourceName(src)}</Text>
       {state(src)}
       {rest}
     </Box>
   )
-  const off = (src: SourceId) => on(src) ? <Button key={`dc-${src}`} onPress={() => act($, `断开 ${sourceLabel(src)}`, ['disconnect', src])}>断开</Button> : null
+  const off = (src: SourceId) => on(src) ? <Button key={`dc-${src}`} onPress={() => act($, w.disconnectLabel(sourceName(src)), ['disconnect', src])}>{w.disconnect}</Button> : null
   const slackReady = d?.sources.slack?.ready === true
   // 还没记过工作区、又不在登录中：Slack 那行给一个填工作区的输入框，代替「登录 Slack」按钮。
   const askWorkspace = st.busy !== 'slack' && st.installed && d !== null && !d.slackWorkspace && d.chrome !== false
@@ -283,30 +289,30 @@ export function setupTab($: Engine, ui: Els, st: Setup, s: Snapshot | null, logT
   const tool = (id: SourceId, install: string, login: string) => {
     const t = d?.sources[id]
     if (on(id)) return [line(id, off(id))]
-    if (st.busy === id) return [line(id, <Text key={`${id}-busy`} size="footnote" dimColor>正在试…</Text>)]
+    if (st.busy === id) return [line(id, <Text key={`${id}-busy`} size="footnote" dimColor>{w.trying}</Text>)]
     // doctor 说了没装 / 没登录才给提示；没 doctor 时照样给「连上」按钮，连不上会在下面说为什么。
-    if (t !== undefined && !t.tool) return [line(id), note(`${sourceLabel(id)}：没找到命令，在终端跑 ${install}，再 ${login}，然后点「重新检查」。`)]
-    if (t !== undefined && !t.ok) return [line(id), note(`${sourceLabel(id)}：还没登录，在终端跑 ${login}，然后点「重新检查」。${t.detail ? `（${t.detail}）` : ''}`)]
-    return [line(id, <Button key={`cn-${id}`} onPress={() => void connect($, id)}>连上</Button>)]
+    if (t !== undefined && !t.tool) return [line(id), note(w.noTool(sourceName(id), install, login))]
+    if (t !== undefined && !t.ok) return [line(id), note(w.notLoggedIn(sourceName(id), login, t.detail))]
+    return [line(id, <Button key={`cn-${id}`} onPress={() => void connect($, id)}>{w.connect}</Button>)]
   }
   // 浏览器登录（Slack）：登录 / 重新登录、填工作区。
   const browser = (id: SourceId) => [
     // 登录进行中两个按钮都不画：只藏「重新登录」的话「断开」会挪到它的位置，再点一下就把 Slack 断了。
     line(id,
-      st.busy === id || askWorkspace ? null : button(`setup-${id}`, on(id) || slackReady ? '重新登录' : '登录 Slack', !busy && st.installed && d?.chrome !== false, () => void loginSlack($), !(on(id) || slackReady)),
+      st.busy === id || askWorkspace ? null : button(`setup-${id}`, on(id) || slackReady ? w.relogin : w.loginSlack, !busy && st.installed && d?.chrome !== false, () => void loginSlack($), !(on(id) || slackReady)),
       st.busy === id ? null : off(id)),
-    d?.slackWorkspace && note(`工作区：${d.slackWorkspace}.slack.com`),
+    d?.slackWorkspace && note(w.slackWorkspace(d.slackWorkspace)),
     // 还没记过工作区：先问一句（可以不填）。填了只用登一次。
     askWorkspace && 'Input' in ui && (
       <Box key={`${id}-ws`} flexDirection="column" gap="xs">
-        {note('你的 Slack 工作区：浏览器里打开 Slack 时地址栏 xxx.slack.com 的 xxx。公司要 SSO 的一定要填，填了只用登一次；不知道可以留空直接点。')}
-        <ui.Input key="slack-workspace" placeholder="比如 acme（可以留空）" submitLabel={on(id) || slackReady ? '重新登录' : '登录 Slack'} onSubmit={(v: string) => {
+        {note(w.workspaceHelp)}
+        <ui.Input key="slack-workspace" placeholder={w.workspacePlaceholder} submitLabel={on(id) || slackReady ? w.relogin : w.loginSlack} onSubmit={(v: string) => {
           if (!busy) void loginSlack($, v.trim() || undefined)
         }} />
       </Box>
     ),
-    st.busy === id && note('在弹出的 Chrome 窗口里登录 Slack（公司 SSO、确认新设备都照做），登好窗口会自己关掉。'),
-    d?.chrome === false && note('登录 Slack 要用 Google Chrome：先装一个 Chrome。'),
+    st.busy === id && note(w.loggingIn),
+    d?.chrome === false && note(w.needChrome),
   ]
   // 令牌从终端给的（Notion）：这里只看开没开、能断开。
   const sourceRows = (id: SourceId, setup: SetupMeta) => setup.kind === 'cli' ? tool(id, setup.install, setup.login)
@@ -316,64 +322,72 @@ export function setupTab($: Engine, ui: Els, st: Setup, s: Snapshot | null, logT
     <Box flexDirection="column" gap="xs">
       {SOURCE_IDS.flatMap(id => sourceRows(id, SOURCE_META[id].setup))}
       {SOURCE_IDS.filter(src => on(src) && fails(src) > 0).map(src => (
-        <Text key={`err-${src}`} size="footnote" color="error" wrap="wrap">{sourceLabel(src)} {ago(s!.health[src]!.at)}：{s!.health[src]!.error ?? '没说为什么'}</Text>
+        <Text key={`err-${src}`} size="footnote" color="error" wrap="wrap">{w.sourceError(sourceName(src), ago(s!.health[src]!.at), s!.health[src]!.error ?? t().noReason)}</Text>
       ))}
-      {note('Slack 连不上（比如登录过期）就点「重新登录」。GitHub、Jira 用你电脑上已经登录的 gh、acli（Jira 也可以用 twg）。Notion 要令牌，在终端里连：pbpaste | chief connect notion（先复制好）。')}
+      {note(w.sourcesHelp)}
     </Box>
   )
 
   return (
     <Box flexDirection="column" gap="sm" marginTop="sm">
-      {!st.installed && <Text weight="semibold">设置 chief：从上往下点</Text>}
-      {!st.installed && note('1. 装引擎：建工作目录 ~/chief，装后台程序。2. 登录 Slack（GitHub、Jira 可选）。3. 开主会话：主会话要开在 ~/chief 里，装好引擎后点「在工作目录开主会话」，或自己新建一个文件夹选 ~/chief 的会话。')}
-      {block('set-engine', engineOk, '后台引擎（收消息、发回复）', engine)}
-      {block('set-sources', slackOk, '来源', sources)}
-      {block('set-hub', listening, '主会话', hub)}
-      {d !== null && block('set-awake', d.awake, '插电时不让电脑睡', (
+      {!st.installed && <Text weight="semibold">{w.firstTitle}</Text>}
+      {!st.installed && note(w.firstSteps)}
+      {block('set-engine', engineOk, w.engineTitle, engine)}
+      {block('set-sources', slackOk, w.sourcesTitle, sources)}
+      {block('set-hub', listening, w.hubTitle, hub)}
+      {d !== null && block('set-awake', d.awake, w.awakeTitle, (
         <Box flexDirection="column" gap="xs">
           {note(d.awake
-            ? '开着：插着电时电脑不会自己睡，屏幕照样会关、会锁，消息照收照办。没插电、合上盖子还是会睡，醒了再接着处理。'
-            : '关着：电脑睡着时收不到消息，醒了才接着处理。')}
-          {buttons(button('setup-awake', st.busy === 'awake' ? '…' : d.awake ? '关掉' : '打开', !busy, () => void setAwake($, !d.awake), false))}
+            ? w.awakeOn
+            : w.awakeOff)}
+          {buttons(button('setup-awake', st.busy === 'awake' ? '…' : d.awake ? w.turnOff : w.turnOn, !busy, () => void setAwake($, !d.awake), false))}
         </Box>
       ), true)}
-      {d !== null && block('set-quiet', null, '免打扰和每天汇总', (
+      {d !== null && block('set-quiet', null, w.quietTitle, (
         <Box flexDirection="column" gap="xs">
           {note(d.quietHours
-            ? `免打扰 ${d.quietHours.start}–${d.quietHours.end}：这段时间不弹通知（数据文件坏了、钥匙被换了照样弹），主会话也不推送，攒到下一份汇总里。规矩允许直接发的回复照常发。`
-            : '免打扰没设：写个时段（比如 22:00-08:00），这段时间 chief 不弹通知、主会话不推送。')}
+            ? w.quietOn(d.quietHours.start, d.quietHours.end)
+            : w.quietOff)}
           {'Input' in ui && (
-            <ui.Input key="quiet-hours" placeholder={d.quietHours ? `${d.quietHours.start}-${d.quietHours.end}（留空是关掉）` : '比如 22:00-08:00'} submitLabel={d.quietHours ? '改免打扰' : '设免打扰'} onSubmit={(v: string) => {
+            <ui.Input key="quiet-hours" placeholder={d.quietHours ? w.quietPlaceholderSet(d.quietHours.start, d.quietHours.end) : w.quietPlaceholder} submitLabel={d.quietHours ? w.quietChange : w.quietSet} onSubmit={(v: string) => {
               if (!busy) void setQuiet($, v)
             }} />
           )}
-          {d.quietHours && buttons(button('quiet-off', '关掉免打扰', !busy, () => void setConfig($, 'quietHours', 'null'), false))}
-          {note(`每天汇总：早上 ${d.digest?.morning ?? '不发'} · 晚上 ${d.digest?.evening ?? '不发'}。到点主会话把等你的事、要你定的、待发出和这段时间的变化写成一份，发在主会话里。`)}
+          {d.quietHours && buttons(button('quiet-off', w.quietClear, !busy, () => void setConfig($, 'quietHours', 'null'), false))}
+          {note(w.digest(d.digest?.morning ?? null, d.digest?.evening ?? null))}
           {'Input' in ui && (
             <Box flexDirection="column" gap="xs">
-              <ui.Input key="digest-morning" placeholder="早上几点，比如 08:30（留空不发）" submitLabel="设早上" onSubmit={(v: string) => {
+              <ui.Input key="digest-morning" placeholder={w.morningPlaceholder} submitLabel={w.morningSet} onSubmit={(v: string) => {
                 if (!busy) void setDigest($, 'morning', v)
               }} />
-              <ui.Input key="digest-evening" placeholder="晚上几点，比如 18:30（留空不发）" submitLabel="设晚上" onSubmit={(v: string) => {
+              <ui.Input key="digest-evening" placeholder={w.eveningPlaceholder} submitLabel={w.eveningSet} onSubmit={(v: string) => {
                 if (!busy) void setDigest($, 'evening', v)
               }} />
             </Box>
           )}
         </Box>
       ), true)}
-      {s !== null && block('set-try', null, '试一下', (
+      {st.installed && block('set-language', null, w.languageTitle, (
         <Box flexDirection="column" gap="xs">
-          {note('造一条「同事找你」的消息，看主会话怎么判断、派活、写回复。回复不会真的发出去。')}
+          {note(w.languageHelp)}
+          {'Select' in ui
+            ? select(ui, 'language', locale(), LANGUAGES, v => { if (!busy) void setLanguage($, v as Locale) })
+            : buttons(...LANGUAGES.map(x => button(`lang-${x.value}`, x.label, !busy && x.value !== locale(), () => void setLanguage($, x.value), false)))}
+        </Box>
+      ), true)}
+      {s !== null && block('set-try', null, w.tryTitle, (
+        <Box flexDirection="column" gap="xs">
+          {note(w.tryHelp)}
           {'Input' in ui && (
-            <ui.Input key="test-msg" placeholder="比如：PROJ-123 的压测报告今天能给吗" submitLabel="发测试消息" onSubmit={(v: string) => {
+            <ui.Input key="test-msg" placeholder={w.tryPlaceholder} submitLabel={w.trySend} onSubmit={(v: string) => {
               if (v.trim()) void testMessage($, v.trim())
             }} />
           )}
-          {note('也可以在 Slack 里给自己发私信，那是给主会话的指令（比如「帮我看看现在工作进度」），它办完会回到你和自己的私信里。')}
+          {note(w.tryDm)}
         </Box>
       ))}
-      {st.said !== '' && <Text size="footnote" color="error" wrap="wrap">上一步没成：{st.said}</Text>}
-      {buttons(button('setup-recheck', st.busy === 'check' ? '检查中…' : '重新检查', !busy, () => void recheck($), false))}
+      {st.said !== '' && <Text size="footnote" color="error" wrap="wrap">{w.lastFailed(st.said)}</Text>}
+      {buttons(button('setup-recheck', st.busy === 'check' ? w.checking : w.recheck, !busy, () => void recheck($), false))}
     </Box>
   )
 }

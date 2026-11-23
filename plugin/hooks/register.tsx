@@ -13,6 +13,7 @@ import { refresh, chiefDir } from './data'
 import { confirmAsked, ensureKey, noteUserSaid } from './confirm'
 import { isHub, isHubMonitor, markHub, recordCall } from './usage'
 import { autoUpdate, checkSetup, missing, readSetup, setupTab } from './setup'
+import { t } from './i18n'
 import { evalTab } from './tabs/eval'
 import { header } from './tabs/header'
 import { nowTab } from './tabs/now'
@@ -80,7 +81,7 @@ async function openPane($: Engine) {
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
-    await $.command.register({ name: 'chief', description: '打开 chief 面板：要你定的事、待发出、进度、策略、测评、设置' })
+    await $.command.register({ name: 'chief', description: t().app.command })
     // 引擎跟着插件自动更新、配好「以你的名义发」的钥匙：放后台跑，不拖慢会话开起来。
     void autoUpdate($).then(() => ensureKey($)).catch(() => {})
     return next(e)
@@ -120,7 +121,7 @@ export const register: Register = on => {
 
   on('command.run', { command: 'chief' }, async $ => {
     await openPane($)
-    return { text: 'chief 面板开好了。' }
+    return { text: t().app.opened }
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
@@ -132,8 +133,8 @@ export const register: Register = on => {
     } catch (error) {
       return (
         <Box flexDirection="column" padding="sm" gap="xs">
-          <Text color="error">面板画不出来：{error instanceof Error ? error.message : String(error)}</Text>
-          <Text dimColor wrap="wrap">把这句截图给我；先试试关掉面板再输入 /chief。</Text>
+          <Text color="error">{t().app.crashed(error instanceof Error ? error.message : String(error))}</Text>
+          <Text dimColor wrap="wrap">{t().app.crashHint}</Text>
         </Box>
       )
     }
@@ -147,7 +148,7 @@ async function draw($: Engine, ui: Els) {
     const st = await readSetup($)
     if (!st.installed) return <Box flexDirection="column" padding="sm">{setupTab($, ui, st, null)}</Box>
     const s = await read($, snap)
-    if (s === null) return <Text dimColor>正在读 chief…</Text>
+    if (s === null) return <Text dimColor>{t().app.loading}</Text>
     const current = await read($, tab)
     const said = await read($, note)
     const opened = await read($, open)

@@ -6,6 +6,8 @@ import type { Handle, ReplyMode } from "./types";
 // 场景的默认做法：handle 怎么办，reply 回复要不要你确认（默认 ask），brief 派活时交代的话。
 export interface ScenarioMeta {
   label: string;
+  // 英文界面里的名字（config.json 的 locale 是 en 时用，见 i18n.ts）。
+  en: string;
   handle: Handle;
   reply?: ReplyMode;
   brief?: string;
@@ -35,10 +37,10 @@ export const SOURCE_META = {
     label: "Slack",
     mode: "push",
     scenarios: {
-      self: { label: "我在 Slack 上给自己发的话", handle: "command", reply: "auto" },
-      dm: { label: "Slack 私信", handle: "dispatch" },
-      mention: { label: "Slack 频道里 @我", handle: "dispatch" },
-      thread: { label: "我在的 Slack thread 有后续", handle: "note" },
+      self: { label: "我在 Slack 上给自己发的话", en: "Messages I send myself on Slack", handle: "command", reply: "auto" },
+      dm: { label: "Slack 私信", en: "Slack DMs", handle: "dispatch" },
+      mention: { label: "Slack 频道里 @我", en: "@me in a Slack channel", handle: "dispatch" },
+      thread: { label: "我在的 Slack thread 有后续", en: "Follow-ups in Slack threads I'm in", handle: "note" },
     },
     setup: { kind: "browser" },
     secretLabel: "Cookie",
@@ -47,12 +49,12 @@ export const SOURCE_META = {
     label: "GitHub",
     mode: "poll",
     scenarios: {
-      review: { label: "PR 请我 review", handle: "dispatch" },
-      mention: { label: "GitHub 上 @我", handle: "dispatch" },
-      comment: { label: "别人评论了我的 PR / issue", handle: "dispatch" },
-      assigned: { label: "GitHub 指派给我", handle: "dispatch" },
-      approved: { label: "我的 PR 被 approve 了", handle: "dispatch", brief: "看 CI 过没过、还有没有没回的评论；能合就问我要不要合，别自己合" },
-      changes: { label: "我的 PR 被要求修改", handle: "dispatch" },
+      review: { label: "PR 请我 review", en: "PR review requested from me", handle: "dispatch" },
+      mention: { label: "GitHub 上 @我", en: "@me on GitHub", handle: "dispatch" },
+      comment: { label: "别人评论了我的 PR / issue", en: "Comments on my PR / issue", handle: "dispatch" },
+      assigned: { label: "GitHub 指派给我", en: "Assigned to me on GitHub", handle: "dispatch" },
+      approved: { label: "我的 PR 被 approve 了", en: "My PR was approved", handle: "dispatch", brief: "看 CI 过没过、还有没有没回的评论；能合就问我要不要合，别自己合" },
+      changes: { label: "我的 PR 被要求修改", en: "Changes requested on my PR", handle: "dispatch" },
     },
     setup: { kind: "cli", install: "brew install gh", login: "gh auth login" },
   },
@@ -60,9 +62,9 @@ export const SOURCE_META = {
     label: "Jira",
     mode: "poll",
     scenarios: {
-      assigned: { label: "Jira 指派给我", handle: "dispatch" },
-      mention: { label: "Jira 评论里提到我", handle: "dispatch" },
-      comment: { label: "别人评论了我的 Jira 单", handle: "note" },
+      assigned: { label: "Jira 指派给我", en: "Assigned to me on Jira", handle: "dispatch" },
+      mention: { label: "Jira 评论里提到我", en: "Mentioned in a Jira comment", handle: "dispatch" },
+      comment: { label: "别人评论了我的 Jira 单", en: "Comments on my Jira issue", handle: "note" },
     },
     setup: { kind: "cli", install: "brew install acli", login: "acli jira auth login --web（用 twg 的话：twg login）" },
   },
@@ -70,7 +72,7 @@ export const SOURCE_META = {
     label: "Notion",
     mode: "poll",
     scenarios: {
-      comment: { label: "Notion 页面有新评论", handle: "note" },
+      comment: { label: "Notion 页面有新评论", en: "New comment on a Notion page", handle: "note" },
     },
     setup: { kind: "secret" },
     secretLabel: "令牌",
@@ -102,8 +104,8 @@ export function sourceLabel(id: string): string {
 
 // 不属于哪个来源的场景，排在最后。
 const EXTRA_SCENARIOS = {
-  session_update: { label: "我的会话有新进展", handle: "note" },
-  other: { label: "其他", handle: "note" },
+  session_update: { label: "我的会话有新进展", en: "My session has an update", handle: "note" },
+  other: { label: "其他", en: "Other", handle: "note" },
 } as const satisfies Record<string, ScenarioMeta>;
 
 type Meta = typeof SOURCE_META;

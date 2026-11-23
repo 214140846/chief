@@ -3,22 +3,24 @@ import type { EngineInterface as Engine, RenderChildren } from 'claude-code'
 
 import type { SearchHit, Snapshot, ThingRow } from '../../types'
 import { clearSearch, finish, openSession, search, snooze, tell, toggle, undo, wake } from '../actions'
+import { t as dict } from '../i18n'
 import { ago, annotateBox, annotateButton, awake, daysLeft, gist, live, md, short, snoozed, startOfToday, wakeLabel, type Els } from '../ui'
 
 // 稍后再说的几个快捷选项：until 是 chief thing snooze 认的写法。
+// 名字在 i18n.ts 的 things.later / laterSay 里。
 const LATER = [
-  { key: '2h', label: '2 小时', say: '2 小时后', until: '2h' },
-  { key: 'tm', label: '明天上午', say: '明天上午', until: 'tomorrow 09:00' },
-  { key: 'mon', label: '下周一', say: '下周一', until: 'next monday 09:00' },
+  { key: '2h', until: '2h' },
+  { key: 'tm', until: 'tomorrow 09:00' },
+  { key: 'mon', until: 'next monday 09:00' },
 ] as const
-
-const HIT_KIND: Record<SearchHit['kind'], string> = { thing: '事情', ask: '要你定', reply: '回复', event: '消息', decision: '判断' }
 
 // 搜出来的链接只认普通的网址，再放进 Markdown。
 const SAFE_URL = /^https?:\/\/[^\s()<>[\]]+$/
 
 export function thingsTab($: Engine, ui: Els, s: Snapshot, opened: string[], found: { q: string; hits: SearchHit[]; error?: string } | null = null) {
   const { Box, Text, Button } = ui
+  const T = dict()
+  const w = T.things
   const dayStart = startOfToday()
   // 稍后再说的不算在做：收在下面「稍后再说」里。
   const active = s.things.filter(awake)
@@ -43,7 +45,7 @@ export function thingsTab($: Engine, ui: Els, s: Snapshot, opened: string[], fou
   const latest = (t: ThingRow): { when: string; text: string; fromSession: boolean } => {
     const f = live_(t)
     if (f) return { when: ago(f.at), text: gist(f.last, 90), fromSession: true }
-    return { when: ago(t.updatedAt), text: t.progress || '还没有汇报', fromSession: false }
+    return { when: ago(t.updatedAt), text: t.progress || w.noReport, fromSession: false }
   }
   // 会话是「跳过权限」模式而主会话不是：主会话发过去的消息会被扣住。
   const bypass = (t: ThingRow) => {
@@ -55,17 +57,17 @@ export function thingsTab($: Engine, ui: Els, s: Snapshot, opened: string[], fou
   type Risk = { rank: number; label: string; color: 'error' | 'warning' }
   const risk = (t: ThingRow): Risk | null => {
     // 会话停在问你的对话框上：最急，它什么都做不了，就等你。
-    if (act(t)?.waiting) return { rank: -1, label: '会话在等你回答', color: 'error' }
+    if (act(t)?.waiting) return { rank: -1, label: w.sessionWaiting, color: 'error' }
     if (t.due !== undefined) {
       const n = daysLeft(t.due)
-      if (n < 0) return { rank: 0, label: `过期 ${-n} 天`, color: 'error' }
-      if (n === 0) return { rank: 1, label: '今天截止', color: 'error' }
-      if (n === 1) return { rank: 2, label: '明天截止', color: 'warning' }
-      if (n === 2) return { rank: 3, label: '后天截止', color: 'warning' }
+      if (n < 0) return { rank: 0, label: w.overdue(-n), color: 'error' }
+      if (n === 0) return { rank: 1, label: w.dueToday, color: 'error' }
+      if (n === 1) return { rank: 2, label: w.dueTomorrow, color: 'warning' }
+      if (n === 2) return { rank: 3, label: w.dueAfter, color: 'warning' }
     }
-    if (t.blocker) return { rank: 4, label: '卡住了', color: 'error' }
-    if (t.status === 'waiting_you') return { rank: 5, label: '等你定', color: 'warning' }
-    if (staleDays(t) >= 3) return { rank: 6, label: `${staleDays(t)} 天没动静`, color: 'warning' }
+    if (t.blocker) return { rank: 4, label: w.blocked, color: 'error' }
+    if (t.status === 'waiting_you') return { rank: 5, label: w.waitingYou, color: 'warning' }
+    if (staleDays(t) >= 3) return { rank: 6, label: w.stale(staleDays(t)), color: 'warning' }
     return null
   }
   const attention: { t: ThingRow; r: Risk }[] = []
@@ -81,18 +83,18 @@ export function thingsTab($: Engine, ui: Els, s: Snapshot, opened: string[], fou
   // 最上面一句话：现在最要紧的是什么。
   const top = attention[0]
   const headline = top
-    ? `最要紧：${short(top.t.title, 34)} ${top.r.label}${top.t.blocker ? `，卡在${short(top.t.blocker, 24)}` : top.t.next ? `，还差${short(top.t.next, 24)}` : ''}`
-    : active.length > 0 ? `${active.length} 件事都在正常推进，没有要你操心的` : '还没有事情'
+    ? w.headline(short(top.t.title, 34), top.r.label, top.t.blocker ? short(top.t.blocker, 24) : undefined, top.t.next ? short(top.t.next, 24) : undefined)
+    : active.length > 0 ? w.allFine(active.length) : w.none
 
   const goSession = (t: ThingRow) => openSession($, t.session ?? '', t.title)
 
   // 稍后再说：点开给三个快捷选项。
-  const laterButton = (t: ThingRow) => <Button key={`sn${t.id}`} onPress={() => toggle($, `sn-${t.id}`)}>稍后再说</Button>
+  const laterButton = (t: ThingRow) => <Button key={`sn${t.id}`} onPress={() => toggle($, `sn-${t.id}`)}>{w.laterButton}</Button>
   const laterChoices = (t: ThingRow) => opened.includes(`sn-${t.id}`) && (
     <Box flexDirection="row" gap="sm" flexWrap="wrap" alignItems="center">
-      <Text size="footnote" dimColor>什么时候再拿出来：</Text>
+      <Text size="footnote" dimColor>{w.laterWhen}</Text>
       {LATER.map(c => (
-        <Button key={`sn${c.key}-${t.id}`} onPress={() => { void toggle($, `sn-${t.id}`); void snooze($, t, c.until, c.say) }}>{c.label}</Button>
+        <Button key={`sn${c.key}-${t.id}`} onPress={() => { void toggle($, `sn-${t.id}`); void snooze($, t, c.until, w.laterSay[c.key]) }}>{w.later[c.key]}</Button>
       ))}
     </Box>
   )
@@ -102,19 +104,19 @@ export function thingsTab($: Engine, ui: Els, s: Snapshot, opened: string[], fou
     <Box key={`at${t.id}`} flexDirection="column" borderStyle="round" borderColor={r.color} paddingX="md" paddingY="sm" gap="xs" marginTop="sm">
       <Box flexDirection="row" justifyContent="space-between" alignItems="center" gap="sm">
         <Text weight="semibold" color={r.color}>{r.label}</Text>
-        {t.due && <Text size="caption" dimColor>{t.due} 截止</Text>}
+        {t.due && <Text size="caption" dimColor>{w.dueOn(t.due)}</Text>}
       </Box>
       <Text weight="semibold" wrap="wrap">{t.title}</Text>
-      {act(t)?.waiting && <Text size="footnote" color="error" wrap="wrap"><Text dimColor>它问你　</Text>{act(t)!.waiting}</Text>}
-      {t.blocker && <Text size="footnote" color="error" wrap="wrap">卡在：{t.blocker}</Text>}
-      <Text size="footnote" wrap="wrap"><Text dimColor>还差　　</Text>{t.next ?? <Text dimColor>还不清楚</Text>}</Text>
-      <Text size="footnote" wrap="truncate-end"><Text dimColor>最近　　</Text>{latest(t).text}<Text dimColor>　{latest(t).when}{latest(t).fromSession ? ' · 会话' : ''}</Text></Text>
-      {bypass(t) && <Text size="caption" color="warning" wrap="wrap">这个会话和主会话的权限模式不一样，主会话转告过去的消息会被扣住</Text>}
+      {act(t)?.waiting && <Text size="footnote" color="error" wrap="wrap"><Text dimColor>{w.asksYou}</Text>{act(t)!.waiting}</Text>}
+      {t.blocker && <Text size="footnote" color="error" wrap="wrap">{w.blockedOn(t.blocker)}</Text>}
+      <Text size="footnote" wrap="wrap"><Text dimColor>{w.left}</Text>{t.next ?? <Text dimColor>{w.unclear}</Text>}</Text>
+      <Text size="footnote" wrap="truncate-end"><Text dimColor>{w.latest}</Text>{latest(t).text}<Text dimColor>{T.gap}{latest(t).when}{latest(t).fromSession ? w.fromSession : ''}</Text></Text>
+      {bypass(t) && <Text size="caption" color="warning" wrap="wrap">{w.bypass}</Text>}
       <Box flexDirection="row" gap="sm" marginTop="xs">
-        {t.session && <Button key={`ago${t.id}`} variant="primary" onPress={() => goSession(t)}>{act(t)?.waiting ? '去回答' : '去这个会话'}</Button>}
-        {t.session && <Button key={`aask${t.id}`} onPress={() => tell($, `chief：转告事情 #${t.id}：现在进展怎么样？还差什么，能不能按时完成？`, '问进展')}>问进展</Button>}
+        {t.session && <Button key={`ago${t.id}`} variant="primary" onPress={() => goSession(t)}>{act(t)?.waiting ? w.answer : w.goSession}</Button>}
+        {t.session && <Button key={`aask${t.id}`} onPress={() => tell($, `chief：转告事情 #${t.id}：现在进展怎么样？还差什么，能不能按时完成？`, w.askProgress)}>{w.askProgress}</Button>}
         {annotateButton($, ui, `t${t.id}`, opened)}
-        <Button key={`adn${t.id}`} onPress={() => finish($, t, 'done')}>办完了</Button>
+        <Button key={`adn${t.id}`} onPress={() => finish($, t, 'done')}>{w.done}</Button>
         {laterButton(t)}
       </Box>
       {laterChoices(t)}
@@ -137,27 +139,27 @@ export function thingsTab($: Engine, ui: Els, s: Snapshot, opened: string[], fou
       <Box key={key} flexDirection="column" borderStyle="round" borderColor="inactive" paddingX="md" paddingY="sm" gap="xs" marginTop="sm">
         <Box flexDirection="row" justifyContent="space-between" alignItems="center" gap="sm">
           <Button key={`tg${t.id}`} plain onPress={() => toggle($, key)}><Text weight="semibold">{`${isOpen ? '▾' : '▸'} ${short(t.title, 48)}`}</Text></Button>
-          {t.due ? <Text size="caption" dimColor>{t.due} 截止</Text> : null}
+          {t.due ? <Text size="caption" dimColor>{w.dueOn(t.due)}</Text> : null}
         </Box>
         {!isOpen && (
           <Box flexDirection="column" gap="xs" paddingLeft="md">
-            <Text size="footnote" wrap="truncate-end"><Text dimColor>下一步　</Text>{t.next ?? <Text dimColor>还不清楚</Text>}</Text>
-            <Text size="footnote" wrap="truncate-end"><Text dimColor>最近　　</Text>{latest(t).text}<Text dimColor>　{latest(t).when}{latest(t).fromSession ? ' · 会话' : ''}</Text></Text>
+            <Text size="footnote" wrap="truncate-end"><Text dimColor>{w.nextLine}</Text>{t.next ?? <Text dimColor>{w.unclear}</Text>}</Text>
+            <Text size="footnote" wrap="truncate-end"><Text dimColor>{w.latest}</Text>{latest(t).text}<Text dimColor>{T.gap}{latest(t).when}{latest(t).fromSession ? w.fromSession : ''}</Text></Text>
           </Box>
         )}
         {isOpen && (
           <Box flexDirection="column" gap="md" paddingLeft="md" marginTop="xs">
             {/* 会话自己说的比主会话记的新：会话的话更准，放前面；主会话记的标明是它记的、可能过时。 */}
-            {fresh && block(`会话自己说的 · ${ago(fresh.at)}（最准）`, md(ui, fresh.last))}
-            {block('下一步', <Text size="footnote" wrap="wrap">{t.next ?? '还不清楚'}</Text>)}
-            {t.progress && block(fresh ? `主会话记的 · ${ago(t.updatedAt)}（可能过时）` : '现在', <Text size="footnote" dimColor={fresh !== null} wrap="wrap">{t.progress}</Text>)}
-            {(t.results ?? []).length > 0 && block('结果', <Box flexDirection="column">{(t.results ?? []).map((r, i) => <Box key={`rs${t.id}-${i}`}>{md(ui, r)}</Box>)}</Box>)}
-            {bypass(t) && <Text size="caption" color="warning" wrap="wrap">这个会话和主会话的权限模式不一样，主会话转告过去的消息会被扣住</Text>}
+            {fresh && block(w.sessionSaid(ago(fresh.at)), md(ui, fresh.last))}
+            {block(w.next, <Text size="footnote" wrap="wrap">{t.next ?? w.unclear}</Text>)}
+            {t.progress && block(fresh ? w.hubNoted(ago(t.updatedAt)) : w.nowLabel, <Text size="footnote" dimColor={fresh !== null} wrap="wrap">{t.progress}</Text>)}
+            {(t.results ?? []).length > 0 && block(w.results, <Box flexDirection="column">{(t.results ?? []).map((r, i) => <Box key={`rs${t.id}-${i}`}>{md(ui, r)}</Box>)}</Box>)}
+            {bypass(t) && <Text size="caption" color="warning" wrap="wrap">{w.bypass}</Text>}
             <Box flexDirection="row" gap="sm" flexWrap="wrap">
-              {t.session && <Button key={`ot${t.id}`} variant="primary" onPress={() => goSession(t)}>去这个会话</Button>}
+              {t.session && <Button key={`ot${t.id}`} variant="primary" onPress={() => goSession(t)}>{w.goSession}</Button>}
               {annotateButton($, ui, `t${t.id}`, opened)}
-              <Button key={`dn${t.id}`} onPress={() => finish($, t, 'done')}>办完了</Button>
-              <Button key={`dr${t.id}`} onPress={() => finish($, t, 'dropped')}>不做了</Button>
+              <Button key={`dn${t.id}`} onPress={() => finish($, t, 'done')}>{w.done}</Button>
+              <Button key={`dr${t.id}`} onPress={() => finish($, t, 'dropped')}>{w.drop}</Button>
               {laterButton(t)}
             </Box>
             {laterChoices(t)}
@@ -171,12 +173,12 @@ export function thingsTab($: Engine, ui: Els, s: Snapshot, opened: string[], fou
   // 搜出来的：是什么、哪天、对上的那段；有链接给链接，有会话能跳过去。
   const hitRow = (hit: SearchHit, i: number) => (
     <Box key={`sh${i}`} flexDirection="column">
-      <Text size="caption" dimColor wrap="truncate-end">{HIT_KIND[hit.kind]} · {hit.date.slice(0, 10)}{hit.archived ? ' · 归档' : ''} · {short(hit.title, 40)}</Text>
+      <Text size="caption" dimColor wrap="truncate-end">{w.hit[hit.kind]} · {hit.date.slice(0, 10)}{hit.archived ? w.archived : ''} · {short(hit.title, 40)}</Text>
       <Text size="footnote" wrap="wrap">{hit.snippet}</Text>
       {((hit.url && SAFE_URL.test(hit.url)) || hit.session) && (
         <Box flexDirection="row" gap="sm" alignItems="center">
-          {hit.url && SAFE_URL.test(hit.url) && md(ui, `[打开链接](${hit.url})`)}
-          {hit.session && <Button key={`shs${i}`} plain onPress={() => openSession($, hit.session ?? '', hit.title)}>去会话</Button>}
+          {hit.url && SAFE_URL.test(hit.url) && md(ui, `[${w.openLink}](${hit.url})`)}
+          {hit.session && <Button key={`shs${i}`} plain onPress={() => openSession($, hit.session ?? '', hit.title)}>{w.toSession}</Button>}
         </Box>
       )}
     </Box>
@@ -200,41 +202,41 @@ export function thingsTab($: Engine, ui: Els, s: Snapshot, opened: string[], fou
     <Box flexDirection="column" marginTop="sm">
       <Text size="heading" weight="semibold" wrap="wrap" color={top?.r.color}>{headline}</Text>
       <Box flexDirection="row" justifyContent="space-between" alignItems="center" flexWrap="wrap" gap="sm" marginTop="xs">
-        <Text size="caption" dimColor>{active.length} 件在做 · {attention.length} 件要关注 · 最近 7 天办完 {done.length} 件</Text>
+        <Text size="caption" dimColor>{w.summary(active.length, attention.length, done.length)}</Text>
         <Box flexDirection="row" gap="sm">
-          <Button key="import" onPress={() => tell($, 'chief：导入现在在做的事', '导入')}>导入</Button>
-          <Button key="progress" onPress={() => tell($, 'chief：问一遍各事情的最新进展', '问进展')}>问一遍进展</Button>
+          <Button key="import" onPress={() => tell($, 'chief：导入现在在做的事', w.import)}>{w.import}</Button>
+          <Button key="progress" onPress={() => tell($, 'chief：问一遍各事情的最新进展', w.askProgress)}>{w.askAll}</Button>
         </Box>
       </Box>
 
       {'Input' in ui && (
         <Box width="100%" marginTop="sm">
-          <ui.Input key="search" placeholder="搜以前的事：标题、进展、回复、消息原文……" submitLabel="搜"
+          <ui.Input key="search" placeholder={w.searchPlaceholder} submitLabel={w.search}
             onSubmit={(v: string) => { if (v.trim()) void search($, v.trim()) }} />
         </Box>
       )}
       {found && (
         <Box flexDirection="column" borderStyle="round" borderColor="claude" paddingX="md" paddingY="sm" gap="sm" marginTop="sm">
           <Box flexDirection="row" justifyContent="space-between" alignItems="center">
-            <Text weight="semibold">搜「{short(found.q, 20)}」· {found.hits.length} 条</Text>
+            <Text weight="semibold">{w.found(short(found.q, 20), found.hits.length)}</Text>
             <Button key="search-clear" plain onPress={() => clearSearch($)}>✕</Button>
           </Box>
-          {found.error && <Text size="footnote" color="error" wrap="wrap">没搜成：{found.error}</Text>}
-          {!found.error && found.hits.length === 0 && <Text size="footnote" dimColor>没找到</Text>}
+          {found.error && <Text size="footnote" color="error" wrap="wrap">{w.searchFailed(found.error)}</Text>}
+          {!found.error && found.hits.length === 0 && <Text size="footnote" dimColor>{w.notFound}</Text>}
           {found.hits.map(hitRow)}
         </Box>
       )}
 
       {attention.length > 0 && (
         <Box flexDirection="column">
-          {section('要关注', attention.length)}
+          {section(w.attention, attention.length)}
           {attention.map(attentionCard)}
         </Box>
       )}
 
       {moving.length > 0 && (
         <Box flexDirection="column">
-          {section('在推进', moving.length)}
+          {section(w.moving, moving.length)}
           {moving.map(movingRow)}
         </Box>
       )}
@@ -242,7 +244,7 @@ export function thingsTab($: Engine, ui: Els, s: Snapshot, opened: string[], fou
       {done.length > 0 && (
         <Box flexDirection="column">
           <Box marginTop="lg" marginBottom="xs">
-            <Button key="done-list" plain onPress={() => toggle($, 'done-list')}>{`${doneOpen ? '▾' : '▸'} 办完了 · ${done.length}（最近 7 天）`}</Button>
+            <Button key="done-list" plain onPress={() => toggle($, 'done-list')}>{`${doneOpen ? '▾' : '▸'} ${w.doneList(done.length)}`}</Button>
           </Box>
           {doneOpen && (
             <Box flexDirection="column" borderStyle="round" borderColor="inactive" paddingX="md" paddingY="sm" gap="xs">
@@ -252,21 +254,21 @@ export function thingsTab($: Engine, ui: Els, s: Snapshot, opened: string[], fou
         </Box>
       )}
 
-      {later.length > 0 && fold('later-list', laterOpen, `稍后再说 · ${later.length}`, later.map(t => (
+      {later.length > 0 && fold('later-list', laterOpen, w.laterList(later.length), later.map(t => (
         <Box key={`lt${t.id}`} flexDirection="row" justifyContent="space-between" alignItems="center" gap="sm">
           <Box flexGrow={1} flexShrink={1}>
-            <Text size="footnote" wrap="truncate-end">{t.title}<Text dimColor>　{wakeLabel(t.snooze?.until ?? '')} 拿出来</Text></Text>
+            <Text size="footnote" wrap="truncate-end">{t.title}<Text dimColor>{w.wakeAt(wakeLabel(t.snooze?.until ?? ''))}</Text></Text>
           </Box>
-          <Button key={`wk${t.id}`} onPress={() => wake($, t)}>现在拿出来</Button>
+          <Button key={`wk${t.id}`} onPress={() => wake($, t)}>{w.wakeNow}</Button>
         </Box>
       )))}
 
-      {recent.length > 0 && fold('undo-list', recentOpen, `最近做的 · ${recent.length}（能撤回）`, recent.map(x => (
+      {recent.length > 0 && fold('undo-list', recentOpen, w.recent(recent.length), recent.map(x => (
         <Box key={`ul${x.id}`} flexDirection="row" justifyContent="space-between" alignItems="center" gap="sm">
           <Box flexGrow={1} flexShrink={1}>
-            <Text size="footnote" wrap="truncate-end" dimColor={x.undone !== undefined}>{x.label}<Text dimColor>　{ago(x.at)}</Text></Text>
+            <Text size="footnote" wrap="truncate-end" dimColor={x.undone !== undefined}>{x.label}<Text dimColor>{T.gap}{ago(x.at)}</Text></Text>
           </Box>
-          {x.undone ? <Text size="caption" dimColor>已撤回</Text> : <Button key={`un${x.id}`} onPress={() => undo($, x.id)}>撤回</Button>}
+          {x.undone ? <Text size="caption" dimColor>{w.undone}</Text> : <Button key={`un${x.id}`} onPress={() => undo($, x.id)}>{w.undo}</Button>}
         </Box>
       )))}
     </Box>
