@@ -1,6 +1,6 @@
 // 照搬 aide 的 engine/src/sources/jira.ts（只留拉动态和评论）。
-// Jira: uses a CLI already logged in on this machine — acli (Atlassian's official CLI, `acli jira auth login --web`)
-// or twg (Teamwork Graph CLI, `twg login`). With both installed, acli wins. chief stores no Jira token.
+// Jira：用你本机已经登录的 acli（Atlassian 官方命令行，acli jira auth login --web 用浏览器 OAuth 登录）或 twg（Teamwork Graph 命令行，twg login）。
+// 两个都装了用 acli。chief 不存任何 Jira 令牌。
 // 拉指派给你、你报的、你关注的工单在 since 之后的变化：状态、截止时间、新评论。拉动态、给 agent 看的工具都只读（search、view、auth status）。
 // 写（建单、评论、改状态、指派）只在你点了「发出」之后由 Outbox 调用（见 outbox.ts），agent 自己调不到。
 import { existsSync } from "node:fs";
@@ -11,7 +11,7 @@ import type { SecretCheck } from "../slack/types";
 import { SourceError, plain, type Ask, type Source, type SourceItem } from "./types";
 
 const ACLI_PATHS = ["/opt/homebrew/bin/acli", "/usr/local/bin/acli"];
-// twg's official installer puts it in ~/.local/bin.
+// twg 官方安装脚本装在 ~/.local/bin。
 const TWG_PATHS = [join(homedir(), ".local/bin/twg"), "/opt/homebrew/bin/twg", "/usr/local/bin/twg"];
 const KEY = /^[A-Z][A-Z0-9]{1,9}-\d{1,7}$/;
 const MAX_ITEMS = 50;
@@ -20,10 +20,10 @@ const VIEW_FIELDS = "summary,status,assignee,reporter,duedate,updated,priority,c
 
 export type CliRunner = (args: readonly string[], signal: AbortSignal) => Promise<string>;
 
-// The Jira operations chief needs. Each CLI adapts its own output to the acli shape ({ key, fields }).
+// chief 要用的几个 Jira 操作。每种命令行把自己的输出转成 acli 的样子（{ key, fields }）。
 export interface JiraCli {
   readonly name: "acli" | "twg";
-  // What to run in a terminal when not logged in.
+  // 没登录时让你到终端里跑的命令。
   readonly login: string;
   status(signal: AbortSignal): Promise<{ site: string | null; email: string }>;
   search(jql: string, fields: string, limit: number, signal: AbortSignal): Promise<Issue[]>;
@@ -100,13 +100,13 @@ const TWG_LOGIN = "twg login";
 
 interface TwgError { code?: string; statusCode?: number; message?: string }
 
-// twg -o json failures: non-zero exit, `{ ok: false, error }` on stdout, a human "Error: ..." line on stderr.
+// twg -o json 出错时：退出码非 0，标准输出是 { ok: false, error }，标准错误有一行给人看的 "Error: ..."。
 function twgWhy(stdout: string, stderr: string): Failure {
   let error: TwgError | undefined;
   try {
     error = (JSON.parse(stdout) as { error?: TwgError }).error;
   } catch {
-    // Not JSON: fall back to stderr.
+    // 不是 JSON：看标准错误。
   }
   const reason = error?.message ?? stderr.trim().split("\n")[0] ?? "";
   return { reason, auth: error?.code === "AUTH_REQUIRED" || error?.statusCode === 401 || /not signed in|twg login/i.test(reason) };
@@ -118,7 +118,7 @@ function twgData(out: string): unknown {
   return res.data;
 }
 
-// twg flattens Jira fields onto the issue; fold them back under `fields` like acli.
+// twg 把 Jira 字段摊平在单子上，收回到 fields 下面，和 acli 一样。
 export function twgIssue(raw: unknown): Issue {
   const { key, fields, ...rest } = (raw ?? {}) as { key?: string; fields?: Issue["fields"] } & Record<string, unknown>;
   return { key: key ?? "", fields: fields ?? (rest as Issue["fields"]) };
