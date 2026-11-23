@@ -104,7 +104,9 @@ export const register: Register = on => {
 
   // 挂上 chief events --follow 的 Monitor：这个会话就是主会话，之后它调模型用掉的额度记下来（面板「测评」页看）。
   on('tool.call', { tool: 'Monitor' }, async ($, e, next) => {
-    if (isHubMonitor(e.input.command)) await markHub($).catch(() => {})
+    // 工具的参数直接在 e 上（e.command），不在 e.input 里。
+    const command = (e as { command?: unknown }).command
+    if (isHubMonitor(typeof command === 'string' ? command : undefined)) await markHub($).catch(() => {})
     return next(e)
   })
 

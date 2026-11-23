@@ -335,10 +335,10 @@ describe("导入", () => {
     const h = home();
     const run = (input: string, ...args: string[]) =>
       execFileSync(process.execPath, ["--import", TSX, CLI, ...args], { env: { ...process.env, CHIEF_HOME: h }, encoding: "utf8", input });
-    const id = run("压测脚本写完了", "thing", "add", "--import", "--title", "PERF-35121 大促压测", "--session", "local_x", "--key", "PERF-35121").trim();
-    expect(JSON.parse(chief(h, "thing", "find", "PERF-35121", "PROJ-1"))[0]).toMatchObject({ id: Number(id), origin: "import", session: "local_x", keys: ["PERF-35121"] });
+    const id = run("压测脚本写完了", "thing", "add", "--import", "--title", "PROJ-123 大促压测", "--session", "local_x", "--key", "PROJ-123").trim();
+    expect(JSON.parse(chief(h, "thing", "find", "PROJ-123", "PROJ-1"))[0]).toMatchObject({ id: Number(id), origin: "import", session: "local_x", keys: ["PROJ-123"] });
     run("", "thing", "update", id, "--status", "done");
-    expect(JSON.parse(chief(h, "thing", "find", "PERF-35121"))).toHaveLength(0);
+    expect(JSON.parse(chief(h, "thing", "find", "PROJ-123"))).toHaveLength(0);
   });
 });
 
@@ -387,7 +387,7 @@ describe("策略能自己加、approve、进度表", () => {
 
   it("进度：下一步、阻碍、结果、截止", () => {
     const h = home();
-    const id = run(h, JSON.stringify({ progress: "脚本写完", next: "跑一轮", blocker: "等测试环境" }), "thing", "add", "--title", "PERF-35121 压测", "--due", "2026-11-20").trim();
+    const id = run(h, JSON.stringify({ progress: "脚本写完", next: "跑一轮", blocker: "等测试环境" }), "thing", "add", "--title", "PROJ-123 压测", "--due", "2026-11-20").trim();
     let t = JSON.parse(chief(h, "thing", "list"))[0];
     expect(t).toMatchObject({ progress: "脚本写完", next: "跑一轮", blocker: "等测试环境", due: "2026-11-20" });
     run(h, JSON.stringify({ progress: "跑完了", blocker: "", result: "[报告](https://x)" }), "thing", "update", id, "--due", "none");

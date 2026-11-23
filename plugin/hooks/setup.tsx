@@ -322,7 +322,7 @@ export function setupTab($: Engine, ui: Els, st: Setup, s: Snapshot | null, logT
         <Box flexDirection="column" gap="xs">
           {note('造一条「同事找你」的消息，看主会话怎么判断、派活、写回复。回复不会真的发出去。')}
           {'Input' in ui && (
-            <ui.Input key="test-msg" placeholder="比如：PERF-35121 的压测报告今天能给吗" submitLabel="发测试消息" onSubmit={(v: string) => {
+            <ui.Input key="test-msg" placeholder="比如：PROJ-123 的压测报告今天能给吗" submitLabel="发测试消息" onSubmit={(v: string) => {
               if (v.trim()) void testMessage($, v.trim())
             }} />
           )}
