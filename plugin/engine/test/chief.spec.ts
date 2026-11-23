@@ -729,7 +729,7 @@ describe("插电时不让电脑睡", () => {
     const h = home();
     expect(chief(h, "awake")).toContain("开");
     expect(chief(h, "awake", "off")).toContain("关");
-    expect(JSON.parse(readFileSync(join(h, "settings.json"), "utf8"))).toEqual({ awake: false });
+    expect(JSON.parse(readFileSync(join(h, "settings.json"), "utf8"))).toEqual({ version: 1, awake: false });
     expect(chief(h, "awake", "on")).toContain("开");
     expect(chiefFails(h, "awake", "maybe")).toContain("chief awake");
   });

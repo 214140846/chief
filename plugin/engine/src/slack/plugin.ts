@@ -94,9 +94,11 @@ export interface SlackPluginOptions {
   // gabriel-slack 记「每个对话收到哪了」的目录（state.json，只有时间戳，不含密钥）。
   // 给了的话，引擎重启后会把停着那段时间漏掉的消息补回来；不给就只在内存里记。
   stateDir?: string;
+  // 连上以后补收最近多久的私信、群聊（毫秒），默认 DM_CATCH_UP_MS；config.json 的 slackCatchUpHours。
+  catchUpMs?: number;
 }
 
-// 连上以后补收最近这么久的私信、群聊（收过的按编号自动跳过）。
+// 连上以后补收最近这么久的私信、群聊（收过的按编号自动跳过）。默认值，可以用 catchUpMs 改。
 export const DM_CATCH_UP_MS = 48 * 60 * 60 * 1000;
 const DM_CATCH_UP_MAX_CONVERSATIONS = 40;
 
@@ -188,7 +190,7 @@ export class SlackPlugin implements ChannelPlugin {
         context.log("重连中");
       }) as never);
       client.on("auth.dead", (((e: { reason: string }) => {
-        context.status({ state: "error", error: `Cookie 已失效：${scrubTokens(e.reason, [cookieD])}，请重新登录` });
+        context.status({ state: "error", error: `Cookie 已失效：${scrubTokens(e.reason, [cookieD])}，请重新登录`, dead: true });
         context.log(`Cookie 失效：${scrubTokens(e.reason, [cookieD])}`);
       }) as never));
       client.onError((err) => {
@@ -319,11 +321,13 @@ export class SlackPlugin implements ChannelPlugin {
     return ch;
   }
 
-  // 连上以后：把最近 48 小时的私信、群聊从历史里补收一遍。引擎停着、断网时别人发的私信不会丢；
+  // 连上以后：把最近 48 小时（catchUpMs）的私信、群聊从历史里补收一遍。引擎停着、断网时别人发的私信不会丢；
   // 收过的消息编号一样，记账时自动跳过。按时间先后交，好让后面的判断看到前因。
   private async catchUpDirect(client: GabrielClientLike, ctx: ChannelContext): Promise<void> {
     if (!client.core || !client.channels) return;
-    const since = (Date.now() - DM_CATCH_UP_MS) / 1000;
+    const window = this.options.catchUpMs ?? DM_CATCH_UP_MS;
+    if (window <= 0) return;
+    const since = (Date.now() - window) / 1000;
     let counts: Record<string, unknown>;
     try {
       counts = (await client.core.callWebApi("client.counts", {}, { reason: "chief-dm-catch-up" })) as Record<string, unknown>;

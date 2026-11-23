@@ -3,56 +3,59 @@
 // 引擎不碰 Claude。往外发的只有一种：你点了发送（或规矩允许）、过了 5 秒撤回期的回复（replies.json 里 queued 的）。
 // 日志不写密钥和消息原文。
 import { execFile } from "node:child_process";
-import { watch as fsWatch, type FSWatcher } from "node:fs";
+import { readFileSync, watch as fsWatch, type FSWatcher } from "node:fs";
 import { sessionsRoot, syncActivity, type SessionUpdate } from "./activity";
 import { archiveOld } from "./archive";
+import { config, loadConfig } from "./config";
+import { rotateLog } from "./logfile";
+import { scrubTokens } from "./scrub";
 import { KeychainStore, type SecretStore } from "./secrets";
 import { keysOf } from "./keys";
 import { SlackPlugin, SLACK_COOKIE_D, sentThreadKey, type SlackAttribution } from "./slack/plugin";
-import type { InboundMessage } from "./slack/types";
+import type { ChannelStatus, InboundMessage } from "./slack/types";
 import { GitHubSource, findGh, ghRunner } from "./sources/github";
 import { JiraSource, findJiraCli } from "./sources/jira";
 import { NotionSource } from "./sources/notion";
 import type { Source, SourceItem } from "./sources/types";
-import { appendEvent, ensureHome, loadDispatch, loadEnabled, readEvents, readJson, loadPolicy, loadState, placementOf, paths, saveState, updateReplies, withLock, writeJson, type Enabled, type EngineState, type EventSource, type ChiefEvent, type Reply } from "./store";
+import { appendEvent, ensureHome, loadCorrupt, loadDispatch, loadEnabled, readEvents, readJson, loadPolicy, loadState, placementOf, paths, saveState, updateReplies, withLock, writeJson, type Enabled, type EngineState, type EventSource, type ChiefEvent, type Reply } from "./store";
 
-const POLL_MS = 5 * 60_000;
-// 第一次连上：往回看一天。
-const FIRST_LOOKBACK_MS = 24 * 3600_000;
+// 拉外部来源的间隔、第一次连上往回看多久：config.json 的 pollMinutes（默认 5 分钟）、firstLookbackHours（默认一天）。
+const pollMs = () => config().pollMinutes * 60_000;
+const firstLookbackMs = () => config().firstLookbackHours * 3600_000;
 
 export const SECRET = { slack: `slack.${SLACK_COOKIE_D}`, notion: "notion.token" } as const;
 
-// 弹一条 macOS 通知（只用在回复没发出去时；新消息不弹，要不要打扰你由主会话判断）。
+// 弹一条 macOS 通知（只用在出了要你管的事时：回复没发出去、Slack 登录失效、数据文件坏了；新消息不弹，要不要打扰你由主会话判断）。
 // 文字当参数交给 osascript（不拼进脚本），对方写了什么都不会被当成脚本执行。
 const NOTIFY = 'on run argv\ndisplay notification (item 2 of argv) with title (item 1 of argv)\nend run';
 
-function say(title: string, body: string): void {
+export function say(title: string, body: string): void {
   execFile("/usr/bin/osascript", ["-e", NOTIFY, title.slice(0, 80), body.replace(/\s+/g, " ").slice(0, 160)], { timeout: 10_000 }, () => {});
 }
 
 const SEND_CHECK_MS = 1_000;
 const SESSION_EVENT_MS = 30 * 60_000;
-// 交给主会话超过这么久还没判断（没有 chief mark）的消息，算漏掉了：再交一次。
-const MISSED_MS = 10 * 60_000;
-// 主会话超过这么久没在听、又有消息等着：弹通知叫你；之后最多每 30 分钟提醒一次。
-const HUB_DOWN_MS = 5 * 60_000;
-const HUB_NAG_MS = 30 * 60_000;
+// 交给主会话超过这么久还没判断（没有 chief mark）的消息，算漏掉了：再交一次。config.json 的 missedMinutes，默认 10 分钟。
+const missedMs = () => config().missedMinutes * 60_000;
+// 主会话超过这么久没在听、又有消息等着：弹通知叫你；之后最多每 30 分钟提醒一次（hubDownMinutes、nagMinutes）。
+const hubDownMs = () => config().hubDownMinutes * 60_000;
+const hubNagMs = () => config().nagMinutes * 60_000;
 const HEALTH_MS = 60_000;
 const ARCHIVE_MS = 24 * 3600_000;
 
-// 漏掉的消息：交出去（firstSeen 记着引擎第一次看到它没判断的时间）过了 MISSED_MS 还没判断。演练消息和提醒本身不算。
-export function missedEvents(events: readonly ChiefEvent[], handled: Record<string, unknown>, firstSeen: Map<number, number>, now: number): ChiefEvent[] {
+// 漏掉的消息：交出去（firstSeen 记着引擎第一次看到它没判断的时间）过了 missedMs 还没判断。演练消息和提醒本身不算。
+export function missedEvents(events: readonly ChiefEvent[], handled: Record<string, unknown>, firstSeen: Map<number, number>, now: number, after = missedMs()): ChiefEvent[] {
   const open = events.filter((e) => !handled[e.id] && !e.dryrun && e.kind !== "chief.missed");
   const ids = new Set(open.map((e) => e.id));
   for (const id of [...firstSeen.keys()]) if (!ids.has(id)) firstSeen.delete(id);
   for (const e of open) if (!firstSeen.has(e.id)) firstSeen.set(e.id, now);
-  return open.filter((e) => now - firstSeen.get(e.id)! >= MISSED_MS);
+  return open.filter((e) => now - firstSeen.get(e.id)! >= after);
 }
 
 // 主会话是不是掉线了：alive.json 太久没更新。你让它停下的（stopped）不算掉线。
-export function hubDown(alive: { at?: string; stopped?: boolean }, now: number): boolean {
+export function hubDown(alive: { at?: string; stopped?: boolean }, now: number, after = hubDownMs()): boolean {
   if (alive.stopped) return false;
-  return alive.at === undefined || now - Date.parse(alive.at) >= HUB_DOWN_MS;
+  return alive.at === undefined || now - Date.parse(alive.at) >= after;
 }
 
 // 消息开头是不是 chief 的标识（去掉 Markdown 的 _ * 再比）。
@@ -89,8 +92,52 @@ export function isOwnAgentMessage(m: InboundMessage, sent: readonly string[], si
   return startsWithSignature(m.text, signature);
 }
 
+// 写进日志之前把像密钥的东西去掉（GitHub、Jira 命令出错时可能把令牌带出来）。
 function log(line: string): void {
-  process.stdout.write(`${new Date().toISOString()} ${line}\n`);
+  process.stdout.write(`${new Date().toISOString()} ${scrubTokens(line)}\n`);
+}
+
+const engineLog = () => `${paths().logs}/engine.log`;
+
+// Slack 登录失效（auth.dead）：从好的变成失效时弹一次通知，之后每次重连失败都不再弹，直到再连上。返回要不要弹。
+export function slackDeadChanged(wasDead: boolean, s: ChannelStatus): { dead: boolean; notify: boolean } {
+  if (s.state === "connected") return { dead: false, notify: false };
+  if (s.state === "error" && s.dead) return { dead: true, notify: !wasDead };
+  return { dead: wasDead, notify: false };
+}
+
+// 数据文件坏了（见 store.ts 的 readJson，记在 corrupt.json）：没通知过的弹一次通知；还坏着的拼成一条 health 给面板标红。
+// 要紧的文件修好了（或删了）就不再算；其余的（已经挪走、用了默认的）标一天。
+export function notifyCorrupt(now = Date.now(), notify: (title: string, body: string) => void = say): SourceHealth | null {
+  const all = loadCorrupt();
+  let changed = false;
+  for (const [name, r] of Object.entries(all)) {
+    const fixed = r.critical ? (() => {
+      try {
+        JSON.parse(readFileSync(r.file, "utf8"));
+        return true;
+      } catch (error) {
+        return (error as NodeJS.ErrnoException).code === "ENOENT";
+      }
+    })() : now - Date.parse(r.at) > 86_400_000;
+    if (fixed) {
+      delete all[name];
+      changed = true;
+      continue;
+    }
+    if (!r.notified) {
+      notify(`chief · ${name} 坏了`, r.critical
+        ? `${name} 不是合法的 JSON，chief 没覆盖它，用到它的功能会停下。坏的那份另存在 ${r.moved}，修好原文件或删掉它。`
+        : `${name} 不是合法的 JSON，已挪到 ${r.moved}，先用默认的接着跑。`);
+      r.notified = true;
+      changed = true;
+    }
+  }
+  if (changed) writeJson(paths().corrupt, all);
+  const left = Object.values(all);
+  if (left.length === 0) return null;
+  const at = left.map((r) => r.at).sort().at(-1)!;
+  return { ok: false, at, fails: 2, error: left.map((r) => `${r.file.split("/").at(-1)} 坏了${r.critical ? "（没覆盖，修好或删掉它）" : "（已挪走，用的默认）"}：另存在 ${r.moved}`).join("；").slice(0, 400) };
 }
 
 // 按开关和钥匙串搭出要拉的外部来源。
@@ -182,10 +229,14 @@ export class Engine {
   private readonly startedAt = Date.now();
   private readonly firstSeen = new Map<number, number>();
   private lastHubNag = 0;
+  private slackDead = false;
   private sessionWatcher: FSWatcher | null = null;
 
   async start(): Promise<void> {
     ensureHome();
+    // 每次起来换一个日志文件（上一次的留在 engine.log.1），之后每分钟看一眼，超过 logMaxMB 再换。
+    this.rotateLog(0);
+    for (const p of loadConfig().problems) log(`[config] ${p}`);
     this.sources = await buildSources(this.enabled, this.secrets);
     log(`开始：外部来源 ${this.sources.map((s) => s.id).join("、") || "没有"}；事件写在 ${paths().events}`);
     // 上次停下时正在发的：不知道发出去没有，标成没发出去，让你去看一眼，不自动重发。
@@ -199,7 +250,15 @@ export class Engine {
     await this.startSlack();
     this.sendTimer = setInterval(() => void this.sendDue(), SEND_CHECK_MS);
     // 面板看这个知道引擎在跑。
-    const beat = () => writeJson(paths().engineAlive, { at: new Date().toISOString(), pid: process.pid, health: this.health });
+    const beat = () => {
+      let data: SourceHealth | null = null;
+      try {
+        data = notifyCorrupt();
+      } catch (error) {
+        log(`看坏了的数据文件没成：${error instanceof Error ? error.message : String(error)}`);
+      }
+      writeJson(paths().engineAlive, { at: new Date().toISOString(), pid: process.pid, health: data ? { ...this.health, 数据文件: data } : this.health });
+    };
     beat();
     this.beatTimer = setInterval(beat, 20_000);
     // 子会话里的动静：监听 Claude App 的会话记录（只读本机文件）。
@@ -224,11 +283,19 @@ export class Engine {
     }
     this.activityTimer = setInterval(watch, 60_000);
     void this.pollAll();
-    this.timer = setInterval(() => void this.pollAll(), POLL_MS);
+    this.timer = setInterval(() => void this.pollAll(), pollMs());
     this.healthTimer = setInterval(() => this.checkHealth(), HEALTH_MS);
     // 办完的旧东西每天搬一次（起来时先搬一次）。
     this.archive();
     this.archiveTimer = setInterval(() => this.archive(), ARCHIVE_MS);
+  }
+
+  private rotateLog(maxBytes: number): void {
+    try {
+      if (rotateLog(engineLog(), maxBytes)) log("换了一个日志文件（旧的在 engine.log.1）");
+    } catch (error) {
+      log(`换日志文件没成：${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   private archive(): void {
@@ -243,6 +310,7 @@ export class Engine {
 
   // 每分钟对一次账：交出去的消息主会话有没有判断、主会话还在不在听。消息交出去不等于被处理了，这里兜底。
   private checkHealth(): void {
+    this.rotateLog(config().logMaxMB * 1024 * 1024);
     try {
       const now = Date.now();
       const handled = loadDispatch();
@@ -254,14 +322,14 @@ export class Engine {
         for (const e of missed) {
           this.emit({
             at: new Date(now).toISOString(), source: e.source, kind: "chief.missed", title: `漏掉了：#${e.id} ${e.title}`.slice(0, 200), url: e.url, from: e.from,
-            text: `事件 #${e.id} 交给你超过 10 分钟了还没判断（没有 chief mark）。用 chief show ${e.id} 看全文，照平常的办法处理，办完 mark ${e.id}；这条提醒也一起 mark。`,
+            text: `事件 #${e.id} 交给你超过 ${config().missedMinutes} 分钟了还没判断（没有 chief mark）。用 chief show ${e.id} 看全文，照平常的办法处理，办完 mark ${e.id}；这条提醒也一起 mark。`,
             why: ["missed"], keys: e.keys, reply: {},
           }, `missed:${e.id}`);
         }
       }
       // 主会话掉线了、又有消息等着：叫你。引擎刚起来的头几分钟不算（主会话可能还没挂上）。
       const waiting = events.filter((e) => !handled[e.id] && !e.dryrun).length;
-      if (down && waiting > 0 && now - this.startedAt >= HUB_DOWN_MS && now - this.lastHubNag >= HUB_NAG_MS) {
+      if (down && waiting > 0 && now - this.startedAt >= hubDownMs() && now - this.lastHubNag >= hubNagMs()) {
         this.lastHubNag = now;
         log(`主会话没在听，有 ${waiting} 条消息等着`);
         say("chief · 主会话没在听", `有 ${waiting} 条消息等着处理。到「chief 消息中心」会话里发 /chief:hub 接着听。`);
@@ -302,7 +370,7 @@ export class Engine {
 
   private sourceResult(id: string, error?: string): void {
     const fails = error === undefined ? 0 : (this.health[id]?.fails ?? 0) + 1;
-    this.health[id] = { ok: error === undefined, at: new Date().toISOString(), fails, ...(error === undefined ? {} : { error: error.replace(/\s+/g, " ").slice(0, 160) }) };
+    this.health[id] = { ok: error === undefined, at: new Date().toISOString(), fails, ...(error === undefined ? {} : { error: scrubTokens(error).replace(/\s+/g, " ").slice(0, 160) }) };
   }
 
   // 存引擎的状态：拿着锁，编号取两边大的（别的进程可能刚造过测试事件）。
@@ -335,7 +403,7 @@ export class Engine {
       log("[slack] 钥匙串里没有 Cookie，跳过");
       return;
     }
-    this.slack = new SlackPlugin({ stateDir: paths().slackState });
+    this.slack = new SlackPlugin({ stateDir: paths().slackState, catchUpMs: config().slackCatchUpHours * 3600_000 });
     await this.slack.start({
       secrets: { [SLACK_COOKIE_D]: cookie },
       deliver: async (m) => {
@@ -360,6 +428,9 @@ export class Engine {
         log(`[slack] ${s.state === "error" ? `出错：${s.error}` : s.state}`);
         if (s.state === "error") this.sourceResult("slack", String(s.error));
         else if (s.state === "connected") this.sourceResult("slack");
+        const dead = slackDeadChanged(this.slackDead, s);
+        this.slackDead = dead.dead;
+        if (dead.notify) say("chief · Slack 登录失效了", "收不到 Slack 消息、也发不出回复了。打开 /chief 面板的「设置」页，点 Slack 那行的「重新登录」。");
       },
       log: (line) => log(`[slack] ${line}`),
     });
@@ -465,7 +536,7 @@ export class Engine {
     try {
       for (const source of this.sources) {
         const started = new Date();
-        const since = new Date(this.state.since[source.id] ?? Date.now() - FIRST_LOOKBACK_MS);
+        const since = new Date(this.state.since[source.id] ?? Date.now() - firstLookbackMs());
         try {
           const items = await source.poll(since, this.abort.signal);
           let n = 0;
