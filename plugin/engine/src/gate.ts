@@ -1,4 +1,5 @@
 // 谁能让回复发出去。命令行（chief reply queue --policy）放行前算一遍，引擎发之前再算一遍（见 engine.ts 的 sendDue）。
+import { createHash } from "node:crypto";
 import { isTrusted, mustAsk, scenarioOf, SCENARIOS, type ChiefEvent, type Policy, type Reply } from "./store";
 
 // 一条事件自己的 PR（owner/repo#号，小写）：GitHub 的事件就是它回到的那个 PR；
@@ -46,4 +47,22 @@ export function autoReason(r: Reply, pol: Policy, event: ChiefEvent | null): str
     return c?.reply === "auto" ? `你加的情况 custom:${c.id}` : null;
   }
   return pol.scenarios[scenarioOf(event)].reply === "auto" ? `场景「${SCENARIOS[scenarioOf(event)]}」` : null;
+}
+
+// 你点发送时这条是什么样（发什么、发到哪）：确认时记下指纹，引擎发之前再对一遍，确认之后被改过就不发。
+export function replyHash(r: Pick<Reply, "kind" | "source" | "target" | "body" | "images">): string {
+  const target = Object.entries(r.target).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  return createHash("sha256").update(JSON.stringify([r.kind ?? "reply", r.source, target, r.body, (r.images ?? []).map((i) => i.file)])).digest("hex");
+}
+
+// 引擎发之前再核一遍（排队以后规矩、稿子都可能变了）：返回不发的理由，null 是可以发。
+// 规矩直接发的：按现在的规矩还得放行；你确认的：内容和去处要和你点发送时一样。
+// 主会话和你是同一个系统用户，能直接改 replies.json、算出同样的指纹：这一道拦的是走正常路子之外的改动和规矩变了，拦不住存心伪造。
+export function sendCheck(r: Reply, pol: Policy, event: ChiefEvent | null): string | null {
+  if (r.by === "policy") return autoReason(r, pol, event) === null ? "按现在的规矩这条要你确认（规矩或稿子在排队后变了），没发：要发请在面板上点发送" : null;
+  if (r.by === "you") {
+    if (!r.confirm?.hash) return "没有你确认时的记录，没发：要发请在面板上点发送";
+    return r.confirm.hash === replyHash(r) ? null : "你确认之后这条的内容或去处被改过，没发：看一眼再点发送";
+  }
+  return "不知道是谁让发的，没发：要发请在面板上点发送";
 }

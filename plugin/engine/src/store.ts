@@ -237,7 +237,8 @@ export interface Reply {
   // approve：按哪条「你加的情况」办的（引擎算能不能直接发时用）。
   custom?: number;
   // 以你的名义发（署名 confirmed by 你）是怎么确认的：panel 你在面板上点了发送；chat 你在主会话里说的（said 是你的原话，插件记的）。
-  confirm?: { how: "panel" | "chat"; said?: string; at: string };
+  // hash：确认那一刻发什么、发到哪的指纹（见 gate.ts 的 replyHash），引擎发之前对一遍。
+  confirm?: { how: "panel" | "chat"; said?: string; at: string; hash?: string };
   // 主会话说你在会话里同意发了：等 chief 插件核对你那一轮真的说过话，再以你的名义发；核对不上就留着等你在面板上点。
   confirmAsk?: { at: string };
   // 附的图（只有 Slack）：先发正文，再把图发到同一个地方。收下时已经复制进 drafts/images（见 images.ts）。

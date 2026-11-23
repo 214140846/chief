@@ -42,7 +42,7 @@ import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { archiveOld, archivedEvent } from "./archive";
 import { Engine, SECRET } from "./engine";
-import { autoReason, prsOf } from "./gate";
+import { autoReason, prsOf, replyHash } from "./gate";
 import { MAX_IMAGES, takeImage, type ReplyImage } from "./images";
 import { KEY, keysOf } from "./keys";
 import { type ChildProcess, spawn } from "node:child_process";
@@ -1402,7 +1402,7 @@ async function reply(args: string[]): Promise<void> {
     if (how === "chat" && !said) fail("会话里确认的要带上你的原话");
     queueReply(id, now, (r) => {
       r.by = "you";
-      r.confirm = { how, ...(said ? { said } : {}), at: now.toISOString() };
+      r.confirm = { how, ...(said ? { said } : {}), at: now.toISOString(), hash: replyHash(r) };
       delete r.confirmAsk;
     });
     process.stdout.write(`5 秒后发出，之前可以 chief reply undo ${id}\n`);

@@ -1,5 +1,5 @@
 import { execFileSync, spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -1188,5 +1188,179 @@ describe("写给你看的话里不许有 chief 自己的编号", () => {
     withStdin(h, JSON.stringify({ key: KEY, text: "见 #12，我自己写的" }), "reply", "edit-yours", "2");
     const items = JSON.parse(chief(h, "reply", "list")) as { id: number; body: string }[];
     expect(items.map((r) => r.body)).toEqual(["见 #13", "见 #12，我自己写的"]);
+  });
+});
+
+describe("引擎发之前再核一遍", () => {
+  type Row = { id: number; status: string; by?: string; body: string; target: Record<string, string>; sendAt?: string; sentAt?: string; error?: string; confirm?: { hash?: string } };
+  const ev = { id: 1, at: "t", source: "slack", kind: "message.received", title: "Alice 的私信", url: null, from: "Alice", fromId: "U0ALICE", text: "帮我看下", why: ["dm"], keys: [], reply: { channel: "D0ALICE", ts: "1795079290.188699" } };
+  const setup = () => {
+    const h = home();
+    writeFileSync(join(h, "events.jsonl"), `${JSON.stringify(ev)}\n`);
+    chief(h, "cursor");
+    writeFileSync(join(h, "drafts", "a.md"), "好的，下午看");
+    chief(h, "reply", "add", "--event", "1", "--file", join(h, "drafts", "a.md"));
+    return h;
+  };
+  const rows = (h: string) => (JSON.parse(readFileSync(join(h, "replies.json"), "utf8")) as { items: Row[] }).items;
+  // 改 replies.json（模拟到点了，或者排队以后被人改过）。
+  const edit = (h: string, fn: (r: Row) => void) => {
+    const file = JSON.parse(readFileSync(join(h, "replies.json"), "utf8")) as { items: Row[] };
+    for (const r of file.items) fn(r);
+    writeFileSync(join(h, "replies.json"), JSON.stringify(file));
+  };
+  const due = (r: Row) => {
+    if (r.status === "queued") r.sendAt = new Date(Date.now() - 1000).toISOString();
+  };
+  // 在这个数据目录里跑引擎：真的发出去、弹通知都换成假的。
+  async function engineIn(h: string, fn: (e: { sendDue: () => Promise<void> }, sent: Row[], notes: string[]) => Promise<void>, send?: (r: Row) => Promise<{ url: string | null }>): Promise<void> {
+    const before = process.env.CHIEF_HOME;
+    process.env.CHIEF_HOME = h;
+    try {
+      const { Engine } = await import("../src/engine");
+      const sent: Row[] = [];
+      const notes: string[] = [];
+      const e = new Engine({
+        send: async (r) => {
+          sent.push(r as unknown as Row);
+          return send ? send(r as unknown as Row) : { url: null };
+        },
+        notify: (title, body) => void notes.push(`${title}｜${body}`),
+      });
+      await fn(e, sent, notes);
+    } finally {
+      if (before === undefined) delete process.env.CHIEF_HOME;
+      else process.env.CHIEF_HOME = before;
+    }
+  }
+
+  it("你确认的：queued → sending → sent；发的时候文件里是 sending", async () => {
+    const h = setup();
+    sendByYou(h, "1");
+    expect(rows(h)[0]!.confirm?.hash).toMatch(/^[0-9a-f]{64}$/);
+    // 撤回期还没过：不发。
+    await engineIn(h, async (e, sent) => {
+      await e.sendDue();
+      expect(sent).toHaveLength(0);
+    });
+    edit(h, due);
+    const during: string[] = [];
+    await engineIn(h, async (e, sent) => {
+      await e.sendDue();
+      expect(sent.map((r) => r.id)).toEqual([1]);
+    }, async () => {
+      during.push(rows(h)[0]!.status);
+      return { url: "https://example.com/x" };
+    });
+    expect(during).toEqual(["sending"]);
+    expect(rows(h)[0]).toMatchObject({ status: "sent", by: "you" });
+    expect(rows(h)[0]!.sentAt).toBeTruthy();
+  });
+
+  it("发的时候出错：failed，写明为什么，弹通知", async () => {
+    const h = setup();
+    sendByYou(h, "1");
+    edit(h, due);
+    await engineIn(h, async (e, _sent, notes) => {
+      await e.sendDue();
+      expect(notes.join()).toContain("对方的频道不见了");
+    }, async () => {
+      throw new Error("对方的频道不见了");
+    });
+    expect(rows(h)[0]).toMatchObject({ status: "failed", error: "对方的频道不见了" });
+  });
+
+  it("你确认之后稿子或去处被改了、确认记录没了：不发，failed", async () => {
+    const changes: ((r: Row) => void)[] = [
+      (r) => { r.body = "好的，今天就合"; },
+      (r) => { r.target = { channel: "C0OTHER12", ts: "1.0" }; },
+      (r) => { delete r.confirm; },
+    ];
+    for (const change of changes) {
+      const h = setup();
+      sendByYou(h, "1");
+      edit(h, (r) => {
+        due(r);
+        change(r);
+      });
+      await engineIn(h, async (e, sent, notes) => {
+        await e.sendDue();
+        expect(sent).toHaveLength(0);
+        expect(notes).toHaveLength(1);
+      });
+      expect(rows(h)[0]!.status).toBe("failed");
+      expect(rows(h)[0]!.error).toMatch(/被改过|没有你确认时的记录/);
+    }
+  });
+
+  it("规矩直接发的：排队后规矩收紧了、或者不知道谁让发的，不发", async () => {
+    const h = setup();
+    yours(h, "", "set", "slack_dm", "reply=auto");
+    chief(h, "reply", "queue", "1", "--policy");
+    chief(h, "rules", "set", "slack_dm", "reply=ask");
+    edit(h, due);
+    await engineIn(h, async (e, sent) => {
+      await e.sendDue();
+      expect(sent).toHaveLength(0);
+    });
+    expect(rows(h)[0]).toMatchObject({ status: "failed", by: "policy" });
+    expect(rows(h)[0]!.error).toContain("按现在的规矩");
+    // 规矩还允许：照发。
+    yours(h, "", "set", "slack_dm", "reply=auto");
+    chief(h, "reply", "queue", "1", "--policy");
+    edit(h, due);
+    await engineIn(h, async (e, sent) => {
+      await e.sendDue();
+      expect(sent).toHaveLength(1);
+    });
+    expect(rows(h)[0]!.status).toBe("sent");
+    // 没写谁让发的（直接改文件塞进队里的）：不发。
+    writeFileSync(join(h, "drafts", "b.md"), "再来一条");
+    chief(h, "reply", "add", "--event", "1", "--file", join(h, "drafts", "b.md"));
+    edit(h, (r) => {
+      if (r.id === 2) {
+        r.status = "queued";
+        due(r);
+      }
+    });
+    await engineIn(h, async (e, sent) => {
+      await e.sendDue();
+      expect(sent).toHaveLength(0);
+    });
+    expect(rows(h)[1]!.status).toBe("failed");
+    expect(rows(h)[1]!.error).toContain("不知道是谁让发的");
+  });
+
+  it("发出去了但结果记不上（文件被占着）：留着下一轮再记成 sent，不当成没发", async () => {
+    const h = setup();
+    sendByYou(h, "1");
+    edit(h, due);
+    const lock = join(h, "replies.json.lock");
+    await engineIn(h, async (e, sent) => {
+      await e.sendDue();
+      expect(sent).toHaveLength(1);
+      expect(rows(h)[0]!.status).toBe("sending");
+      rmdirSync(lock);
+      await e.sendDue();
+      expect(sent).toHaveLength(1);
+    }, async () => {
+      mkdirSync(lock);
+      return { url: null };
+    });
+    expect(rows(h)[0]!.status).toBe("sent");
+  }, 20_000);
+
+  it("引擎重启：上次正在发的标成 failed，不自动重发", async () => {
+    const h = setup();
+    sendByYou(h, "1");
+    edit(h, (r) => {
+      r.status = "sending";
+    });
+    await engineIn(h, async () => {
+      const { recoverSending } = await import("../src/engine");
+      recoverSending();
+    });
+    expect(rows(h)[0]!.status).toBe("failed");
+    expect(rows(h)[0]!.error).toContain("引擎重启");
   });
 });
