@@ -88,6 +88,12 @@ export async function tell($: Engine, text: string, label: string, decision = fa
   void $.prompt.submit({ text })
 }
 
+// 你在「要你定」上拍板：先在 chief 里记下回答（卡片马上收起，不用等主会话），再交给主会话转告那件事的会话。
+export async function answerAsk($: Engine, id: number, answer: string, label: string, text: string) {
+  if (!(await act($, label, ['ask', 'answer', String(id)], answer))) return
+  await tell($, text, label, true)
+}
+
 export async function setTab($: Engine, to: Tab) {
   await update($, tab, () => to)
 }

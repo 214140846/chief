@@ -3,7 +3,7 @@ import type { EngineInterface as Engine, RenderChildren } from 'claude-code'
 
 import type { AskRow, DecisionRow, Handle, ReplyMode, ReplyRow, Rule, Snapshot, ThingRow } from '../types'
 import {
-  act, openImage, addCustom, addRule, addQuick, addStyle, removeCase, runEvals, saveCase, trust, annotate, clearBasket, openSession, removeQuick, removeStyle, sendBasket, setPlacement, setSignature, unannotate, decideProposal, engineDo, finish, hubStop, markRight, markWrong, redo, removeCustom, removeRule, send, setBrief,
+  act, answerAsk, openImage, addCustom, addRule, addQuick, addStyle, removeCase, runEvals, saveCase, trust, annotate, clearBasket, openSession, removeQuick, removeStyle, sendBasket, setPlacement, setSignature, unannotate, decideProposal, engineDo, finish, hubStop, markRight, markWrong, redo, removeCustom, removeRule, send, setBrief,
   setEdit, setScenario, setTab, showLogs, skipOld, tell, testMessage, toggle,
 } from './actions'
 import { EVAL_DAYS, MINUTES, chartSvg, statsOf } from './data'
@@ -119,6 +119,13 @@ export function listify(text: string): string {
   return `${head === '' ? '' : `${head}\n\n`}${items.map((x, i) => `${i + 1}. ${x}`).join('\n')}`
 }
 
+// 问题常是「背景……。要你定的事？」：从第一个问号往前找最后一个句号，前面是背景（淡一点），后面才是要你定的。
+export function splitAsk(question: string): { context: string; ask: string } {
+  const q = question.search(/[？?]/)
+  const cut = q < 0 ? -1 : question.lastIndexOf('。', q)
+  return cut < 0 ? { context: '', ask: question.trim() } : { context: question.slice(0, cut + 1).trim(), ask: question.slice(cut + 1).trim() }
+}
+
 function md(ui: Els, text: string, dim = false) {
   const { Text } = ui
   return 'Markdown' in ui ? <ui.Markdown text={text} dimColor={dim} /> : <Text dimColor={dim} wrap="wrap">{text}</Text>
@@ -211,17 +218,30 @@ export function nowTab($: Engine, ui: Els, s: Snapshot, opened: string[] = [], e
 
   const askCard = (q: AskRow) => {
     const t = thingOf(q.thing)
+    const { context, ask } = splitAsk(q.question)
+    // listify 拆出来的：第一段是引子（加粗），后面是编号列表；没拆就整句加粗。
+    const whole = listify(ask)
+    const gap = whole.indexOf('\n\n')
+    const listed = whole === ask ? [ask] : gap < 0 ? ['', whole] : [whole.slice(0, gap), whole.slice(gap + 2)]
     return (
       <Box key={`a${q.id}`} flexDirection="column" borderStyle="round" borderColor="inactive" paddingX="md" paddingY="sm" gap="xs" marginTop="sm">
         <Box flexDirection="row" alignItems="center" gap="xs">
           
           {t ? <Text dimColor size="caption">{t.title}</Text> : <Text dimColor size="caption">要你定</Text>}
         </Box>
-        {md(ui, listify(q.question))}
-        {q.suggest !== '' && <Box flexDirection="column"><Text dimColor size="caption">建议</Text>{md(ui, listify(q.suggest))}</Box>}
+        {/* 背景淡一点；要你定的加粗，几件事拆成编号；建议单独框起来。 */}
+        {context !== '' && <Text size="footnote" dimColor wrap="wrap">{context}</Text>}
+        {listed[0] !== '' && <Text weight="semibold" wrap="wrap">{listed[0]}</Text>}
+        {listed.length > 1 && md(ui, listed[1])}
+        {q.suggest !== '' && (
+          <Box flexDirection="column" borderStyle="round" borderColor="inactive" paddingX="md" paddingY="xs">
+            <Text dimColor size="caption">建议</Text>
+            {md(ui, listify(q.suggest))}
+          </Box>
+        )}
         <Box flexDirection="row" gap="sm">
           {q.suggest !== '' && (
-            <Button key={`ok${q.id}`} variant="primary" onPress={() => tell($, `chief：问题 #${q.id} 照建议办`, '照建议办', true)}>照建议办</Button>
+            <Button key={`ok${q.id}`} variant="primary" onPress={() => answerAsk($, q.id, '照建议办', '照建议办', `chief：问题 #${q.id} 照建议办`)}>照建议办</Button>
           )}
           {t?.session && (
             <Button key={`oa${q.id}`} onPress={() => openSession($, t.session ?? '', t.title)}>看细节</Button>
@@ -230,7 +250,7 @@ export function nowTab($: Engine, ui: Els, s: Snapshot, opened: string[] = [], e
         {/* 要你定的卡片只给三条路：照建议办、去会话里看、写你的决定。攒着一起发的「批注」只放在进度页。 */}
         {'Input' in ui && (
           <ui.Input key={`in${q.id}`} placeholder="不同意？写你的决定" submitLabel="发送" onSubmit={(v: string) => {
-            if (v.trim()) void tell($, `chief：问题 #${q.id} 的回答：${v.trim()}`, '你的决定', true)
+            if (v.trim()) void answerAsk($, q.id, v.trim(), '你的决定', `chief：问题 #${q.id} 的回答：${v.trim()}`)
           }} />
         )}
       </Box>

@@ -577,6 +577,13 @@ async function ask(args: string[]): Promise<void> {
     process.stdout.write(`${newId}\n`);
     return;
   }
+  // chief ask show Q：一个问题，答没答过都看得到（面板上答了以后，主会话凭它转告会话）。
+  if (sub === "show") {
+    const id = num(args.shift(), "问题号");
+    const a = loadThings().asks.find((y) => y.id === id) ?? oops(`没有问题 ${id}`);
+    process.stdout.write(`${JSON.stringify(a, null, 2)}\n`);
+    return;
+  }
   if (sub === "answer") {
     const id = num(args.shift(), "问题号");
     const answer = await stdinText();
@@ -593,7 +600,7 @@ async function ask(args: string[]): Promise<void> {
     process.stdout.write(`${JSON.stringify(out)}\n`);
     return;
   }
-  fail("chief ask add|list|answer");
+  fail("chief ask add|list|show|answer");
 }
 
 // ── Slack ──

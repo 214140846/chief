@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import { askedAfter } from '../hooks/confirm'
-import { listify } from '../hooks/views'
+import { listify, splitAsk } from '../hooks/views'
 import type { ReplyRow } from '../types'
 
 const PANE = {
@@ -95,7 +95,7 @@ test('面板：主会话状态、要你定、待发出；按钮各做各的', as
     expect(await ui.find({ type: 'Text', text: /2 条等判断/ })).toBeTruthy()
     expect(await ui.find({ type: 'Text', text: /判断了 3 条 · 派人去办 1 · 只记下 1 · 忽略 1 · 替你发出 1/ })).toBeTruthy()
     expect(await ui.find({ type: 'Text', text: /今天截止/ })).toBeTruthy()
-    expect(await ui.find({ type: 'Markdown', text: /Joe 问能不能本周上线/ })).toBeTruthy()
+    expect(await ui.find({ type: 'Text', text: /Joe 问能不能本周上线/ })).toBeTruthy()
     // 等你确认的回复直接在「现在要你」里。
     expect(await ui.find({ type: 'Text', text: /等你确认再发 · 2/ })).toBeTruthy()
     await ui.unmount()
@@ -105,9 +105,12 @@ test('面板：主会话状态、要你定、待发出；按钮各做各的', as
   // 要你定的卡片只有三条路：照建议办、看细节、写你的决定发送；没有批注。
   expect(await ui.find({ key: 'ok3' })).toBeTruthy()
   expect(await ui.find({ key: 'an-a3' })).toBeFalsy()
+  // 拍板先在 chief 里记下（卡片马上收起），再交给主会话转告。
   await ui.press({ key: 'ok3' })
+  expect(runs.some(r => r.argv.slice(1).join(' ') === 'ask answer 3' && r.stdin === '照建议办')).toBe(true)
   expect(prompts.at(-1)).toBe('chief：问题 #3 照建议办')
   await ui.input({ key: 'in3', text: '下周三，我来回' })
+  expect(runs.some(r => r.argv.slice(1).join(' ') === 'ask answer 3' && r.stdin === '下周三，我来回')).toBe(true)
   expect(prompts.at(-1)).toBe('chief：问题 #3 的回答：下周三，我来回')
 
   await ui.press({ key: 'tab-outbox' })
@@ -388,4 +391,11 @@ test('挤在一段里的几个问题拆成编号列表，日期和「第 9 层�
   expect(listify('1 等 Ivy 这批一起改，她 25/26 号就给文案，省得改两次；2 补上，方便 review。')).toBe('1. 等 Ivy 这批一起改，她 25/26 号就给文案，省得改两次\n2. 补上，方便 review。')
   expect(listify('只有一件事：要不要等 1 天？')).toBe('只有一件事：要不要等 1 天？')
   expect(listify('已经分好行：\n1. 甲\n2. 乙')).toBe('已经分好行：\n1. 甲\n2. 乙')
+})
+
+test('问题拆成背景和要你定的：从第一个问号往前找最后一个句号', () => {
+  expect(splitAsk('PROJ-35190 只提测了 RC 这一侧。OS 侧还在本地；Notion 那边另外跟进。现在要会话把 OS 侧也提 PR 吗？'))
+    .toEqual({ context: 'PROJ-35190 只提测了 RC 这一侧。OS 侧还在本地；Notion 那边另外跟进。', ask: '现在要会话把 OS 侧也提 PR 吗？' })
+  expect(splitAsk('由会话发还是你自己发？另外有两条要 PM 定。')).toEqual({ context: '', ask: '由会话发还是你自己发？另外有两条要 PM 定。' })
+  expect(splitAsk('Joe 问能不能本周上线')).toEqual({ context: '', ask: 'Joe 问能不能本周上线' })
 })
