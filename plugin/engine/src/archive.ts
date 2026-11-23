@@ -1,12 +1,14 @@
 // 归档：办完的旧东西搬进 ~/chief/data/archive/<种类>-<年月>.jsonl，常用的文件就一直不大
 // （面板每次刷新、chief 命令每次运行都把它们整个读一遍）。
-// 只搬判断过、办完、发完超过 KEEP_DAYS 天的：没判断的事件、还在办的事情、开着的问题、没发完或没发出去的回复都留着。
+// 只搬判断过、办完、发完超过 keepDays 天的：没判断的事件、还在办的事情、开着的问题、没发完或没发出去的回复都留着。
 // 先追加到归档再重写原文件：中途断了，最坏是归档里多一份，不会丢。
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { config } from "./config";
 import { loadDispatch, paths, readEvents, updateJson, updateReplies, withLock, type Decision, type ChiefEvent, type ThingsFile } from "./store";
 
-export const KEEP_DAYS = 7;
+// 留几天：config.json 的 keepDays（默认 7）。
+export const keepDays = () => config().keepDays;
 
 function put(kind: string, rows: { month: string; row: unknown }[]): void {
   if (rows.length === 0) return;
@@ -36,8 +38,8 @@ function readLines<T>(file: string): T[] {
 }
 
 // 搬一次，返回各种搬了几条。
-export function archiveOld(now = Date.now()): Record<"events" | "decisions" | "things" | "asks" | "replies", number> {
-  const cutoff = now - KEEP_DAYS * 86_400_000;
+export function archiveOld(now = Date.now(), days = keepDays()): Record<"events" | "decisions" | "things" | "asks" | "replies", number> {
+  const cutoff = now - days * 86_400_000;
   const old = (at: string | undefined) => at !== undefined && Date.parse(at) < cutoff;
   const out = { events: 0, decisions: 0, things: 0, asks: 0, replies: 0 };
 

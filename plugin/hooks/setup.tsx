@@ -76,8 +76,19 @@ async function step($: Engine, busy: Setup['busy'], run: () => Promise<{ exitCod
   await refresh($).catch(() => {})
 }
 
-// 插件更新了、引擎还是旧的：插件每次加载都看一眼，不一样就在后台跑一遍 setup.sh（复制新引擎、装依赖、重启），
+// 比两个版本号（x.y.z，后面的 -beta 之类不管）：a 比 b 新是正数。认不出来的返回 null。
+export function compareVersions(a: string, b: string): number | null {
+  const parse = (v: string) => /^v?(\d+)\.(\d+)\.(\d+)/.exec(v.trim())?.slice(1).map(Number) ?? null
+  const x = parse(a)
+  const y = parse(b)
+  if (!x || !y) return null
+  for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i]! - y[i]!
+  return 0
+}
+
+// 插件更新了、引擎还是旧的：插件每次加载都看一眼，插件比引擎新就在后台跑一遍 setup.sh（复制新引擎、装依赖、重启），
 // 不用谁去点「更新引擎」。版本一样什么都不做；还没装过的交给设置页。几个会话同时加载只有一个真跑（setup.sh 拿锁）。
+// 插件比引擎旧（别的会话已经用新插件更新过引擎）：不往回装，只提示一句。不然新旧两个会话会来回把引擎装成自己的版本。
 export async function autoUpdate($: Engine) {
   wanted ??= await pluginVersion($)
   if (!wanted) return
@@ -88,6 +99,12 @@ export async function autoUpdate($: Engine) {
     return
   }
   if (have === wanted) return
+  const cmp = compareVersions(wanted, have)
+  // 版本号认不出来（比如上次没装完、VERSION 是空的）：照旧按插件的装。
+  if (cmp !== null && cmp <= 0) {
+    void $.ui.toast(`这个会话的 chief 插件是 ${wanted}，比引擎（${have}）旧，没动引擎。重开会话或更新插件就好`)
+    return
+  }
   const out = await $.process.run(['/bin/sh', `${$.plugin.root}/setup.sh`], { timeoutMs: INSTALL_MS }).catch(() => null)
   if (out?.exitCode === 0 && !out.stdout.includes('已经有别的会话在更新引擎了')) void $.ui.toast(`chief 引擎更新到 ${wanted} 了`)
   else if (out === null || out.exitCode !== 0) void $.ui.toast('chief 引擎没更新成功：打开 /chief 的设置页，点「更新引擎」看看哪里不对')

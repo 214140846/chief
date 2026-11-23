@@ -6,6 +6,7 @@
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { config } from "../config";
 import { runProgram } from "../program";
 import type { SecretCheck } from "../slack/types";
 import { SourceError, plain, type Ask, type Source, type SourceItem } from "./types";
@@ -14,7 +15,8 @@ const ACLI_PATHS = ["/opt/homebrew/bin/acli", "/usr/local/bin/acli"];
 // twg 官方安装脚本装在 ~/.local/bin。
 const TWG_PATHS = [join(homedir(), ".local/bin/twg"), "/opt/homebrew/bin/twg", "/usr/local/bin/twg"];
 const KEY = /^[A-Z][A-Z0-9]{1,9}-\d{1,7}$/;
-const MAX_ITEMS = 50;
+// 每次最多拉几条：config.json 的 items.jira（默认 50）。
+const maxItems = () => config().items.jira;
 // parent：父单（史诗或上一级的单），同一个父单下的单多半是同一件事，拿来提议「合进去」。
 const VIEW_FIELDS = "summary,status,assignee,reporter,duedate,updated,priority,comment,parent";
 
@@ -262,7 +264,7 @@ export class JiraSource implements Source {
     await this.learnMe(signal);
     const minutes = Math.max(1, Math.ceil((Date.now() - since.getTime()) / 60_000) + 1);
     const jql = `(assignee = currentUser() OR reporter = currentUser() OR watcher = currentUser()) AND updated >= "-${minutes}m" ORDER BY updated ASC`;
-    const found = await this.cli.search(jql, "key,summary,status", MAX_ITEMS, signal);
+    const found = await this.cli.search(jql, "key,summary,status", maxItems(), signal);
     const items: SourceItem[] = [];
     for (const hit of found) {
       if (!KEY.test(hit.key)) continue;

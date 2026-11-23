@@ -2,6 +2,7 @@
 //   chief run                          前台跑引擎（launchd 里跑的也是它）
 //   chief install | uninstall          装进 / 卸掉 launchd，并装好 chief 命令（消息中心 skill 和面板在 chief 插件里）
 //   chief status | logs                看引擎、来源、进度；看最近的日志
+//   chief config [set <键> <值>]       可调的数字和开关（~/chief/config.json，见 config.ts）
 //   chief connect <来源> | disconnect <来源>   slack 默认开浏览器窗口让你登录（要公司 SSO 的会自己跳到工作区地址；--workspace acme 直接从那登；--stdin 改从标准输入读 Cookie）；notion 从标准输入读令牌；
 //                                      github / jira 用本机登录的 gh、acli（或 twg）
 //   chief doctor                       设置页用：引擎、各来源、主会话的状态（JSON）
@@ -39,7 +40,12 @@ import { homedir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { archiveOld, archivedEvent } from "./archive";
-import { Engine, SECRET } from "./engine";
+import { CONFIG_KEYS, loadConfig, setConfig } from "./config";
+import { tailLines } from "./logfile";
+import { migrateAll } from "./migrate";
+import { scrubTokens } from "./scrub";
+import { LineTail } from "./tail";
+import { Engine, SECRET, notifyCorrupt } from "./engine";
 import { MAX_IMAGES, takeImage, type ReplyImage } from "./images";
 import { KEY, keysOf } from "./keys";
 import { type ChildProcess, spawn } from "node:child_process";
@@ -55,7 +61,7 @@ import { JiraSource, findJiraCli } from "./sources/jira";
 import { NotionSource } from "./sources/notion";
 import { chiefIds, idsMessage, type IdsOptions } from "./plain";
 import {
-  AUDIENCE_LABELS, HANDLE_LABELS, SCENARIOS, appendDecision, readEvents, expectOf, isTrusted, loadDecisions, appendEvent, ensureHome, loadCursor, loadDispatch, loadEnabled, loadPolicy, loadReplies, loadReviews, loadRoutes, loadThings,
+  AUDIENCE_LABELS, CorruptFileError, HANDLE_LABELS, SCENARIOS, appendDecision, readEvents, expectOf, isTrusted, loadDecisions, appendEvent, ensureHome, loadCursor, loadDispatch, loadEnabled, loadPolicy, loadReplies, loadReviews, loadRoutes, loadThings,
   loadSettings, loadState, paths, workspaceDir, readJson, saveState, scenarioOf, updateJson, updateReplies, withLock, writeJson,
   type Ask, type Settings, type Decision, type Dispatch, type Enabled, type EventSource, type Handle, type Policy, type ChiefEvent, type RepliesFile,
   type Audience, type CustomScenario, type EvalCase, type EvalRun, type EvalsFile, type Expect, type Placement, type Reply, type ReplyMode, type Reviews, type ScenarioRule, type Routes, type Scenario, type Thing, type ThingsFile,
@@ -222,25 +228,15 @@ export function relatedOf(e: ChiefEvent, all: ChiefEvent[] = readEvents()): { th
   };
 }
 
-// 按字节读新追加的部分：文件只追加，记住读到哪就行。每秒看一眼文件大小（本机文件，不访问网络）。
+// 按字节读新追加的部分（见 tail.ts）：每秒看一眼，只读后来追加的那段；归档重写了文件就从头读，按编号跳过交过的。
 function events(args: string[]): void {
   let after = num(flag(args, "--after") ?? "0", "--after ");
   const follow = args.includes("--follow");
-  const file = paths().events;
-  let offset = 0;
-  let rest = "";
+  const tail = new LineTail(paths().events);
   const drain = () => {
-    if (!existsSync(file)) return;
-    const size = statSync(file).size;
-    if (size < offset) offset = 0;
-    if (size === offset) return;
-    const fd = openSync(file, "r");
-    const buf = Buffer.alloc(size - offset);
-    readSync(fd, buf, 0, buf.length, offset);
-    closeSync(fd);
-    offset = size;
-    const lines = (rest + buf.toString("utf8")).split("\n");
-    rest = lines.pop() ?? "";
+    const lines = tail.read();
+    if (lines.length === 0) return;
+    const handled = loadDispatch();
     for (const l of lines) {
       let e: ChiefEvent;
       try {
@@ -251,7 +247,7 @@ function events(args: string[]): void {
       if (e.id > after) {
         after = e.id;
         // 已经判断过的不再交给主会话（重新挂 Monitor 时会从进度重读一遍）。
-        if (!loadDispatch()[e.id]) process.stdout.write(`${streamLine(e)}\n`);
+        if (!handled[e.id]) process.stdout.write(`${streamLine(e)}\n`);
       }
     }
   };
@@ -1151,7 +1147,8 @@ function draftText(file: string): string {
 }
 
 // 点了发送以后，这么久之内还能撤回；到点由引擎发出去。
-const UNDO_MS = 5_000;
+// 撤回期：config.json 的 undoSeconds（默认 5 秒）。
+const undoMs = () => loadConfig().config.undoSeconds * 1000;
 
 // 排队发：发前的检查（还能不能发、是不是测试消息）都在这，谁让发的由 mark 写。
 function queueReply(id: number, now: Date, mark: (r: Reply) => void): void {
@@ -1165,7 +1162,7 @@ function queueReply(id: number, now: Date, mark: (r: Reply) => void): void {
     if (Object.keys(r.target).length === 0) throw new Error("这是测试消息的回复，不会真的发出去");
     if (r.kind === "approve" && testEvents.has(r.event)) throw new Error("这是测试消息，不会真的 approve");
     r.status = "queued";
-    r.sendAt = new Date(now.getTime() + UNDO_MS).toISOString();
+    r.sendAt = new Date(now.getTime() + undoMs()).toISOString();
     delete r.error;
     mark(r);
   });
@@ -1556,9 +1553,9 @@ async function doctor(): Promise<void> {
     try {
       const checks = await run();
       const bad = checks.find((c) => !c.pass);
-      return { ok: !bad, detail: bad ? `${bad.label}：${bad.detail}` : "" };
+      return { ok: !bad, detail: bad ? scrubTokens(`${bad.label}：${bad.detail}`) : "" };
     } catch (error) {
-      return { ok: false, detail: error instanceof Error ? error.message : String(error) };
+      return { ok: false, detail: scrubTokens(error instanceof Error ? error.message : String(error)) };
     }
   };
   const gh = findGh();
@@ -1608,10 +1605,33 @@ function awake(arg: string | undefined): void {
   process.stdout.write(loadSettings().awake ? "插电时不让电脑睡：开\n" : "插电时不让电脑睡：关\n");
 }
 
+// 只读日志结尾一段（日志可能很大）。
 function logs(): void {
   const file = join(paths().logs, "engine.log");
   if (!existsSync(file)) fail("还没有日志");
-  process.stdout.write(`${readFileSync(file, "utf8").split("\n").slice(-50).join("\n")}\n`);
+  process.stdout.write(`${tailLines(file, 50).join("\n")}\n`);
+}
+
+// chief config：打出现在生效的设置（JSON）；有不对的值在 problems 里。chief config set <键> <值>：改一项（引擎重启后生效）。
+function configCmd(args: string[]): void {
+  const sub = args[0];
+  if (sub === undefined || sub === "show") {
+    const { config, problems } = loadConfig();
+    process.stdout.write(`${JSON.stringify(problems.length > 0 ? { ...config, problems } : config, null, 2)}\n`);
+    return;
+  }
+  if (sub === "set") {
+    const [key, value] = [args[1], args[2]];
+    if (key === undefined || value === undefined) fail(`chief config set <键> <值>，键是 ${CONFIG_KEYS.join("、")} 之一`);
+    try {
+      setConfig(key, value);
+    } catch (error) {
+      fail(error instanceof Error ? error.message : String(error));
+    }
+    process.stdout.write(`改好了（${paths().config}）。引擎重启后生效：chief engine restart\n`);
+    return;
+  }
+  fail("chief config [show] | chief config set <键> <值>");
 }
 
 // ── 入口 ──
@@ -1620,10 +1640,19 @@ async function main(argv: string[]): Promise<void> {
   const args = [...argv];
   const cmd = args.shift();
   ensureHome();
+  // 旧格式的数据文件先升到现在的格式（见 migrate.ts）。
+  migrateAll();
   switch (cmd) {
     case "run": {
-      const engine = new Engine();
-      await engine.start();
+      let engine: Engine;
+      try {
+        engine = new Engine();
+        await engine.start();
+      } catch (error) {
+        // 要紧的数据文件坏了（见 store.ts 的 readJson）：弹个通知再退出，不拿空的接着跑。
+        if (error instanceof CorruptFileError) notifyCorrupt();
+        throw error;
+      }
       keepAwake();
       const quit = () => void engine.stop().then(() => process.exit(0));
       process.on("SIGTERM", quit);
@@ -1634,6 +1663,7 @@ async function main(argv: string[]): Promise<void> {
     case "uninstall": return uninstall();
     case "status": return status();
     case "logs": return logs();
+    case "config": return configCmd(args);
     case "connect": return connect(args[0], args.slice(1));
     case "doctor": return doctor();
     case "awake": return awake(args[0]);
@@ -1708,7 +1738,7 @@ async function main(argv: string[]): Promise<void> {
       return;
     }
     default:
-      fail("chief run|install|uninstall|status|logs|connect|disconnect|events|show|cursor|hub|engine|route|reply|mark|board|thing|ask|rules|review|import|test|eval|slack");
+      fail("chief run|install|uninstall|status|logs|config|connect|disconnect|events|show|cursor|hub|engine|route|reply|mark|board|thing|ask|rules|review|import|test|eval|slack");
   }
 }
 

@@ -19,9 +19,9 @@
 //   reviews.json  你给主会话的判断标的对错（事件号 → 对 / 错和你说的应该怎样）。
 // 几个进程（引擎、主会话的命令、面板的命令）会同时写的文件（replies、things、policy、dispatch、routes、reviews、hub），都拿着 <文件>.lock 读改写。
 // 引擎只写 events.jsonl、state.json；命令行（消息中心在用）只写另外几个。两边不抢同一个文件。
-import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmdirSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, closeSync, copyFileSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmdirSync, statSync, writeSync } from "node:fs";
 import { homedir } from "node:os";
-import { isAbsolute, join } from "node:path";
+import { basename, dirname, isAbsolute, join } from "node:path";
 import type { ReplyImage } from "./images";
 
 // 工作目录：消息中心开在这里；你的交代、规矩、笔记、skill 和 chief 的数据都放在里面。
@@ -51,6 +51,8 @@ export function paths(home = chiefHome()) {
     replies: join(home, "replies.json"),
     things: join(home, "things.json"),
     policy: join(top, "rules.json"),
+    // 可调的数字和开关（见 config.ts），和规矩放一起。
+    config: join(top, "config.json"),
     decisions: join(home, "decisions.jsonl"),
     reviews: join(home, "reviews.json"),
     evals: join(home, "evals.json"),
@@ -64,6 +66,8 @@ export function paths(home = chiefHome()) {
     people: join(home, "people.json"),
     // 办完的旧东西搬到这里（见 archive.ts）：<种类>-<年月>.jsonl。
     archive: join(home, "archive"),
+    // 读坏了的数据文件（见 readJson）：文件名 → 挪到哪了、什么时候、通知过没有。引擎把它并进 engine.json 的 health，面板就标红。
+    corrupt: join(home, "corrupt.json"),
   };
 }
 
@@ -72,19 +76,95 @@ export function ensureHome(): void {
   for (const d of [p.home, p.drafts, p.logs, p.slackState]) mkdirSync(d, { recursive: true, mode: 0o700 });
 }
 
+// 数据文件的格式版本：writeJson 写这些文件时盖上 version，chief 每次起来按它升级旧文件（见 migrate.ts）。
+// 改了某个文件的样子：这里加一，migrate.ts 里补一步。
+export const SCHEMA: Readonly<Record<string, number>> = {
+  "state.json": 1, "replies.json": 1, "things.json": 1, "rules.json": 1, "evals.json": 1, "settings.json": 1, "hub.json": 1, "config.json": 1,
+};
+
+// 这几个坏了不能当空的用：编号会从头算、等你的回复和事情全没了、规矩变回默认。读到坏的就报错，不往下走，也不覆盖它。
+const CRITICAL = new Set(["replies.json", "things.json", "rules.json", "state.json"]);
+
+export class CorruptFileError extends Error {}
+
+export interface CorruptRecord {
+  file: string;
+  moved: string;
+  at: string;
+  error: string;
+  critical: boolean;
+  notified?: boolean;
+}
+
+export function loadCorrupt(): Record<string, CorruptRecord> {
+  try {
+    return JSON.parse(readFileSync(paths().corrupt, "utf8")) as Record<string, CorruptRecord>;
+  } catch {
+    return {};
+  }
+}
+
+// 读到坏文件：留一份 <名字>.corrupt-<时间>，记进 corrupt.json。要紧的文件原样留着、复制一份（不挪走：挪走了下一次就当成没有、从头开始），
+// 同一份坏内容只复制一次、只记一次（引擎崩了反复重启也不会一直复制、一直通知）；其余的挪走，下次就用默认的。
+function quarantine(file: string, text: string, error: unknown): string {
+  const name = basename(file);
+  const critical = CRITICAL.has(name);
+  const dir = dirname(file);
+  const same = critical ? readdirSync(dir).find((f) => {
+    if (!f.startsWith(`${name}.corrupt-`)) return false;
+    try {
+      return readFileSync(join(dir, f), "utf8") === text;
+    } catch {
+      return false;
+    }
+  }) : undefined;
+  if (same) return join(dir, same);
+  const moved = `${file}.corrupt-${new Date().toISOString().replace(/[:.]/g, "-")}`;
+  if (critical) copyFileSync(file, moved);
+  else renameSync(file, moved);
+  try {
+    const all = loadCorrupt();
+    all[name] = { file, moved, at: new Date().toISOString(), error: (error instanceof Error ? error.message : String(error)).slice(0, 200), critical };
+    writeJson(paths().corrupt, all);
+  } catch {
+    // 记不上也不影响下面报错 / 用默认的。
+  }
+  return moved;
+}
+
+// 读一个 JSON 文件。没有（或是空的）就用 fallback。坏了（不是合法的 JSON）见 quarantine：要紧的文件抛 CorruptFileError。
 export function readJson<T>(file: string, fallback: T): T {
   if (!existsSync(file)) return fallback;
+  let text: string;
   try {
-    return JSON.parse(readFileSync(file, "utf8")) as T;
+    text = readFileSync(file, "utf8");
   } catch {
+    return fallback;
+  }
+  if (text.trim() === "") return fallback;
+  try {
+    return JSON.parse(text) as T;
+  } catch (error) {
+    const moved = quarantine(file, text, error);
+    if (CRITICAL.has(basename(file))) {
+      throw new CorruptFileError(`${basename(file)} 坏了（不是合法的 JSON），chief 不会拿空的覆盖它（编号会从头算、内容会丢）。坏的那份另存在 ${moved}。把 ${file} 修好再试；确定不要了就把它删掉`);
+    }
     return fallback;
   }
 }
 
-// 先写临时文件再改名：写到一半被杀也不会留下半个文件。
+// 先写临时文件、落盘（fsync）再改名：写到一半被杀、断电都不会留下半个文件。SCHEMA 里的文件盖上格式版本。
 export function writeJson(file: string, value: unknown): void {
+  const version = SCHEMA[basename(file)];
+  const out = version !== undefined && value !== null && typeof value === "object" && !Array.isArray(value) ? { version, ...value } : value;
   const tmp = `${file}.${process.pid}.tmp`;
-  writeFileSync(tmp, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
+  const fd = openSync(tmp, "w", 0o600);
+  try {
+    writeSync(fd, `${JSON.stringify(out, null, 2)}\n`);
+    fsyncSync(fd);
+  } finally {
+    closeSync(fd);
+  }
   renameSync(tmp, file);
 }
 

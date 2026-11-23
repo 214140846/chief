@@ -350,6 +350,14 @@ test('引擎和插件一样新：什么都不做', async ($, on) => {
   expect(w.toasts).toEqual([])
 })
 
+test('插件比引擎旧（别的会话已经更新过）：不往回装，只提示一句', async ($, on) => {
+  const w = autoUpdateWorld(on, '0.10.0')
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+  await new Promise(r => setTimeout(r, 50))
+  expect(w.runs.some(r => r.endsWith('/setup.sh'))).toBe(false)
+  expect(w.toasts.some(t => t.includes('比引擎（0.10.0）旧'))).toBe(true)
+})
+
 test('设置页：没记过 Slack 工作区时先问一句，填了从工作区登，留空也能登', async ($, on) => {
   const runs: string[] = []
   const doctor = {
