@@ -1,6 +1,7 @@
 // 面板顶上：主会话和引擎在不在、来源连不上、钥匙被动过、页签、攒着的批注。
 import type { EngineInterface as Engine } from 'claude-code'
 
+import { DATA_HEALTH } from '../../engine/src/shared/rules'
 import { sourceLabel } from '../../engine/src/shared/sources'
 import type { Snapshot } from '../../types'
 import { ackKeyAlerts, clearBasket, sendBasket, setTab, skipOld, unannotate } from '../actions'
@@ -23,7 +24,10 @@ export function header($: Engine, ui: Els, s: Snapshot, said: string, current: s
     { key: 'setup', label: '设置', n: setupMissing },
   ]
   // 连着失败两次以上的来源：一次可能只是网络抖了一下。
-  const broken = Object.entries(s.health).filter(([, h]) => h.fails >= 2).map(([k]) => k)
+  const broken = Object.entries(s.health).filter(([k, h]) => h.fails >= 2 && k !== DATA_HEALTH).map(([k]) => k)
+  // 数据文件坏了（引擎读到不是合法 JSON 的文件）不是连不上：单独说，带上哪个文件、另存在哪。
+  const corrupt = s.health[DATA_HEALTH]
+  const trouble = [broken.length > 0 ? `${broken.map(sourceLabel).join('、')} 连不上` : '', corrupt && !corrupt.ok ? '数据文件坏了' : ''].filter(Boolean).join(' · ')
   return (
     <Box flexDirection="column" gap="sm">
       <Box flexDirection="row" justifyContent="space-between" alignItems="center">
@@ -32,9 +36,10 @@ export function header($: Engine, ui: Els, s: Snapshot, said: string, current: s
           : <Text size="caption" color="warning">● 主会话没在听 · 上次 {ago(s.hub.lastAt)}</Text>}
         {s.engineAt === null
           ? <Text size="caption" color="error">引擎没在跑</Text>
-          : broken.length > 0 ? <Text size="caption" color="error">{broken.map(sourceLabel).join('、')} 连不上</Text>
+          : trouble !== '' ? <Text size="caption" color="error">{trouble}</Text>
           : s.unhandled > 0 ? <Text size="caption" dimColor>{s.unhandled} 条等判断</Text> : <Text size="caption" dimColor>引擎在跑</Text>}
       </Box>
+      {s.engineAt !== null && corrupt && !corrupt.ok && <Text size="footnote" color="error" wrap="wrap">数据文件坏了：{corrupt.error ?? '没说为什么'}</Text>}
       {s.keyAlerts.length > 0 && (
         <Box flexDirection="column" borderStyle="round" borderColor="error" paddingX="md" paddingY="sm" gap="xs">
           <Text weight="semibold" color="error">「以你的名义发」的钥匙被动过</Text>

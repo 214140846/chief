@@ -56,11 +56,11 @@ export async function readSetup($: Engine) {
   return read($, setup)
 }
 
-// 还差几步（必需的：引擎、Slack、消息中心）。
+// 还差几步（必需的：引擎、Slack、消息中心）。引擎比插件新也算装好了（见 engineBehind）。
 export function missing(s: Setup): number {
   const d = s.doctor
   if (!s.installed || d === null) return 3
-  return [d.engine === 'running' && d.version === wanted, d.sources.slack?.enabled === true && d.sources.slack.ready === true, d.hub.listening].filter(ok => !ok).length
+  return [d.engine === 'running' && !engineBehind(d.version, wanted), d.sources.slack?.enabled === true && d.sources.slack.ready === true, d.hub.listening].filter(ok => !ok).length
 }
 
 async function step($: Engine, busy: Setup['busy'], run: () => Promise<{ exitCode: number; stdout: string; stderr: string } | null>) {
@@ -87,6 +87,15 @@ export function compareVersions(a: string, b: string): number | null {
   return 0
 }
 
+// 引擎要不要换成这个插件的版本：只在插件比引擎新（或版本号认不出来，比如上次没装完、VERSION 是空的）时换。
+// 引擎比插件新（别的会话已经用新插件更新过引擎）不往回装，算装好了。自动更新和设置页都按这一条。
+export function engineBehind(have: string | null, want: string | null): boolean {
+  if (want === null || have === want) return false
+  if (have === null) return true
+  const cmp = compareVersions(want, have)
+  return cmp === null || cmp > 0
+}
+
 // 插件更新了、引擎还是旧的：插件每次加载都看一眼，插件比引擎新就在后台跑一遍 setup.sh（复制新引擎、装依赖、重启），
 // 不用谁去点「更新引擎」。版本一样什么都不做；还没装过的交给设置页。几个会话同时加载只有一个真跑（setup.sh 拿锁）。
 // 插件比引擎旧（别的会话已经用新插件更新过引擎）：不往回装，只提示一句。不然新旧两个会话会来回把引擎装成自己的版本。
@@ -100,9 +109,7 @@ export async function autoUpdate($: Engine) {
     return
   }
   if (have === wanted) return
-  const cmp = compareVersions(wanted, have)
-  // 版本号认不出来（比如上次没装完、VERSION 是空的）：照旧按插件的装。
-  if (cmp !== null && cmp <= 0) {
+  if (!engineBehind(have, wanted)) {
     void $.ui.toast(`这个会话的 chief 插件是 ${wanted}，比引擎（${have}）旧，没动引擎。重开会话或更新插件就好`)
     return
   }
@@ -173,7 +180,9 @@ export function setupTab($: Engine, ui: Els, st: Setup, s: Snapshot | null, logT
   )
 
   // ── 后台引擎 ──
-  const outdated = st.installed && d !== null && d.version !== wanted
+  const outdated = st.installed && d !== null && engineBehind(d.version, wanted)
+  // 引擎比这个会话的插件新：不往回装，算好了，只说一句。
+  const ahead = st.installed && d !== null && !outdated && wanted !== null && d.version !== wanted
   const running = s !== null ? s.engineAt !== null : d?.engine === 'running'
   const engineOk = st.installed && d !== null && running && !outdated
   const engine = st.busy === 'engine'
@@ -187,6 +196,7 @@ export function setupTab($: Engine, ui: Els, st: Setup, s: Snapshot | null, logT
       <Box flexDirection="column" gap="xs">
         <Text wrap="wrap">{running ? `在跑${s?.engineAt ? ` · ${ago(s.engineAt)}报到` : ''}` : '没在跑'}{d ? <Text dimColor>{`（${d.version ?? '?'}，Node ${d.node}）`}</Text> : ''}</Text>
         {outdated && note(`插件是 ${wanted ?? '?'}，引擎还是 ${d?.version ?? '旧版'}，点「更新引擎」。`)}
+        {ahead && note(`引擎是 ${d?.version ?? '?'}，比这个会话的插件（${wanted}）新：别的会话用新插件更新过引擎，不用往回装。重开会话或更新插件就一致了。`)}
         {d?.workspace.ready && note(`工作目录 ${d.workspace.path}：CLAUDE.md 写你的交代，rules.json 是规矩，notes/ 是助理记的，data/ 是进展和消息。`)}
         {buttons(
           outdated ? button('setup-engine', '更新引擎', !busy, () => void installEngine($)) : null,

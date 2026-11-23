@@ -3,6 +3,7 @@ import { expect, test } from 'claude-code/testing'
 import { askedAfter } from '../hooks/confirm'
 import { listify, splitAsk } from '../hooks/ui'
 import { addCall, dayOf, isHubMonitor } from '../hooks/usage'
+import { engineBehind } from '../hooks/setup'
 import type { ReplyRow } from '../types'
 
 const PANE = {
@@ -299,6 +300,46 @@ test('主会话没在听：说清楚怎么办，积多了能一键跳过', async
   expect(runs).toContain('/Users/me/chief/data/bin/chief mark --upto 87 ignored')
   expect(runs).toContain('/Users/me/chief/data/bin/chief cursor 87')
   await ui.unmount()
+})
+
+test('数据文件坏了：顶上说坏了、带上原因，不说成连不上', async ($, on) => {
+  on('command.register', () => ({ value: { command: 'chief' } }))
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  memStore(on)
+  on('clock.every', () => ({ value: { cancel: () => {} } }))
+  const health = {
+    slack: { ok: false, at: now, fails: 3, error: 'Slack 连不上' },
+    数据文件: { ok: false, at: now, fails: 2, error: 'things.json 坏了（没覆盖，修好或删掉它）：另存在 /Users/me/chief/data/things.json.corrupt-1' },
+  }
+  on('fs.read', (_, e) => {
+    if (e.path === '/Users/me/chief/data/bin/chief') return { value: '#!/bin/sh' }
+    if (e.path === '/Users/me/chief/data/engine.json') return { value: JSON.stringify({ at: now, health }) }
+    const text = FILES[e.path]
+    if (text === undefined) throw new Error('missing')
+    return { value: text }
+  })
+  on('process.run', (_, e) => {
+    if (e.argv[0] === '/usr/bin/env') return { value: { exitCode: 0, stdout: 'HOME=/Users/me\nPATH=/usr/bin\n', stderr: '' } }
+    return { value: { exitCode: 0, stdout: '', stderr: '' } }
+  })
+
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+  await $.command.run({ command: 'chief', args: '' })
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  expect(await ui.find({ type: 'Text', text: /^Slack 连不上 · 数据文件坏了$/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /数据文件坏了：things\.json 坏了（没覆盖/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /数据文件 连不上/ })).toBeFalsy()
+  await ui.unmount()
+})
+
+test('引擎比插件新算装好了；插件新才更新', () => {
+  expect(engineBehind('0.3.0', '0.3.0')).toBe(false)
+  expect(engineBehind('0.4.0', '0.3.0')).toBe(false)
+  expect(engineBehind('0.2.9', '0.3.0')).toBe(true)
+  expect(engineBehind(null, '0.3.0')).toBe(true)
+  expect(engineBehind('', '0.3.0')).toBe(true)
+  expect(engineBehind('0.3.0', null)).toBe(false)
 })
 
 test('引擎还没装：只有设置页，按钮跑插件里的 setup.sh', async ($, on) => {
