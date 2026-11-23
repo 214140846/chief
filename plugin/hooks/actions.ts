@@ -257,3 +257,14 @@ export async function markWrong($: Engine, event: number, should: string) {
   if (!(await act($, `判断 #${event}`, ['review', String(event), 'wrong'], should))) return
   await tell($, `chief：判断 #${event} 错了：${should}`, '纠正')
 }
+
+// 用系统的预览打开回复附的图。只开 chief 自己存进 drafts/images 的文件，别的路径不碰。
+export async function openImage($: Engine, file: string) {
+  const dir = `${await chiefDir($)}/drafts/images/`
+  if (!file.startsWith(dir) || file.split('/').includes('..')) {
+    await $.ui.toast('这张图不在 chief 的草稿目录里，没打开')
+    return
+  }
+  const out = await $.process.run(['open', file]).catch(() => null)
+  if (out?.exitCode !== 0) await $.ui.toast('图打不开，可能已经被删了')
+}

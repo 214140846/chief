@@ -3,7 +3,7 @@ import type { EngineInterface as Engine, RenderChildren } from 'claude-code'
 
 import type { AskRow, DecisionRow, Handle, ReplyMode, ReplyRow, Rule, Snapshot, ThingRow } from '../types'
 import {
-  act, addCustom, addRule, addQuick, addStyle, removeCase, runEvals, saveCase, trust, annotate, clearBasket, openSession, removeQuick, removeStyle, sendBasket, setPlacement, setSignature, unannotate, decideProposal, engineDo, finish, hubStop, markRight, markWrong, redo, removeCustom, removeRule, send, setBrief,
+  act, openImage, addCustom, addRule, addQuick, addStyle, removeCase, runEvals, saveCase, trust, annotate, clearBasket, openSession, removeQuick, removeStyle, sendBasket, setPlacement, setSignature, unannotate, decideProposal, engineDo, finish, hubStop, markRight, markWrong, redo, removeCustom, removeRule, send, setBrief,
   setEdit, setScenario, setTab, showLogs, skipOld, tell, testMessage, toggle,
 } from './actions'
 import { EVAL_DAYS, MINUTES, chartSvg, statsOf } from './data'
@@ -304,7 +304,12 @@ export function replyCard($: Engine, ui: Els, s: Snapshot, edit: Record<string, 
       {r.confirmAsk && <Text size="footnote" color="warning" wrap="wrap">主会话说你在会话里同意发这条，但没核对上你最近亲口说过话，所以没发：确认要发就点「发送」。</Text>}
       {/* 附的图：发之前让你看到会跟着发出去哪几张。 */}
       {(r.images ?? []).length > 0 && (
-        <Text size="footnote" dimColor wrap="wrap">附图 {r.images!.length} 张（正文发完跟着发到同一个地方）：{r.images!.map(i => `${i.name}（${Math.max(1, Math.round(i.bytes / 1024))} KB）`).join('、')}</Text>
+        <Box flexDirection="row" gap="sm" flexWrap="wrap" alignItems="center">
+          <Text size="footnote" dimColor>附图 {r.images!.length} 张（正文发完跟着发到同一个地方）：</Text>
+          {r.images!.map((i, n) => (
+            <Button key={`im${r.id}-${n}`} plain onPress={() => openImage($, i.file)}>{`${i.name}（${Math.max(1, Math.round(i.bytes / 1024))} KB）`}</Button>
+          ))}
+        </Box>
       )}
 
       <Box flexDirection="row" gap="sm" flexWrap="wrap" alignItems="center">
