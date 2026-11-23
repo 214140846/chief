@@ -25,6 +25,8 @@ Sending is done by the engine, not by the model. Every outgoing message goes thr
 ## Residual risks and limits
 
 - Any process running as your OS user — including the hub session itself — can ultimately read and modify `~/chief`, read Keychain items it is allowed to, and call Slack directly with the cookie. The gate is a strong guardrail against mistakes and casual injection, plus tamper evidence (confirmations are recorded with what you said), **not a sandbox**.
+- Concretely, a hub with shell access could bypass the `chief` CLI: edit `rules.json` / `replies.json` directly (the confirm hash is an unkeyed sha256 it can recompute), read the plugin's raw confirm key from the Claude plugin store, fake a terminal (`python3 -m pty`, `script`) to pass the `key reset` prompt, or delete `key-log.jsonl` before re-keying. Key changes are tamper-evident (notification plus a panel banner), not tamper-proof.
+- Trust and always-ask entries written as display names can be spoofed by someone renaming themselves; prefer Slack user IDs.
 - Work sessions can run arbitrary commands in their working directory. If you do not want that, do not use bypass permissions; approve commands one by one instead.
 - chief cannot tell whether a trusted person's account was compromised.
 - Rules you write in free text guide the hub's judgement; only the structured settings above are enforced by the engine.
