@@ -681,7 +681,7 @@ export function policyTab($: Engine, ui: Els, s: Snapshot, opened: string[]) {
         </Box>
       )}
 
-      {section('sec-trusted', '白名单：回这些人直接发', '名单里的人，替你写好的回复不用你确认就发（仍有 5 秒能撤回）；你写的「一定问我」的规矩照样优先。写名字的一部分或 Slack 用户编号',
+      {section('sec-trusted', '白名单：回这些人直接发', '名单里的人，替你写好的回复不用你确认就发（仍有 5 秒能撤回）。写 Slack 用户编号（U…，最稳：显示名谁都能改），或完整的显示名（一字不差，不分大小写）',
         (p.trusted ?? []).length === 0 && <Text key="tr-none" size="footnote" dimColor>还没有。</Text>,
         (p.trusted ?? []).map((x, i) => (
           <Box key={`tr${i}`} flexDirection="row" justifyContent="space-between" alignItems="center" paddingY="xs">
@@ -690,7 +690,7 @@ export function policyTab($: Engine, ui: Els, s: Snapshot, opened: string[]) {
           </Box>
         )),
         'Input' in ui && (
-          <Box key="tr-add" width="100%"><ui.Input key="add-trusted" placeholder="加一个人，比如：Bob Chen" submitLabel="加上" onSubmit={(v: string) => {
+          <Box key="tr-add" width="100%"><ui.Input key="add-trusted" placeholder="Slack 用户编号或完整显示名，比如：U0123ABCD" submitLabel="加上" onSubmit={(v: string) => {
             if (v.trim()) void trust($, v.trim(), true)
           }} /></Box>
         ))}

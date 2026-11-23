@@ -937,11 +937,11 @@ async function rules(args: string[]): Promise<void> {
     }
     fail("chief rules custom add|remove");
   }
-  // chief rules trust add|remove（标准输入：Slack 用户编号 U… 或名字的一部分）：白名单
+  // chief rules trust add|remove（标准输入：Slack 用户编号 U…，或完整的显示名）：白名单。名字要一字不差（不分大小写），不认名字的一部分
   if (sub === "trust") {
     const what = args.shift();
     const text = oneLine(await stdinText(), 80);
-    if (!text) fail("从标准输入给一个人：Slack 用户编号（U…）或名字的一部分");
+    if (!text) fail("从标准输入给一个人：Slack 用户编号（U…，最稳），或完整的显示名（一字不差，不分大小写）");
     if (what === "add") {
       updatePolicy((pp) => {
         if (!pp.trusted.includes(text)) pp.trusted.push(text);

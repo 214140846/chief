@@ -437,14 +437,25 @@ export function placementOf(target: Readonly<Record<string, string>>, placement:
   return placement[audience] ?? "thread";
 }
 
-// 这个人在不在白名单里：编号完全一样，或者名字里包含白名单写的那段（不分大小写）。
+// Slack 编号：U / W 开头是人，C / G / D 开头是对话；大写字母和数字，至少带一个数字（免得把全大写的名字当成编号）。
+const SLACK_ID = /^[UWCGD][A-Z0-9]{6,20}$/;
+
+export function isSlackId(text: string): boolean {
+  return SLACK_ID.test(text) && /\d/.test(text);
+}
+
+// 名单里的一项是不是这个人：写的是编号就只认编号；写的是名字就要和显示名完全一样（不分大小写、去掉前后空格），不认名字的一部分。
+// 显示名谁都能改成别人的，编号改不了：名单里最好写编号。
+function samePerson(entry: string, from: string | null | undefined, fromId: string | null | undefined): boolean {
+  const k = entry.trim();
+  if (!k) return false;
+  if (isSlackId(k)) return fromId === k;
+  return !!from && from.trim().toLowerCase() === k.toLowerCase();
+}
+
+// 这个人在不在白名单里。
 export function isTrusted(trusted: readonly string[], from: string | null | undefined, fromId: string | null | undefined): boolean {
-  return trusted.some((t) => {
-    const k = t.trim().toLowerCase();
-    if (!k) return false;
-    if (fromId && fromId.toLowerCase() === k) return true;
-    return !!from && from.toLowerCase().includes(k);
-  });
+  return trusted.some((t) => samePerson(t, from, fromId));
 }
 
 export interface ScenarioRule {
@@ -471,7 +482,7 @@ export interface Policy {
   style: string[];
   // 固定回复：一字不差是这几句之一的回复，引擎允许直接发（署名 not reviewed）。别的文字规矩只管怎么写，不能放行直接发。
   quick: string[];
-  // 白名单：回这些人的话不用你确认，直接发（仍有 5 秒能撤回）。写 Slack 用户编号（U…）或名字的一部分。你写的「一定问我」的规矩照样优先。
+  // 白名单：回这些人的话不用你确认，直接发（仍有 5 秒能撤回）。写 Slack 用户编号（U…），或完整的显示名（一字不差，不分大小写）。
   trusted: string[];
   // GitHub 上不报的机器人：注册成普通用户、名字又不带 bot 的（比如公司的 AI 代码评审），写登录名。它们的 review、评论都不算有人找你。
   bots: string[];

@@ -155,14 +155,14 @@ describe("事情和要你定的", () => {
     chief(h, "cursor");
     const dm = (id: number, text: string) => JSON.stringify({ id, at: "t", source: "slack", kind: "slack.message", title: "私信", url: null, from: "Dave", fromId: "U9", text, why: ["dm"], keys: [`slack:D1:${id}.0`], reply: { channel: "D1", ts: `${id}.0` } });
     writeFileSync(join(h, "events.jsonl"), `${dm(1, "现在方便 huddle 吗")}\n`);
-    chiefIn(h, "", "thing", "add", "--title", "Warranty 迁移", "--status", "waiting_you");
+    chiefIn(h, "", "thing", "add", "--title", "报表迁移", "--status", "waiting_you");
     chiefIn(h, "Dave 要 huddle，只有你能答", "mark", "1", "asked", "--thing", "1");
     chiefIn(h, JSON.stringify({ question: "Dave 问方不方便 huddle", suggest: "约个时间" }), "ask", "add", "--thing", "1");
     // mark --thing 把消息记到事情上。
     expect(JSON.parse(chief(h, "thing", "list"))[0].events).toEqual([1]);
     writeFileSync(join(h, "events.jsonl"), `${dm(1, "现在方便 huddle 吗")}\n${dm(2, "是的，那我跟他说吧")}\n`);
     const line = JSON.parse(chief(h, "events", "--after", "1").trim());
-    expect(line.related.things).toMatchObject([{ id: 1, title: "Warranty 迁移" }]);
+    expect(line.related.things).toMatchObject([{ id: 1, title: "报表迁移" }]);
     expect(line.related.asks).toMatchObject([{ id: 1, question: "Dave 问方不方便 huddle" }]);
   });
 
@@ -556,7 +556,7 @@ describe("chief 替你发出去的帖子，别人在下面回复也收", () => {
       state.threads.push(sentThreadKey(sent));
     };
     const channel = { id: "C2", name: "proj", isIm: false, isMpim: false };
-    const msg = (over: Record<string, unknown>) => ({ channel, sender: { id: "UZING", displayName: "Zing", isBot: false }, origin: "other_user", isThreadReply: true, isMentioningMe: false, ...over });
+    const msg = (over: Record<string, unknown>) => ({ channel, sender: { id: "USAM", displayName: "Sam", isBot: false }, origin: "other_user", isThreadReply: true, isMentioningMe: false, ...over });
     const reply = (ts: string, root: string, over: Record<string, unknown> = {}) =>
       handlers["message.created"]!(msg({ ts, text: "收到", markdown: "收到", thread: { rootTs: root, isReply: true }, eventId: `C2:${ts}:created`, ...over }));
 
@@ -566,10 +566,10 @@ describe("chief 替你发出去的帖子，别人在下面回复也收", () => {
     // 它的回显（gabriel-slack 认得是自己这边发的）：不收。
     await handlers["message.created"]!(msg({ ts: "10.0", origin: "this_client", sender: { id: "UME1", isBot: false }, text: "x", markdown: "x", thread: null, isThreadReply: false, eventId: "C2:10.0:created" }));
     expect(got).toEqual([]);
-    // Zing 在它的 thread 里回：收，算「我在的 thread 有后续」。
+    // Sam 在它的 thread 里回：收，算「我在的 thread 有后续」。
     await reply("11.0", "10.0");
     expect(got).toHaveLength(1);
-    expect(got[0]).toMatchObject({ relevance: "thread", role: "message", sender: { name: "Zing" }, replyTarget: { channel: "C2", ts: "11.0", thread_ts: "10.0" } });
+    expect(got[0]).toMatchObject({ relevance: "thread", role: "message", sender: { name: "Sam" }, replyTarget: { channel: "C2", ts: "11.0", thread_ts: "10.0" } });
     expect(scenarioOf(eventOfSlack(got[0]!, "UME1")!)).toBe("slack_thread");
     // 你自己在下面回的：照旧是你自己说的（self），不当成找你的。
     await reply("12.0", "10.0", { origin: "self_other_client", sender: { id: "UME1", isBot: false } });
@@ -654,14 +654,27 @@ describe("白名单", () => {
     const h = home();
     chief(h, "cursor");
     writeFileSync(join(h, "events.jsonl"), [
-      { id: 1, at: "t", source: "slack", kind: "k", title: "私信", url: null, from: "Bob Lee (ENG - QA)", fromId: "UBOB1", text: "压测好了吗", why: ["dm"], keys: [], reply: { channel: "D1", ts: "1" } },
-      { id: 2, at: "t", source: "slack", kind: "k", title: "私信", url: null, from: "Joe", fromId: "UJOE1", text: "能上线吗", why: ["dm"], keys: [], reply: { channel: "D2", ts: "1" } },
+      { id: 1, at: "t", source: "slack", kind: "k", title: "私信", url: null, from: "Bob Lee", fromId: "U0BOB1234", text: "压测好了吗", why: ["dm"], keys: [], reply: { channel: "D1", ts: "1" } },
+      { id: 2, at: "t", source: "slack", kind: "k", title: "私信", url: null, from: "Joe", fromId: "U0JOE1234", text: "能上线吗", why: ["dm"], keys: [], reply: { channel: "D2", ts: "1" } },
     ].map((e) => JSON.stringify(e)).join("\n") + "\n");
-    execFileSync(process.execPath, ["--import", TSX, CLI, "rules", "trust", "add"], { env: { ...process.env, CHIEF_HOME: h }, input: "bob lee" });
+    withStdin(h, "bob lee", "rules", "trust", "add");
     writeFileSync(join(h, "drafts", "a.md"), "好了");
     expect(JSON.parse(chief(h, "reply", "add", "--event", "1", "--file", join(h, "drafts", "a.md")))).toMatchObject({ policy: "auto", trusted: true });
     expect(JSON.parse(chief(h, "reply", "add", "--event", "2", "--file", join(h, "drafts", "a.md")))).toMatchObject({ policy: "ask" });
     expect(chief(h, "rules")).toContain("- bob lee");
+  });
+
+  it("只认编号或完整的显示名：名字的一部分、改成像别人的名字都不算", async () => {
+    const { isTrusted } = await import("../src/store");
+    expect(isTrusted(["U0BOB1234"], "Mallory", "U0BOB1234")).toBe(true);
+    expect(isTrusted(["U0BOB1234"], "U0BOB1234", "U0EVE9999")).toBe(false);
+    expect(isTrusted([" Bob Lee "], "bob lee", "U0EVE9999")).toBe(true);
+    expect(isTrusted(["bob"], "Bob Lee", "U0BOB1234")).toBe(false);
+    expect(isTrusted(["bob lee"], "Bob Lee (ENG - QA)", "U0BOB1234")).toBe(false);
+    expect(isTrusted(["bob lee"], "not bob lee", "U0EVE9999")).toBe(false);
+    expect(isTrusted([""], "", "")).toBe(false);
+    // 全大写、不带数字的名字不当成编号。
+    expect(isTrusted(["WES"], "wes", "U0WES1234")).toBe(true);
   });
 });
 
