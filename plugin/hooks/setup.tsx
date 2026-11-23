@@ -8,7 +8,7 @@ import type { Doctor, Setup, Snapshot } from '../types'
 import { act, engineDo, hubStop, showLogs, skipOld, tell, testMessage } from './actions'
 import { ensureKey } from './confirm'
 import { chiefDir, refresh } from './data'
-import { RELOAD_SKILL, ago, type Els } from './views'
+import { RELOAD_SKILL, ago, type Els } from './ui'
 
 const setup = atom({ plugin: 'chief', key: 'setup' } as const, { installed: false, doctor: null, busy: '', said: '', cwd: '', key: 'none' } as Setup)
 

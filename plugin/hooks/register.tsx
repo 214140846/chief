@@ -5,7 +5,7 @@
 //   策略：每种消息怎么办、回复要不要你确认、你的规矩、主会话提议的规矩。
 //   测评：最近 7 天判断了多少、打扰你几次、准不准、稿子能不能原样用；每条判断能标对错。
 //   设置：主会话、后台引擎、来源（登录 / 连上 / 断开）、插电不睡、试一下（setup.tsx）。引擎还没装时面板只有这一页。
-// 数据直接读 ~/chief/data 里的文件（data.ts，每 3 秒一次）；动作在 actions.ts；画法在 views.tsx。
+// 数据直接读 ~/chief/data 里的文件（data.ts，每 3 秒一次）；动作在 actions.ts；每个页签的画法在 tabs/ 里，共用的小东西在 ui.tsx。
 import { atom, read } from 'claude-code'
 import type { EngineInterface as Engine, Register } from 'claude-code'
 
@@ -13,7 +13,13 @@ import { refresh, chiefDir } from './data'
 import { confirmAsked, ensureKey, noteUserSaid } from './confirm'
 import { isHub, isHubMonitor, markHub, recordCall } from './usage'
 import { autoUpdate, checkSetup, missing, readSetup, setupTab } from './setup'
-import { evalTab, header, nowTab, outboxTab, policyTab, thingsTab, type Els } from './views'
+import { evalTab } from './tabs/eval'
+import { header } from './tabs/header'
+import { nowTab } from './tabs/now'
+import { outboxTab } from './tabs/outbox'
+import { policyTab } from './tabs/policy'
+import { thingsTab } from './tabs/things'
+import type { Els } from './ui'
 
 const snap = atom({ plugin: 'chief', key: 'snap' } as const, null)
 const note = atom({ plugin: 'chief', key: 'note' } as const, '')

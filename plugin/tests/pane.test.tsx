@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import { askedAfter } from '../hooks/confirm'
-import { listify, splitAsk } from '../hooks/views'
+import { listify, splitAsk } from '../hooks/ui'
 import { addCall, dayOf, isHubMonitor } from '../hooks/usage'
 import type { ReplyRow } from '../types'
 
