@@ -2,6 +2,7 @@
 import { atom, update } from 'claude-code'
 import type { EngineInterface as Engine } from 'claude-code'
 
+import { defaultHomeOf, layoutOf, topOf, type Layout } from '../engine/src/shared/paths'
 import type { AskRow, DecisionRow, HubUsage, PolicyFile, ReplyRow, Reviews, Snapshot, ThingRow } from '../types'
 
 // 面板的状态都在 PluginState['chief'] 里（types/index.d.ts）；引擎要求每个文件用到哪份就在本文件里声明哪份。
@@ -12,25 +13,23 @@ const STALE_MS = 60_000
 // 测评看最近几天。
 export const EVAL_DAYS = 7
 
-let dir: string | null = null
-let rules: string | null = null
+let files: Layout | null = null
 
-// chief 的数据目录：CHIEF_HOME，没设就是 ~/chief/data（和 chief 自己的规则一样）。chief 命令在它下面的 bin/chief。
-export async function chiefDir($: Engine): Promise<string> {
-  if (dir === null) {
+// chief 的文件在哪：CHIEF_HOME，没设就是 ~/chief/data，规矩在工作目录最上层（和引擎按同一份算，见 engine/src/shared/paths.ts）。
+export async function chiefFiles($: Engine): Promise<Layout> {
+  if (files === null) {
     const env = (await $.process.run(['/usr/bin/env'])).stdout.split('\n')
     const get = (k: string) => env.find(l => l.startsWith(`${k}=`))?.slice(k.length + 1).trim() ?? ''
-    const custom = get('CHIEF_HOME')
-    dir = custom.startsWith('/') ? custom : `${get('HOME')}/chief/data`
-    // 规矩放在工作目录最上层（data 的上一层）；CHIEF_HOME 指到别处时和数据放一起。
-    rules = custom.startsWith('/') ? `${custom}/rules.json` : `${get('HOME')}/chief/rules.json`
+    const custom = get('CHIEF_HOME').replace(/\/+$/, '')
+    const home = custom.startsWith('/') ? custom : defaultHomeOf(get('HOME'))
+    files = layoutOf(home, topOf(home, get('HOME')))
   }
-  return dir
+  return files
 }
 
-async function rulesFile($: Engine): Promise<string> {
-  await chiefDir($)
-  return rules!
+// chief 的数据目录。chief 命令在它下面的 bin/chief。
+export async function chiefDir($: Engine): Promise<string> {
+  return (await chiefFiles($)).home
 }
 
 async function readJson<T>($: Engine, path: string, fallback: T): Promise<T> {
@@ -56,26 +55,26 @@ async function readLines<T>($: Engine, path: string): Promise<T[]> {
 }
 
 export async function refresh($: Engine) {
-  const dir = await chiefDir($)
+  const f = await chiefFiles($)
   const [alive, engine, state, dispatch, things, replies, decisions, reviews, policy, sources, activity, evals, people, hubUsage] = await Promise.all([
-    readJson<{ at?: string; stopped?: boolean }>($, `${dir}/alive.json`, {}),
-    readJson<{ at?: string; health?: Snapshot['health'] }>($, `${dir}/engine.json`, {}),
-    readJson<{ nextId?: number }>($, `${dir}/state.json`, {}),
-    readJson<Record<string, unknown>>($, `${dir}/dispatch.json`, {}),
-    readJson<{ things: ThingRow[]; asks: AskRow[] }>($, `${dir}/things.json`, { things: [], asks: [] }),
-    readJson<{ items: ReplyRow[] }>($, `${dir}/replies.json`, { items: [] }),
-    readLines<DecisionRow>($, `${dir}/decisions.jsonl`),
-    readJson<Reviews>($, `${dir}/reviews.json`, {}),
-    readJson<PolicyFile | null>($, await rulesFile($), null),
-    readJson<Record<string, boolean>>($, `${dir}/sources.json`, {}),
-    readJson<Snapshot['activity']>($, `${dir}/activity.json`, {}),
-    readJson<Snapshot['evals']>($, `${dir}/evals.json`, { cases: [], runs: [] }),
-    readJson<Record<string, string>>($, `${dir}/people.json`, {}),
-    readJson<HubUsage>($, `${dir}/hub-usage.json`, { days: {} }),
+    readJson<{ at?: string; stopped?: boolean }>($, f.alive, {}),
+    readJson<{ at?: string; health?: Snapshot['health'] }>($, f.engineAlive, {}),
+    readJson<{ nextId?: number }>($, f.state, {}),
+    readJson<Record<string, unknown>>($, f.dispatch, {}),
+    readJson<{ things: ThingRow[]; asks: AskRow[] }>($, f.things, { things: [], asks: [] }),
+    readJson<{ items: ReplyRow[] }>($, f.replies, { items: [] }),
+    readLines<DecisionRow>($, f.decisions),
+    readJson<Reviews>($, f.reviews, {}),
+    readJson<PolicyFile | null>($, f.policy, null),
+    readJson<Record<string, boolean>>($, f.sources, {}),
+    readJson<Snapshot['activity']>($, f.activity, {}),
+    readJson<Snapshot['evals']>($, f.evals, { cases: [], runs: [] }),
+    readJson<Record<string, string>>($, f.people, {}),
+    readJson<HubUsage>($, f.hubUsage, { days: {} }),
   ])
   // 钥匙清过、换过的记录：你点过「知道了」的（记在插件自己的存储里，主会话改不了 chief 的数据就能抹掉它）不再提醒。
   const keyAck = await $.store.get('keyAck').catch(() => null)
-  const keyAlerts = (await readLines<{ at: string; what: string }>($, `${dir}/key-log.jsonl`))
+  const keyAlerts = (await readLines<{ at: string; what: string }>($, f.keyLog))
     .filter((x): x is Snapshot['keyAlerts'][number] => (x.what === 'reset' || x.what === 'set') && (typeof keyAck !== 'string' || x.at > keyAck))
   const maxEvent = (state.nextId ?? 1) - 1
   const since = Date.now() - EVAL_DAYS * 86_400_000

@@ -1,6 +1,8 @@
 // 面板的六个页签怎么画。元素来自当前界面（App / 终端）的元素表；App 才有的（输入框、下拉、Markdown、图）没有时退回纯文字。
 import type { EngineInterface as Engine, RenderChildren } from 'claude-code'
 
+import { AUDIENCE_LABELS, DEFAULT_PLACEMENT, DEFAULT_SIGNATURE, EXPECT_LABELS, HANDLE_LABELS, REPLY_MODE_SHORT, expectOf, placementOf } from '../engine/src/shared/rules'
+import { SCENARIOS, sourceLabel } from '../engine/src/shared/sources'
 import type { AskRow, DecisionRow, Handle, HubUsage, ReplyMode, ReplyRow, Rule, Snapshot, ThingRow } from '../types'
 import {
   ackKeyAlerts, act, answerAsk, askAlways, openImage, addCustom, addRule, addQuick, addStyle, removeCase, runEvals, saveCase, trust, annotate, clearBasket, openSession, removeQuick, removeStyle, sendBasket, setPlacement, setSignature, unannotate, decideProposal, engineDo, finish, hubStop, markRight, markWrong, redo, removeCustom, removeRule, send, setBrief,
@@ -11,37 +13,16 @@ import { dayOf } from './usage'
 
 export type Els = ReturnType<Engine['ui']['resolve']>
 
-export const SOURCE: Record<ReplyRow['source'], string> = { slack: 'Slack', github: 'GitHub', jira: 'Jira', notion: 'Notion', session: '会话' }
 const STATUS: Record<ThingRow['status'], string> = {
   waiting_you: '等你定', doing: '在做', waiting_others: '等别人', done: '办完了', dropped: '不做了',
 }
 const VERDICT: Record<DecisionRow['verdict'], string> = {
   forwarded: '送进会话', opened: '开了新会话', asked: '问你', noted: '只记下', ignored: '忽略',
 }
-// 和 chief 的 src/store.ts SCENARIOS 一致。
-const SCENARIO: Record<string, string> = {
-  slack_self: '我在 Slack 上给自己发的话', slack_dm: 'Slack 私信', slack_mention: 'Slack 频道里 @我', slack_thread: '我在的 thread 有后续',
-  github_review: 'PR 请我 review', github_mention: 'GitHub 上 @我', github_comment: '别人评论了我的 PR / issue', github_assigned: 'GitHub 指派给我',
-  github_approved: '我的 PR 被 approve 了', github_changes: '我的 PR 被要求修改',
-  jira_assigned: 'Jira 指派给我', jira_mention: 'Jira 评论里提到我', jira_comment: '别人评论了我的 Jira 单',
-  notion_comment: 'Notion 页面有新评论', session_update: '我的会话有新进展', other: '其他',
-}
-const HANDLES: { value: Handle; label: string }[] = [
-  { value: 'dispatch', label: '派人去办' }, { value: 'note', label: '只记下' }, { value: 'ignore', label: '忽略' },
-  { value: 'approve', label: '直接 approve PR' }, { value: 'command', label: '当成我的指令' },
-]
-const MODES: { value: ReplyMode; label: string }[] = [
-  { value: 'ask', label: '对外先问我' }, { value: 'auto', label: '对外直接发' },
-]
-const DEFAULT_PLACEMENT = { direct: 'inline', group: 'inline', channel: 'thread', self: 'thread' } as const
-
-// 和 chief 的 placementOf 一样：这条 Slack 回复会放在 thread 里，还是直接回在对话里。
-function placeOf(s: Snapshot, r: ReplyRow): 'inline' | 'thread' {
-  if (r.target.thread_ts) return 'thread'
-  if (r.target.in === 'thread' || r.target.in === 'inline') return r.target.in
-  const a = (r.target.audience ?? (r.target.channel?.startsWith('D') ? 'direct' : 'channel')) as keyof typeof DEFAULT_PLACEMENT
-  return (s.policy?.placement ?? DEFAULT_PLACEMENT)[a] ?? 'thread'
-}
+// 场景、做法、回复要不要确认的名字和 chief 命令行用同一份（engine/src/shared/）。
+const SCENARIO: Record<string, string> = SCENARIOS
+const HANDLES = Object.entries(HANDLE_LABELS).map(([value, label]) => ({ value: value as Handle, label }))
+const MODES = Object.entries(REPLY_MODE_SHORT).map(([value, label]) => ({ value: value as ReplyMode, label }))
 
 function short(text: string, max: number): string {
   const one = text.replace(/\s+/g, ' ').trim()
@@ -179,7 +160,7 @@ export function header($: Engine, ui: Els, s: Snapshot, said: string, current: s
           : <Text size="caption" color="warning">● 主会话没在听 · 上次 {ago(s.hub.lastAt)}</Text>}
         {s.engineAt === null
           ? <Text size="caption" color="error">引擎没在跑</Text>
-          : broken.length > 0 ? <Text size="caption" color="error">{broken.map(k => SOURCE[k as keyof typeof SOURCE] ?? k).join('、')} 连不上</Text>
+          : broken.length > 0 ? <Text size="caption" color="error">{broken.map(sourceLabel).join('、')} 连不上</Text>
           : s.unhandled > 0 ? <Text size="caption" dimColor>{s.unhandled} 条等判断</Text> : <Text size="caption" dimColor>引擎在跑</Text>}
       </Box>
       {s.keyAlerts.length > 0 && (
@@ -321,12 +302,12 @@ export function replyCard($: Engine, ui: Els, s: Snapshot, edit: Record<string, 
   const editing = opened.includes(editKey)
   const redoing = opened.includes(redoKey)
   const body = edit[String(r.id)] ?? r.body
-  const sign = s.policy?.signature ?? '🤖 agent reply'
+  const sign = s.policy?.signature ?? DEFAULT_SIGNATURE
   // 一行说清：哪来的、属于哪件事、发到哪。
   const meta = [
-    `${SOURCE[r.source]} · ${short(r.context.where, 30)}`,
+    `${sourceLabel(r.source)} · ${short(r.context.where, 30)}`,
     t ? `事情：${short(t.title, 24)}` : '',
-    r.source === 'slack' && !approve ? (r.kind === 'message' ? (r.target.thread_ts ? '' : '新消息') : placeOf(s, r) === 'thread' ? '回到 thread' : '直接回在对话里') : '',
+    r.source === 'slack' && !approve ? (r.kind === 'message' ? (r.target.thread_ts ? '' : '新消息') : placementOf(r.target, s.policy?.placement ?? DEFAULT_PLACEMENT) === 'thread' ? '回到 thread' : '直接回在对话里') : '',
   ].filter(Boolean).join(' · ')
   return (
     <Box key={`r${r.id}`} flexDirection="column" borderStyle="round" borderColor={r.status === 'failed' ? 'error' : 'inactive'} paddingX="md" paddingY="sm" gap="sm" marginTop="sm">
@@ -757,7 +738,7 @@ export function policyTab($: Engine, ui: Els, s: Snapshot, opened: string[]) {
         ))}
 
       {section('sec-placement', 'Slack 回复放哪', '对方本来在 thread 里说的，总是回到那个 thread；其余按对话的种类',
-        ([['direct', '一对一私信'], ['group', '群聊'], ['channel', '频道'], ['self', '你给自己发的']] as const).map(([k, label]) => (
+        (Object.entries(AUDIENCE_LABELS) as [keyof typeof AUDIENCE_LABELS, string][]).map(([k, label]) => (
           <Box key={`pl-${k}`} flexDirection="row" justifyContent="space-between" alignItems="center" gap="sm" paddingY="xs">
             <Text>{label}</Text>
             {select(ui, `pl-${k}`, (p.placement ?? DEFAULT_PLACEMENT)[k], [{ value: 'inline', label: '直接回在对话里' }, { value: 'thread', label: '回到 thread' }], v => void setPlacement($, k, v as 'inline' | 'thread'))}
@@ -766,8 +747,8 @@ export function policyTab($: Engine, ui: Els, s: Snapshot, opened: string[]) {
 
       {section('sec-signature', 'Slack 回复的署名', '替你发到 Slack 的话，正文上方加一行灰色小字「署名 · confirmed by 你」（不进正文），让对方一眼知道是 agent 代回的；清空就不加',
         'Input' in ui
-          ? <ui.Input key="signature" value={p.signature ?? '🤖 agent reply'} submitLabel="存" onSubmit={(v: string) => void setSignature($, v.trim())} />
-          : <Text key="sig">{p.signature ?? '🤖 agent reply'}</Text>)}
+          ? <ui.Input key="signature" value={p.signature ?? DEFAULT_SIGNATURE} submitLabel="存" onSubmit={(v: string) => void setSignature($, v.trim())} />
+          : <Text key="sig">{p.signature ?? DEFAULT_SIGNATURE}</Text>)}
 
       {section('sec-notes', '我的规矩', '一句话，主会话判断时最优先。只有主会话读，引擎不认：写「一定问我」管不住直接发，要拦住某个人或对话，加进上面的「一定问我」名单',
         p.notes.length === 0 && <Text key="nt-none" size="footnote" dimColor>还没有。</Text>,
@@ -874,7 +855,7 @@ export function evalTab($: Engine, ui: Els, s: Snapshot, opened: string[]) {
         {isOpen && (
           <Box flexDirection="row" gap="sm" alignItems="center" paddingLeft="md">
             <Text size="caption" dimColor>存成演练例子，应该：</Text>
-            {select(ui, `sc-${d.event}`, r && !r.ok ? '' : kind(d.verdict), [{ value: 'dispatch', label: '派人去办' }, { value: 'note', label: '只记下' }, { value: 'ignore', label: '忽略' }, { value: 'ask', label: '问你' }], val => { if (val) void saveCase($, d.event, val) })}
+            {select(ui, `sc-${d.event}`, r && !r.ok ? '' : expectOf(d.verdict), Object.entries(EXPECT_LABELS).map(([value, label]) => ({ value, label })), val => { if (val) void saveCase($, d.event, val) })}
           </Box>
         )}
       </Box>
@@ -883,8 +864,8 @@ export function evalTab($: Engine, ui: Els, s: Snapshot, opened: string[]) {
 
   const v = st.value
   const hours = v.minutes >= 60 ? `${(v.minutes / 60).toFixed(1)} 小时` : `${v.minutes} 分钟`
-  const EXPECT: Record<string, string> = { dispatch: '派人去办', note: '只记下', ignore: '忽略', ask: '问你' }
-  const kind = (verdict: DecisionRow['verdict']) => (verdict === 'forwarded' || verdict === 'opened' ? 'dispatch' : verdict === 'asked' ? 'ask' : verdict === 'ignored' ? 'ignore' : 'note')
+  const EXPECT: Record<string, string> = EXPECT_LABELS
+  const kind = expectOf
   const lastRun = s.evals.runs.at(-1)
   const results = lastRun ? s.evals.cases.filter(c => lastRun.events[c.id] !== undefined).map(c => {
     const d = [...s.dryDecisions].reverse().find(x => x.event === lastRun.events[c.id])

@@ -3,11 +3,12 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface as Engine, RenderChildren } from 'claude-code'
 
+import { SOURCE_IDS, SOURCE_META, sourceLabel, type SetupMeta, type SourceId } from '../engine/src/shared/sources'
 import type { Doctor, Setup, Snapshot } from '../types'
 import { act, engineDo, hubStop, showLogs, skipOld, tell, testMessage } from './actions'
 import { ensureKey } from './confirm'
 import { chiefDir, refresh } from './data'
-import { RELOAD_SKILL, SOURCE, ago, type Els } from './views'
+import { RELOAD_SKILL, ago, type Els } from './views'
 
 const setup = atom({ plugin: 'chief', key: 'setup' } as const, { installed: false, doctor: null, busy: '', said: '', cwd: '', key: 'none' } as Setup)
 
@@ -59,7 +60,7 @@ export async function readSetup($: Engine) {
 export function missing(s: Setup): number {
   const d = s.doctor
   if (!s.installed || d === null) return 3
-  return [d.engine === 'running' && d.version === wanted, d.sources.slack.enabled && d.sources.slack.ready, d.hub.listening].filter(ok => !ok).length
+  return [d.engine === 'running' && d.version === wanted, d.sources.slack?.enabled === true && d.sources.slack.ready === true, d.hub.listening].filter(ok => !ok).length
 }
 
 async function step($: Engine, busy: Setup['busy'], run: () => Promise<{ exitCode: number; stdout: string; stderr: string } | null>) {
@@ -125,7 +126,7 @@ function loginSlack($: Engine, workspace?: string) {
   return step($, 'slack', () => chief($, ['connect', 'slack', ...(workspace ? ['--workspace', workspace] : [])], LOGIN_MS))
 }
 
-function connect($: Engine, source: 'github' | 'jira') {
+function connect($: Engine, source: SourceId) {
   return step($, source, () => chief($, ['connect', source]))
 }
 
@@ -231,56 +232,62 @@ export function setupTab($: Engine, ui: Els, st: Setup, s: Snapshot | null, logT
     </Box>
   )
 
-  // ── 来源：每个一行，状态和按钮在一起 ──
-  const on = (src: 'slack' | 'github' | 'jira' | 'notion') => s !== null ? s.sources[src] === true : d?.sources[src].enabled === true
-  const fails = (src: 'slack' | 'github' | 'jira' | 'notion') => (s?.health[src]?.fails ?? 0)
-  const state = (src: 'slack' | 'github' | 'jira' | 'notion') => on(src) && fails(src) > 0
+  // ── 来源：每个一行，状态和按钮在一起。按来源名单（engine/src/shared/sources.ts）的顺序和连法画 ──
+  const on = (src: SourceId) => s !== null ? s.sources[src] === true : d?.sources[src]?.enabled === true
+  const fails = (src: SourceId) => (s?.health[src]?.fails ?? 0)
+  const state = (src: SourceId) => on(src) && fails(src) > 0
     ? <Text color="error">连不上（连着 {fails(src)} 次）</Text>
     : <Text color={on(src) ? 'success' : undefined} dimColor={!on(src)}>{on(src) ? '开着' : '没开'}</Text>
-  const line = (src: 'slack' | 'github' | 'jira' | 'notion', ...rest: RenderChildren[]) => (
+  const line = (src: SourceId, ...rest: RenderChildren[]) => (
     <Box key={`src-${src}`} flexDirection="row" gap="sm" alignItems="center" flexWrap="wrap">
-      <Text>{SOURCE[src]}</Text>
+      <Text>{sourceLabel(src)}</Text>
       {state(src)}
       {rest}
     </Box>
   )
-  const off = (src: 'slack' | 'github' | 'jira' | 'notion') => on(src) ? <Button key={`dc-${src}`} onPress={() => act($, `断开 ${SOURCE[src]}`, ['disconnect', src])}>断开</Button> : null
-  const slackReady = d?.sources.slack.ready === true
+  const off = (src: SourceId) => on(src) ? <Button key={`dc-${src}`} onPress={() => act($, `断开 ${sourceLabel(src)}`, ['disconnect', src])}>断开</Button> : null
+  const slackReady = d?.sources.slack?.ready === true
   // 还没记过工作区、又不在登录中：Slack 那行给一个填工作区的输入框，代替「登录 Slack」按钮。
   const askWorkspace = st.busy !== 'slack' && st.installed && d !== null && !d.slackWorkspace && d.chrome !== false
   const slackOk = on('slack') && fails('slack') === 0 && (d === null || slackReady)
-  const tool = (id: 'github' | 'jira', install: string, login: string) => {
+  // 用本机命令的来源（gh、acli）：装了、登录了才给「连上」，不然说在终端跑什么。
+  const tool = (id: SourceId, install: string, login: string) => {
     const t = d?.sources[id]
     if (on(id)) return [line(id, off(id))]
     if (st.busy === id) return [line(id, <Text key={`${id}-busy`} size="footnote" dimColor>正在试…</Text>)]
     // doctor 说了没装 / 没登录才给提示；没 doctor 时照样给「连上」按钮，连不上会在下面说为什么。
-    if (t !== undefined && !t.tool) return [line(id), note(`${SOURCE[id]}：没找到命令，在终端跑 ${install}，再 ${login}，然后点「重新检查」。`)]
-    if (t !== undefined && !t.ok) return [line(id), note(`${SOURCE[id]}：还没登录，在终端跑 ${login}，然后点「重新检查」。${t.detail ? `（${t.detail}）` : ''}`)]
+    if (t !== undefined && !t.tool) return [line(id), note(`${sourceLabel(id)}：没找到命令，在终端跑 ${install}，再 ${login}，然后点「重新检查」。`)]
+    if (t !== undefined && !t.ok) return [line(id), note(`${sourceLabel(id)}：还没登录，在终端跑 ${login}，然后点「重新检查」。${t.detail ? `（${t.detail}）` : ''}`)]
     return [line(id, <Button key={`cn-${id}`} onPress={() => void connect($, id)}>连上</Button>)]
   }
+  // 浏览器登录（Slack）：登录 / 重新登录、填工作区。
+  const browser = (id: SourceId) => [
+    // 登录进行中两个按钮都不画：只藏「重新登录」的话「断开」会挪到它的位置，再点一下就把 Slack 断了。
+    line(id,
+      st.busy === id || askWorkspace ? null : button(`setup-${id}`, on(id) || slackReady ? '重新登录' : '登录 Slack', !busy && st.installed && d?.chrome !== false, () => void loginSlack($), !(on(id) || slackReady)),
+      st.busy === id ? null : off(id)),
+    d?.slackWorkspace && note(`工作区：${d.slackWorkspace}.slack.com`),
+    // 还没记过工作区：先问一句（可以不填）。填了只用登一次。
+    askWorkspace && 'Input' in ui && (
+      <Box key={`${id}-ws`} flexDirection="column" gap="xs">
+        {note('你的 Slack 工作区：浏览器里打开 Slack 时地址栏 xxx.slack.com 的 xxx。公司要 SSO 的一定要填，填了只用登一次；不知道可以留空直接点。')}
+        <ui.Input key="slack-workspace" placeholder="比如 acme（可以留空）" submitLabel={on(id) || slackReady ? '重新登录' : '登录 Slack'} onSubmit={(v: string) => {
+          if (!busy) void loginSlack($, v.trim() || undefined)
+        }} />
+      </Box>
+    ),
+    st.busy === id && note('在弹出的 Chrome 窗口里登录 Slack（公司 SSO、确认新设备都照做），登好窗口会自己关掉。'),
+    d?.chrome === false && note('登录 Slack 要用 Google Chrome：先装一个 Chrome。'),
+  ]
+  // 令牌从终端给的（Notion）：这里只看开没开、能断开。
+  const sourceRows = (id: SourceId, setup: SetupMeta) => setup.kind === 'cli' ? tool(id, setup.install, setup.login)
+    : setup.kind === 'browser' ? browser(id)
+    : [line(id, off(id))]
   const sources = (
     <Box flexDirection="column" gap="xs">
-      {/* 登录进行中两个按钮都不画：只藏「重新登录」的话「断开」会挪到它的位置，再点一下就把 Slack 断了。 */}
-      {line('slack',
-        st.busy === 'slack' || askWorkspace ? null : button('setup-slack', on('slack') || slackReady ? '重新登录' : '登录 Slack', !busy && st.installed && d?.chrome !== false, () => void loginSlack($), !(on('slack') || slackReady)),
-        st.busy === 'slack' ? null : off('slack'))}
-      {d?.slackWorkspace && note(`工作区：${d.slackWorkspace}.slack.com`)}
-      {/* 还没记过工作区：先问一句（可以不填）。填了只用登一次。 */}
-      {askWorkspace && 'Input' in ui && (
-        <Box flexDirection="column" gap="xs">
-          {note('你的 Slack 工作区：浏览器里打开 Slack 时地址栏 xxx.slack.com 的 xxx。公司要 SSO 的一定要填，填了只用登一次；不知道可以留空直接点。')}
-          <ui.Input key="slack-workspace" placeholder="比如 acme（可以留空）" submitLabel={on('slack') || slackReady ? '重新登录' : '登录 Slack'} onSubmit={(v: string) => {
-            if (!busy) void loginSlack($, v.trim() || undefined)
-          }} />
-        </Box>
-      )}
-      {st.busy === 'slack' && note('在弹出的 Chrome 窗口里登录 Slack（公司 SSO、确认新设备都照做），登好窗口会自己关掉。')}
-      {d?.chrome === false && note('登录 Slack 要用 Google Chrome：先装一个 Chrome。')}
-      {tool('github', 'brew install gh', 'gh auth login')}
-      {tool('jira', 'brew install acli', 'acli jira auth login --web（用 twg 的话：twg login）')}
-      {line('notion', off('notion'))}
-      {(['slack', 'github', 'jira', 'notion'] as const).filter(src => on(src) && fails(src) > 0).map(src => (
-        <Text key={`err-${src}`} size="footnote" color="error" wrap="wrap">{SOURCE[src]} {ago(s!.health[src]!.at)}：{s!.health[src]!.error ?? '没说为什么'}</Text>
+      {SOURCE_IDS.flatMap(id => sourceRows(id, SOURCE_META[id].setup))}
+      {SOURCE_IDS.filter(src => on(src) && fails(src) > 0).map(src => (
+        <Text key={`err-${src}`} size="footnote" color="error" wrap="wrap">{sourceLabel(src)} {ago(s!.health[src]!.at)}：{s!.health[src]!.error ?? '没说为什么'}</Text>
       ))}
       {note('Slack 连不上（比如登录过期）就点「重新登录」。GitHub、Jira 用你电脑上已经登录的 gh、acli（Jira 也可以用 twg）。Notion 要令牌，在终端里连：pbpaste | chief connect notion（先复制好）。')}
     </Box>

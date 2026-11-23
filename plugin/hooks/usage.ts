@@ -8,7 +8,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface as Engine, ModelUsage } from 'claude-code'
 
 import type { HubUsage, UsageDay } from '../types'
-import { chiefDir } from './data'
+import { chiefFiles } from './data'
 
 // 本会话是不是主会话：挂上 chief events --follow 的 Monitor 时记下（只记本会话的，不跨会话）。
 const hub = atom({ plugin: 'chief', key: 'hub' } as const, false)
@@ -97,7 +97,7 @@ export async function recordCall($: Engine, usage: ModelUsage) {
   const before = await read($, lastReading)
   const after = await readingNow($)
   await update($, lastReading, () => ({ at: after.at, five: after.five, week: after.week }))
-  const path = `${await chiefDir($)}/hub-usage.json`
+  const path = (await chiefFiles($)).hubUsage
   let file: HubUsage = { days: {} }
   try {
     file = JSON.parse(await $.fs.read(path)) as HubUsage

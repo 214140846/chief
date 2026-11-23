@@ -1,5 +1,9 @@
-// 面板直接读 ~/chief/data 里的文件（见 src/store.ts），这里是它用到的那部分。
-export type Source = 'slack' | 'github' | 'jira' | 'notion' | 'session'
+// 面板的类型合同：$.state 里存的东西（PluginState['chief']）。claude plugin validate 要它自成一体，不许 import，
+// 所以数据文件的那几样照抄 plugin/engine/src/shared/types.ts（引擎写、面板读）。
+// engine/test/contract.spec.ts 检查那边的每个类型都能当成这里的用：那边改了、这里没跟上，引擎的类型检查就过不了。
+// 来源、场景写成 string：加来源不用改这里，名字和标签都从 shared/sources.ts 拿。
+
+export type Source = string
 
 export type ReplyRow = {
   id: number
@@ -12,7 +16,7 @@ export type ReplyRow = {
   body: string
   custom?: number
   // 以你的名义发是怎么确认的：panel 面板上点的；chat 你在会话里说的（said 是你的原话）。
-  confirm?: { how: 'panel' | 'chat'; said?: string; at: string }
+  confirm?: { how: 'panel' | 'chat'; said?: string; at: string; hash?: string }
   // 主会话说你在会话里同意发了，插件还没核对上。
   confirmAsk?: { at: string }
   // 附的图（只有 Slack）：正文发完发到同一个地方。file 是复制进 drafts/images 后的路径。
@@ -73,9 +77,12 @@ export type DecisionRow = {
 
 export type Handle = 'dispatch' | 'note' | 'ignore' | 'approve' | 'command'
 export type ReplyMode = 'ask' | 'auto'
+export type Audience = 'direct' | 'group' | 'channel' | 'self'
+export type Placement = 'inline' | 'thread'
 
 export type Rule = { handle: Handle; reply: ReplyMode; brief?: string }
 
+// rules.json：老文件可能缺后来加的几项，所以那几项是可选的。
 export type PolicyFile = {
   scenarios: Record<string, Rule>
   // 固定回复：回复和其中一句一字不差，才能不问你直接发。
@@ -87,19 +94,24 @@ export type PolicyFile = {
   trusted?: string[]
   // 一定问我：这些人、对话的回复引擎一律不直接发（比白名单优先）。
   askAlways?: string[]
-  placement?: Record<'direct' | 'group' | 'channel' | 'self', 'inline' | 'thread'>
+  placement?: Record<Audience, Placement>
   // change：放宽发送的改动（主会话没带钥匙改的），你采纳才生效。
   proposals: { id: number; text: string; basis: string; at: string; change?: { args: string[]; input: string } }[]
 }
 
 export type Reviews = Record<string, { ok: boolean; note?: string; at: string }>
 
+export type Health = { ok: boolean; at: string; fails: number; error?: string }
+
+export type EvalCaseRow = { id: number; text: string; from: string; expect: 'dispatch' | 'note' | 'ignore' | 'ask'; note?: string }
+export type EvalRunRow = { id: number; at: string; events: Record<string, number> }
+
 // 面板每次刷新读出来的一份。
 export type Snapshot = {
   hub: { listening: boolean; lastAt: string | null }
   engineAt: string | null
-  // 每个来源最近一次收 / 拉的结果（引擎写在 engine.json）：fails 是连着失败几次。
-  health: Record<string, { ok: boolean; at: string; fails: number; error?: string }>
+  // 每个来源最近一次收 / 拉的结果（引擎写在 engine.json）：fails 是连着失败几次。数据文件坏了也在这里（键是「数据文件」）。
+  health: Record<string, Health>
   unhandled: number
   maxEvent: number
   things: ThingRow[]
@@ -116,7 +128,7 @@ export type Snapshot = {
   // 查过的 Slack 人：用户编号 → 名字（稿子里的 <@U…> 显示成 @名字）。
   people: Record<string, string>
   // 演练用的例子和最近一次演练（见 chief eval）。
-  evals: { cases: { id: number; text: string; from: string; expect: 'dispatch' | 'note' | 'ignore' | 'ask'; note?: string }[]; runs: { id: number; at: string; events: Record<string, number> }[] }
+  evals: { cases: EvalCaseRow[]; runs: EvalRunRow[] }
   // 演练消息的判断（不算进「替你做了」）。
   dryDecisions: DecisionRow[]
   // 主会话用掉的订阅额度（hub-usage.json）。
@@ -138,18 +150,17 @@ export type HubUsage = {
 
 export type Tab = 'now' | 'outbox' | 'things' | 'policy' | 'eval' | 'setup'
 
+// 一个来源连没连好：browser / secret 的看 ready；cli 的看 tool（命令装没装）、ok（试登录过没过）、detail（没过的原因）。
+export type DoctorSource = { enabled: boolean; ready?: boolean; tool?: boolean; ok?: boolean; detail?: string }
+
 // chief doctor 的结果：设置页按它打勾。
 export type Doctor = {
   version: string | null
   node: string
   engine: 'running' | 'stopped' | 'missing'
   chrome: boolean
-  sources: {
-    slack: { enabled: boolean; ready: boolean }
-    github: { enabled: boolean; tool: boolean; ok: boolean; detail: string }
-    jira: { enabled: boolean; tool: boolean; ok: boolean; detail: string }
-    notion: { enabled: boolean; ready: boolean }
-  }
+  // 来源 → 状态（旧引擎没有的来源这里就没有）。
+  sources: Record<string, DoctorSource>
   hub: { listening: boolean; lastAt: string | null }
   // 插电时不让电脑睡（引擎挂着 caffeinate -s）
   awake: boolean
@@ -157,13 +168,15 @@ export type Doctor = {
   slackWorkspace: string | null
   // 工作目录 ~/chief：消息中心开在这里（ready：CLAUDE.md 在）
   workspace: { path: string; ready: boolean }
+  // 同样的来源状态排成一列（旧引擎没有）。
+  list?: (DoctorSource & { id: string; label: string; setup: string })[]
 }
 
-// 设置页：引擎装没装（~/chief/data/bin/chief 在不在）、doctor 的结果、正在做哪一步、上一步的输出。
+// 设置页：引擎装没装（~/chief/data/bin/chief 在不在）、doctor 的结果、正在做哪一步（engine、来源编号、awake、check）、上一步的输出。
 export type Setup = {
   installed: boolean
   doctor: Doctor | null
-  busy: '' | 'engine' | 'slack' | 'github' | 'jira' | 'awake' | 'check'
+  busy: string
   said: string
   // 本会话开在哪个目录：和工作目录对不上时，提醒消息中心换个地方开
   cwd: string

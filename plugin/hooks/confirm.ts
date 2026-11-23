@@ -8,7 +8,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface as Engine } from 'claude-code'
 
 import type { ReplyRow } from '../types'
-import { chiefDir } from './data'
+import { chiefDir, chiefFiles } from './data'
 
 // 你在这个会话里最近亲口说的一句话（本会话的，不跨会话）。
 const said = atom({ plugin: 'chief', key: 'said' } as const, null as { text: string; at: number } | null)
@@ -51,10 +51,9 @@ export function askedAfter(items: readonly ReplyRow[], s: { at: number } | null,
 export async function confirmAsked($: Engine) {
   const s = await read($, said)
   if (s === null) return
-  const dir = await chiefDir($)
   let items: ReplyRow[]
   try {
-    items = (JSON.parse(await $.fs.read(`${dir}/replies.json`)) as { items?: ReplyRow[] }).items ?? []
+    items = (JSON.parse(await $.fs.read((await chiefFiles($)).replies)) as { items?: ReplyRow[] }).items ?? []
   } catch {
     return
   }
@@ -62,7 +61,7 @@ export async function confirmAsked($: Engine) {
   if (asked.length === 0) return
   const key = await confirmKey($)
   for (const id of asked) {
-    await $.process.run([`${dir}/bin/chief`, 'reply', 'confirm', String(id)], { stdin: JSON.stringify({ key, how: 'chat', said: s.text }) }).catch(() => null)
+    await $.process.run([`${await chiefDir($)}/bin/chief`, 'reply', 'confirm', String(id)], { stdin: JSON.stringify({ key, how: 'chat', said: s.text }) }).catch(() => null)
   }
 }
 
