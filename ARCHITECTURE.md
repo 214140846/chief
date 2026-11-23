@@ -33,8 +33,10 @@ Notion ─────┤                                                       
 `plugin/engine/src/`，TypeScript，用 tsx 直接跑，不编译。`setup.sh` 把它复制到 `~/chief/data/app` 并装进 launchd（插件目录每升一版就换，launchd 要一个不变的位置）。插件版本变了，下次加载时面板在后台再跑一遍 `setup.sh`。
 
 - `engine.ts`：主循环。收 Slack、轮询来源、对账（交给主会话 10 分钟还没判断的事件，补一条「漏掉了」）、发送、归档。
-- `cli.ts`：`chief` 命令行，主会话和面板都靠它读写数据。所有写入（标题、问题、进展、回复）在这里检查格式（`plain.ts`），发送前在这里和引擎里把关。
-- `store.ts`：数据文件的路径和读写（带锁、先写临时文件再改名）。
+- `cli.ts`：`chief` 命令行的入口和命令表，主会话和面板都靠它读写数据。各个命令在 `commands/` 里按用途分文件（`events`、`things`、`rules`、`reply`、`key`、`eval`、`setup`），读参数、标准输入的小工具在 `args.ts`。所有写入（标题、问题、进展、回复）在这里检查格式（`plain.ts`），发送前在这里和引擎里把关。
+- `sources/`：外部来源。每个来源实现 `Source`（拉动态、检查），再交一份 `SourceDescriptor`（怎么建、动态怎么变成事件、能不能评论 / approve、怎么连、怎么导入），放进 `sources/registry.ts`。引擎和命令行按注册表走，不写某个来源的分支。Slack 是推送的，收发在 `engine.ts` 里接 `slack/plugin.ts`，连和存 Cookie 在 `slack/source.ts`。
+- `shared/`：引擎和面板共用的纯 TypeScript（不 import Node 的东西）：来源名单和场景（`sources.ts`）、数据的类型（`types.ts`）、规矩里的名字和默认值、回复放哪（`rules.ts`）、文件路径（`paths.ts`）。面板直接 import 这几个文件。
+- `store.ts`：数据文件的读写（带锁、先写临时文件再改名），路径按 `shared/paths.ts` 算。
 - `keys.ts`：从文字里认出「是哪件事」的键（PR 地址、工单号、Notion 页面），同一件事在不同来源里出现时靠它归到同一个会话。
 - `secrets.ts`：macOS 钥匙串。`launchd.ts`：装卸 LaunchAgent。`images.ts`：回复附图。
 
@@ -48,7 +50,9 @@ Notion ─────┤                                                       
 
 ## 面板
 
-`plugin/hooks/`，Claude Code 插件的 hooks 模块（JSX）。`data.ts` 读 `~/chief/data` 里的文件（有变化时 `chief watch` 通知，另外每分钟保底读一次）；`actions.ts` 是按钮背后的命令；`views.tsx`、`setup.tsx` 是各个页签；`confirm.ts` 管确认钥匙：钥匙原文只在插件自己的存储里，面板点发送、或你在主会话说「发」时，插件带着钥匙调 `chief reply confirm`。
+`plugin/hooks/`，Claude Code 插件的 hooks 模块（JSX），跑在插件运行时里（没有 Node，碰外面只能通过 `$`）。`data.ts` 读 `~/chief/data` 里的文件（有变化时 `chief watch` 通知，另外每分钟保底读一次）；`actions.ts` 是按钮背后的命令；`tabs/` 里一个页签一个文件，`setup.tsx` 是设置页，共用的小东西在 `ui.tsx`；`confirm.ts` 管确认钥匙：钥匙原文只在插件自己的存储里，面板点发送、或你在主会话说「发」时，插件带着钥匙调 `chief reply confirm`。
+
+场景和来源的名字、做法的名字、回复放哪、文件路径，面板从 `engine/src/shared/` 直接 import，和引擎同一份。类型合同 `plugin/types/index.d.ts`（`$.state` 里存什么）按 `claude plugin validate` 的要求不能 import，数据文件的几个类型照抄了一份，`engine/test/contract.spec.ts` 在类型上检查它和 `shared/types.ts` 对得上。
 
 ## 数据文件（`~/chief`）
 
@@ -67,13 +71,12 @@ Notion ─────┤                                                       
 
 ## 加一个来源
 
-现在来源是写死的几处，加一个要改：
+来源都登记在一张表上，加一个只碰这几处：
 
-1. `plugin/engine/src/sources/<名字>.ts`：实现 `sources/types.ts` 里的 `Source`（`poll`、`check`），返回 `SourceItem`，标出 `mine` 和 `asks`。
-2. `sources/types.ts` 的 `SourceId`、`plugin/types/index.d.ts` 的 `Source`。
-3. `engine.ts` 里建来源的地方（找 `new GitHubSource`）。
-4. `cli.ts` 的 `connect` / `disconnect` / `doctor`、场景表（`rules.json` 的默认值）。
-5. 面板 `views.tsx` 的 `SOURCE` 名字、`setup.tsx` 的来源一行。
-6. hub skill 里认场景的那段。
+1. `plugin/engine/src/shared/sources.ts` 的 `SOURCE_META` 加一项：名字、推送还是轮询（`mode`）、带来哪几种场景（键是事件的 `why`，每种写名字和默认做法）、设置页怎么连（`cli` 写装和登录的命令，`secret` 从终端给令牌，`browser` 开浏览器登录）、只读的写 `readOnly`。场景表、默认规矩、`Scenario` 类型、面板上的名字和设置页那一行都从这里来。
+2. `plugin/engine/src/sources/<名字>.ts`：实现 `sources/types.ts` 里的 `Source`（`poll`、`check`），返回 `SourceItem`，标出 `mine` 和 `asks`；文件末尾导出一份 `SourceDescriptor`：`build`（引擎怎么建）、`event`（这件事的键、回复回到哪）、能发的写 `comment` / `approve`、`connect`、用本机命令的写 `local`，存钥匙的写 `secret`，能导入的写 `open`。
+3. 把它放进 `sources/registry.ts` 的 `SOURCES`（漏了类型检查过不了）。
+4. 跑 `npx vitest run test/registry.spec.ts`：名单和注册表对不上（场景没名字、轮询的没有 `build`、存钥匙的没写钥匙名……）会说哪里不对。
+5. hub skill（`plugin/skills/hub/SKILL.md`）里认场景的那句补上新来源的几种场景；文字里有它自己的编号格式（像工单号）的话，在 `keys.ts` 里加上认法。
 
-计划把这些收成一个来源注册表，到时这一节会改。
+引擎、命令行（`connect` / `disconnect` / `doctor` / `status` / `import`）、面板都不用改。

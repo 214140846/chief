@@ -36,6 +36,21 @@ claude plugin test plugin   # 面板（plugin/tests）
 
 改了引擎行为就补测试；改了面板的文字或按钮，看看 `plugin/tests/pane.test.tsx` 有没有要跟着改的。
 
+## 加一个来源
+
+要改的就这几处（细节见 [ARCHITECTURE.md](ARCHITECTURE.md)「加一个来源」）：
+
+1. `plugin/engine/src/shared/sources.ts`：`SOURCE_META` 加一项（名字、场景和默认做法、设置页怎么连）。
+2. `plugin/engine/src/sources/<名字>.ts`：实现 `Source`，导出一份 `SourceDescriptor`。
+3. `plugin/engine/src/sources/registry.ts`：放进 `SOURCES`。
+4. hub skill 里认场景的那句补上新场景。
+
+`test/registry.spec.ts` 会检查名单和注册表对得上；再给新来源的 `poll` 补个测试（照 `test/github.spec.ts`、`test/jira.spec.ts`）。
+
+## 面板和引擎共用的代码
+
+`plugin/engine/src/shared/` 里的文件面板也直接 import（插件运行时里没有 Node）：只写纯 TypeScript，不 import `node:` 的东西，也不 import `shared/` 以外的文件。面板的类型合同 `plugin/types/index.d.ts` 不能 import，改了 `shared/types.ts` 里的数据类型，照着改那边，`npx tsc --noEmit` 会检查两边对得上（`test/contract.spec.ts`）。
+
 ## 风格
 
 - 注释、界面文字、skill 都用中文，大白话，短。说清「为什么」，不写空话。
