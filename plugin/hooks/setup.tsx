@@ -128,6 +128,12 @@ function startHub($: Engine) {
   void $.prompt.submit({ text: '开 chief 消息中心' })
 }
 
+// 插件自己开不了别的会话（插件接口里没有），但 Claude App 的会话有 start_session 工具：
+// 让这个会话替你在工作目录开一个新会话当主会话。工具不在（终端里）就让它告诉你怎么手动开。
+function openHubThere($: Engine, path: string) {
+  void $.prompt.submit({ text: `用 start_session 在 ${path} 开一个新会话当 chief 消息中心：标题「chief 消息中心」，第一句话就是「开 chief 消息中心」。开好马上 detach_session 把它移到侧边栏顶层，然后告诉我去那个会话、把它的权限模式改成 bypass permissions。看不到 start_session 这个工具的话，什么都别做，只告诉我：在 Claude App 里新建会话，文件夹选 ${path}，权限模式选 bypass permissions，在那个会话里打 /chief 再点「开消息中心」。` })
+}
+
 // 设置页（原来的「控制」也并进来了）：主会话、后台引擎、来源、这台电脑、试一下，一块一块框起来。
 // 每块标题前打勾：好了是 ✓、边框变绿；还要你弄的是 ○。第一次装时从上往下点就行。
 // 引擎还没装时没有 Snapshot（s 是 null），只看 doctor 和装没装。
@@ -198,9 +204,13 @@ export function setupTab($: Engine, ui: Els, st: Setup, s: Snapshot | null, logT
   ) : (
     <Box flexDirection="column" gap="xs">
       {note(elsewhere
-        ? `这个会话开在 ${st.cwd}。消息中心最好开在工作目录：新建会话时文件夹选 ${d!.workspace.path}（权限模式选 bypass permissions），在那个会话里打 /chief 再点这里。`
+        ? `这个会话开在 ${st.cwd}，消息中心要开在工作目录 ${d!.workspace.path}（那里才读得到你的交代和助理记的东西）。点「在工作目录开主会话」，这个会话会替你开好；也可以自己在 App 里新建会话、文件夹选 ${d!.workspace.path}、权限模式选 bypass permissions，在那里打 /chief 再点「开消息中心」。`
         : '用这个会话当主会话：点下面的按钮，它会挂上监听、改名叫「chief 消息中心」。这个会话之后就一直开着，权限模式选 bypass permissions。')}
-      {buttons(button('setup-hub', !engineOk ? '开消息中心（先装好引擎）' : elsewhere ? '就用这个会话' : '开消息中心', !busy && engineOk, () => startHub($), !elsewhere), skip)}
+      {buttons(
+        elsewhere && engineOk ? button('setup-hub-there', '在工作目录开主会话', !busy, () => openHubThere($, d!.workspace.path)) : null,
+        button('setup-hub', !engineOk ? '开消息中心（先装好引擎）' : elsewhere ? '就用这个会话' : '开消息中心', !busy && engineOk, () => startHub($), !elsewhere),
+        skip,
+      )}
     </Box>
   )
 
@@ -261,7 +271,8 @@ export function setupTab($: Engine, ui: Els, st: Setup, s: Snapshot | null, logT
 
   return (
     <Box flexDirection="column" gap="sm" marginTop="sm">
-      {!st.installed && <Text weight="semibold">设置 chief：从上往下点，先装引擎</Text>}
+      {!st.installed && <Text weight="semibold">设置 chief：从上往下点</Text>}
+      {!st.installed && note('1. 装引擎：建工作目录 ~/chief，装后台程序。2. 登录 Slack（GitHub、Jira 可选）。3. 开主会话：主会话要开在 ~/chief 里，装好引擎后点「在工作目录开主会话」，或自己新建一个文件夹选 ~/chief 的会话。')}
       {block('set-engine', engineOk, '后台引擎（收消息、发回复）', engine)}
       {block('set-sources', slackOk, '来源', sources)}
       {block('set-hub', listening, '主会话', hub)}
