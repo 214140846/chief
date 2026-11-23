@@ -1,5 +1,5 @@
 // 谁能让回复发出去。命令行（chief reply queue --policy）放行前算一遍，引擎发之前再算一遍（见 engine.ts 的 sendDue）。
-import { isTrusted, scenarioOf, SCENARIOS, type ChiefEvent, type Policy, type Reply } from "./store";
+import { isTrusted, mustAsk, scenarioOf, SCENARIOS, type ChiefEvent, type Policy, type Reply } from "./store";
 
 // 一条事件自己的 PR（owner/repo#号，小写）：GitHub 的事件就是它回到的那个 PR；
 // 别的（比如 Slack 里有人贴了 PR 链接）是引擎从原文里认出来的 PR 链接。
@@ -24,6 +24,8 @@ function sameTarget(r: Reply, event: ChiefEvent): boolean {
 // 返回放行的理由；null 是这条要你确认。只放行回答收到的消息、回到那条消息自己的地方；主动发的新消息（reply new）一律问你。
 export function autoReason(r: Reply, pol: Policy, event: ChiefEvent | null): string | null {
   if (r.kind === "message" || event === null || r.event !== event.id) return null;
+  // 「一定问我」名单里的人和对话：什么规矩都不放行。
+  if (mustAsk(pol.askAlways, event)) return null;
   if (r.kind === "approve") {
     // approve 的只能是这条消息自己的 PR，而且要按「直接 approve」的规矩。
     if (!prsOf(event).includes((r.target.ref ?? "").toLowerCase())) return null;

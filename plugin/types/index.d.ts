@@ -85,8 +85,11 @@ export type PolicyFile = {
   signature?: string
   style?: string[]
   trusted?: string[]
+  // 一定问我：这些人、对话的回复引擎一律不直接发（比白名单优先）。
+  askAlways?: string[]
   placement?: Record<'direct' | 'group' | 'channel' | 'self', 'inline' | 'thread'>
-  proposals: { id: number; text: string; basis: string; at: string }[]
+  // change：放宽发送的改动（主会话没带钥匙改的），你采纳才生效。
+  proposals: { id: number; text: string; basis: string; at: string; change?: { args: string[]; input: string } }[]
 }
 
 export type Reviews = Record<string, { ok: boolean; note?: string; at: string }>

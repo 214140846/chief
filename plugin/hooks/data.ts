@@ -101,7 +101,7 @@ export async function refresh($: Engine) {
 // rules.json 还没写过时，场景表在 chief 里有默认值：问 chief 要一份完整的。
 async function policyOf($: Engine, p: PolicyFile): Promise<PolicyFile> {
   // 旧的 rules.json 里没有后来加的场景和「我加的情况」：问 chief 要一份补全的。
-  if (Object.keys(p.scenarios ?? {}).length > 0 && p.custom !== undefined && 'slack_self' in p.scenarios) return { scenarios: p.scenarios, custom: p.custom, notes: p.notes ?? [], proposals: p.proposals ?? [] }
+  if (Object.keys(p.scenarios ?? {}).length > 0 && p.custom !== undefined && 'slack_self' in p.scenarios) return { ...p, notes: p.notes ?? [], proposals: p.proposals ?? [] }
   return fullPolicy($)
 }
 

@@ -455,6 +455,11 @@ function samePerson(entry: string, from: string | null | undefined, fromId: stri
   return !!from && from.trim().toLowerCase() === k.toLowerCase();
 }
 
+// 这条消息在不在「一定问我」名单里：说话的人（编号或完整显示名），或者所在的对话（频道 / 私信编号）。
+export function mustAsk(list: readonly string[], event: Pick<ChiefEvent, "from" | "fromId" | "reply">): boolean {
+  return list.some((t) => samePerson(t, event.from, event.fromId) || (isSlackId(t.trim()) && event.reply.channel === t.trim()));
+}
+
 // 这个人在不在白名单里。
 export function isTrusted(trusted: readonly string[], from: string | null | undefined, fromId: string | null | undefined): boolean {
   return trusted.some((t) => samePerson(t, from, fromId));
@@ -486,6 +491,8 @@ export interface Policy {
   quick: string[];
   // 白名单：回这些人的话不用你确认，直接发（仍有 5 秒能撤回）。写 Slack 用户编号（U…），或完整的显示名（一字不差，不分大小写）。
   trusted: string[];
+  // 一定问我：这些人（Slack 用户编号、完整显示名）、这些对话（频道 / 私信编号）的回复，不管别的规矩怎么写，引擎都不直接发。比白名单优先。
+  askAlways: string[];
   // GitHub 上不报的机器人：注册成普通用户、名字又不带 bot 的（比如公司的 AI 代码评审），写登录名。它们的 review、评论都不算有人找你。
   bots: string[];
   // 替你发到 Slack 的话正文上方那行灰色小字署名（让对方一眼知道是 agent 代回的，不进正文）；空字符串 = 不加。
@@ -511,6 +518,7 @@ export function defaultPolicy(): Policy {
     },
     signature: "🤖 agent reply",
     trusted: [],
+    askAlways: [],
     bots: [],
     quick: [],
     style: [
@@ -541,6 +549,7 @@ export function loadPolicy(): Policy {
     scenarios: { ...base.scenarios, ...(p.scenarios ?? {}) }, notes: p.notes ?? base.notes, signature: p.signature ?? base.signature,
     style: p.style ?? base.style,
     trusted: p.trusted ?? base.trusted,
+    askAlways: p.askAlways ?? base.askAlways,
     bots: p.bots ?? base.bots,
     quick: p.quick ?? base.quick,
     placement: { ...base.placement, ...(p.placement ?? {}) },

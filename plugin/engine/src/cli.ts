@@ -22,7 +22,8 @@
 //   chief import                       导入用：Jira 指派给你没做完的、GitHub 你开着的 / 等你 review 的 PR
 //   chief ask add|list|answer          要你定的
 //   chief rules [show|json|set|brief|add|remove|propose|accept|reject]  你的规矩（含每类活的交代），和主会话提议的规矩；
-//                                      放宽发送的改动（直接发、直接 approve、白名单、固定回复、署名）不带 --yours（插件的钥匙）只会变成提议，等你在面板上采纳
+//                                      always add|remove：「一定问我」名单（这些人、对话的回复引擎一律不直接发）；
+//                                      放宽发送的改动（直接发、直接 approve、白名单、固定回复、署名、always remove）不带 --yours（插件的钥匙）只会变成提议，等你在面板上采纳
 //   chief review <事件号> ok|wrong     你给主会话的一次判断标对错（错的时候标准输入给应该怎样）
 //   chief reply add|approve|new|list|edit|queue|confirm|ask-confirm|undo|drop|redo   回复 / approve / 主动发新消息：加进待发出、改、
 //                                      排队发（5 秒可撤回；queue --policy 按规矩直接发，引擎再核一遍；confirm 以你的名义发，要插件的钥匙；
@@ -833,7 +834,7 @@ function ruleLine(r: ScenarioRule): string {
 // 放宽发送的改动（让更多回复、approve 不问你就发）要你点头。主会话读的是别人写的原文，可能被人带着改规矩：
 //   chief rules --yours <子命令…>：带 chief 插件的钥匙（面板上改的），标准输入给 JSON {key, text}，text 是这条命令本来从标准输入给的东西。直接生效。
 //   不带钥匙：放宽的改动不生效，记成提议放进面板「它提议的规矩」，你点采纳（面板带钥匙）才照原样生效。收紧的不用钥匙。
-// 算放宽的：场景 / 你加的情况改成 reply=auto 或 handle=approve|command，加这样的情况，白名单加人，固定回复加句子，改署名，「一定问我」名单删掉一项。
+// 算放宽的：场景 / 你加的情况改成 reply=auto 或 handle=approve|command，加这样的情况，白名单加人，固定回复加句子，改署名，「一定问我」名单删掉一项（always remove）。
 // 主会话和你是同一个系统用户，直接改 rules.json 拦不住；这里管的是它照正常路子（chief 命令）改规矩时不能自己放宽。
 type RulesOpts = { yours: boolean; text: string };
 
@@ -874,7 +875,7 @@ async function rules(args: string[], given?: RulesOpts): Promise<void> {
   // 第一次看规矩时把默认的写下来；老的文件缺后来加的东西（我加的情况、新场景）就补上。面板直接读这个文件。
   const onDisk = readJson<Partial<Policy>>(paths().policy, {});
   const missing = Object.keys(SCENARIOS).some((k) => !(k in (onDisk.scenarios ?? {})));
-  if (!existsSync(paths().policy) || onDisk.custom === undefined || missing || onDisk.placement === undefined || onDisk.style === undefined || onDisk.trusted === undefined || onDisk.bots === undefined || onDisk.quick === undefined) updatePolicy(() => undefined);
+  if (!existsSync(paths().policy) || onDisk.custom === undefined || missing || onDisk.placement === undefined || onDisk.style === undefined || onDisk.trusted === undefined || onDisk.askAlways === undefined || onDisk.bots === undefined || onDisk.quick === undefined) updatePolicy(() => undefined);
   if (sub === undefined || sub === "show") {
     const lines = ["# 我的规矩（chief rules）", "", "## 我加的情况（先对这些，对上了就照它办，比下面的场景表优先）", ""];
     if (p.custom.length === 0) lines.push("（没有）");
@@ -885,7 +886,9 @@ async function rules(args: string[], given?: RulesOpts): Promise<void> {
     }
     lines.push("", "## 我写的规矩（比上面的场景表优先）", "");
     p.notes.forEach((n, i) => lines.push(`${i + 1}. ${n}`));
-    lines.push("", "## 白名单：回这些人的话直接发，不用我确认（我写的「一定问我」的规矩照样优先）", "");
+    lines.push("", "## 一定问我：这些人、这些对话的回复和 approve 都要我确认，什么规矩都不能让它直接发（比白名单优先）", "");
+    lines.push(p.askAlways.length > 0 ? p.askAlways.map((x) => `- ${x}`).join("\n") : "（没有）");
+    lines.push("", "## 白名单：回这些人的话直接发，不用我确认（「一定问我」名单里的照样问我）", "");
     lines.push(p.trusted.length > 0 ? p.trusted.map((x) => `- ${x}`).join("\n") : "（没有）");
     lines.push("", "## 固定回复：回复和这几句一字不差，才能不问我直接发（别的规矩只管怎么写，不能让你直接发）", "");
     lines.push(p.quick.length > 0 ? p.quick.map((x) => `- ${x}`).join("\n") : "（没有）");
@@ -991,6 +994,29 @@ async function rules(args: string[], given?: RulesOpts): Promise<void> {
       return;
     }
     fail("chief rules trust add|remove");
+  }
+  // chief rules always add|remove（标准输入：Slack 用户编号 U…、频道 / 私信编号 C… D…，或完整的显示名）：「一定问我」名单。
+  // 加是收紧，直接生效；删是放宽，不带钥匙只会变成提议。
+  if (sub === "always") {
+    const what = args.shift();
+    const text = oneLine(await input(), 80);
+    if (!text) fail("从标准输入给一个人或一个对话：Slack 用户编号（U…）、频道 / 私信编号（C… / D…），或完整的显示名");
+    if (what === "add") {
+      updatePolicy((pp) => {
+        if (!pp.askAlways.includes(text)) pp.askAlways.push(text);
+      });
+      process.stdout.write(`加好了：${text} 的回复一定先问你\n`);
+      return;
+    }
+    if (what === "remove") {
+      if (!p.askAlways.includes(text)) fail("「一定问我」名单里没有这个");
+      if (!yours) return proposeLoosen(argv, text, `「一定问我」名单去掉 ${text}：回 ta 的话又可以按别的规矩直接发`);
+      updatePolicy((pp) => {
+        pp.askAlways = pp.askAlways.filter((x) => x !== text);
+      });
+      return;
+    }
+    fail("chief rules always add|remove");
   }
   // chief rules quick add|remove（标准输入一句原文）：固定回复，一字不差才允许直接发
   if (sub === "quick") {
@@ -1156,7 +1182,7 @@ async function rules(args: string[], given?: RulesOpts): Promise<void> {
     process.stdout.write(sub === "accept" ? `采纳了：${x.text}\n` : "不要了\n");
     return;
   }
-  fail("chief rules [--yours] [show|json|set|brief|sign|place|style|trust|quick|bot|custom|add|remove|propose|accept|reject]");
+  fail("chief rules [--yours] [show|json|set|brief|sign|place|style|trust|always|quick|bot|custom|add|remove|propose|accept|reject]");
 }
 
 // ── 你给判断标对错 ──

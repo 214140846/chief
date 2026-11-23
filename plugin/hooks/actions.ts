@@ -204,6 +204,11 @@ export async function trust($: Engine, who: string, add: boolean) {
   await act($, add ? '加白名单' : '移出白名单', ['rules', '--yours', 'trust', add ? 'add' : 'remove'], await rulesFromPanel($, who))
 }
 
+// 「一定问我」名单：加是收紧，直接改；删是放宽，带钥匙。
+export async function askAlways($: Engine, who: string, add: boolean) {
+  await act($, add ? '加进一定问我' : '移出一定问我', ['rules', '--yours', 'always', add ? 'add' : 'remove'], await rulesFromPanel($, who))
+}
+
 export async function addQuick($: Engine, text: string) {
   await act($, '加固定回复', ['rules', '--yours', 'quick', 'add'], await rulesFromPanel($, text))
 }

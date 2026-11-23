@@ -760,6 +760,45 @@ describe("放宽发送的规矩要你点头", () => {
   });
 });
 
+describe("一定问我", () => {
+  it("名单里的人、对话：白名单、固定回复、直接发、直接 approve 都不放行", async () => {
+    const { autoReason } = await import("../src/gate");
+    const { defaultPolicy } = await import("../src/store");
+    const base = { ...defaultPolicy(), trusted: ["U0BOB1234"], quick: ["好的"] };
+    base.scenarios.slack_dm = { handle: "dispatch", reply: "auto" };
+    const ev = { id: 1, at: "t", source: "slack" as const, kind: "message.received", title: "私信", url: null, from: "Bob Lee", fromId: "U0BOB1234", text: "x https://github.com/o/r/pull/4", why: ["dm"], keys: ["github.com/o/r/pull/4"], reply: { channel: "D0BOB1234", ts: "1.0" } };
+    const r = { id: 1, event: 1, source: "slack" as const, target: { ...ev.reply }, context: { who: null, where: "", said: "", url: null }, body: "好的", status: "pending" as const, at: "t" };
+    const approve = { ...r, kind: "approve" as const, source: "github" as const, target: { ref: "o/r#4" }, body: "", custom: 1 };
+    expect(autoReason(r, base, ev)).toBe("固定回复");
+    expect(autoReason({ ...r, body: "下午给你" }, base, ev)).toBe("白名单");
+    expect(autoReason(approve, base, ev)).toBe("你加的情况 custom:1");
+    for (const entry of ["U0BOB1234", "bob lee", "D0BOB1234"]) {
+      const pol = { ...base, askAlways: [entry] };
+      expect(autoReason(r, pol, ev)).toBeNull();
+      expect(autoReason({ ...r, body: "下午给你" }, pol, ev)).toBeNull();
+      expect(autoReason(approve, pol, ev)).toBeNull();
+    }
+    // 名字的一部分不算。
+    expect(autoReason(r, { ...base, askAlways: ["bob"] }, ev)).toBe("固定回复");
+  });
+
+  it("chief rules always：加直接生效；删要你点头", () => {
+    const h = home();
+    writeFileSync(join(h, "events.jsonl"), `${JSON.stringify({ id: 1, at: "t", source: "slack", kind: "message.received", title: "私信", url: null, from: "Bob Lee", fromId: "U0BOB1234", text: "x", why: ["dm"], keys: [], reply: { channel: "D0BOB1234", ts: "1.0" } })}\n`);
+    yours(h, "U0BOB1234", "trust", "add");
+    withStdin(h, "U0BOB1234", "rules", "always", "add");
+    expect(chief(h, "rules")).toContain("## 一定问我");
+    writeFileSync(join(h, "drafts", "a.md"), "下午给你");
+    expect(JSON.parse(chief(h, "reply", "add", "--event", "1", "--file", join(h, "drafts", "a.md")))).toMatchObject({ policy: "ask" });
+    expect(chiefFails(h, "reply", "queue", "1", "--policy")).toContain("要你确认");
+    expect(withStdin(h, "U0BOB1234", "rules", "always", "remove")).toContain("它提议的规矩");
+    expect((JSON.parse(chief(h, "rules", "json")) as { askAlways: string[] }).askAlways).toEqual(["U0BOB1234"]);
+    yours(h, "U0BOB1234", "always", "remove");
+    expect((JSON.parse(chief(h, "rules", "json")) as { askAlways: string[] }).askAlways).toEqual([]);
+    expect(chief(h, "reply", "queue", "1", "--policy")).toContain("白名单");
+  });
+});
+
 describe("对账", () => {
   const ev = (id: number, extra: Record<string, unknown> = {}) => ({ id, at: "2026-11-19T00:00:00Z", source: "github", kind: "github.pr", title: `PR ${id}`, url: null, from: null, text: "", why: ["review"], keys: [], reply: {}, ...extra }) as never;
   it("交出去 10 分钟还没判断的算漏掉；判断过的、演练的、提醒本身不算", () => {
