@@ -53,7 +53,7 @@ claude plugin test plugin   # 面板（plugin/tests）
 
 ## 风格
 
-- 注释、界面文字、skill 都用中文，大白话，短。说清「为什么」，不写空话。
+- 注释、skill 都用中文，大白话，短。说清「为什么」，不写空话。界面文字和引擎的通知写进字典（面板 `plugin/hooks/i18n.ts`，引擎 `src/messages.ts`，两边共用的名字 `src/shared/i18n.ts`），zh 和 en 都要写：en 少一项 `npx tsc --noEmit` 会报错。交给主会话的话（「chief：…」）不进字典，hub 认的是中文原话。
 - 代码跟着已有的写法走：小函数、少抽象、不加用不上的配置。
 - skill（`SKILL.md`）每次「重读规则」都会整份读进上下文，只放每次都用得上的；不常用的流程放进同目录的 md，在 SKILL.md 里说清什么时候读。引擎能检查的规矩交给引擎，skill 里一句话带过。
 - 提交信息用中文，一句话说清改了什么、为什么。

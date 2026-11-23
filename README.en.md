@@ -4,21 +4,25 @@
 
 chief gives you a personal-assistant session in the Claude App (the "chief 消息中心", message hub). When someone needs you on Slack, GitHub, Jira or Notion, the hub decides what to do by your rules, hands real work to separate Claude work sessions, tracks progress, and only surfaces what you must decide. You talk to the hub; a side panel (`/chief`) shows progress, pending replies and rules.
 
-The plugin ships three parts: the panel (`/chief`), the hub skill (`/chief:hub`) and a background engine. The UI and the hub speak Chinese.
+The plugin ships three parts: the panel (`/chief`), the hub skill (`/chief:hub`) and a background engine. Everything is set up from the panel's Setup tab.
+
+**Language.** The panel, engine notifications and the hub default to Chinese. After the engine is installed, switch to English with the **Language · 语言** selector at the bottom of the Setup tab, or run `chief config set locale en`. The panel switches right away; the hub picks it up the next time it wakes (it reads `chief config`) and then talks to you, and writes titles, progress, questions and digests, in English. Replies it drafts to other people keep the language of that conversation.
 
 ```
 Slack (push) / GitHub, Jira, Notion (polled every 5 min)
   → chief engine (launchd, ~/chief/data/app): writes only "someone needs you" items to ~/chief/data/events.jsonl
-  → the hub session follows them with Monitor and decides by your rules: dispatch / note / ask you
+  → the hub session follows them with Monitor and decides by your rules: hand off / note / ask you
   → work sessions do the work and report back: progress / needs your decision / draft reply
-  → drafts wait in the outbox; you confirm in the panel (or a rule allows auto-send); the engine sends as you, undoable for 5 s
+  → drafts wait in the Outbox; you confirm in the panel (or a rule allows sending directly); the engine sends as you, undoable for 5 s
 ```
 
 See also: [Architecture](ARCHITECTURE.md) (Chinese) · [Security](SECURITY.md) · [Contributing](CONTRIBUTING.md) · [Changelog](CHANGELOG.md)
 
 ## Install
 
-Requirements: macOS, the Claude App (the panel and session dispatch do not work in terminal Claude Code), Node 24+, Google Chrome (for Slack login). For GitHub / Jira, install and log in to `gh` and `acli` (or `twg`).
+Requirements: macOS, the Claude App (the panel and opening sessions do not work in terminal Claude Code), Node 24+, Google Chrome (for Slack login). For GitHub / Jira, install and log in to `gh` and `acli` (Jira can also use `twg`: `twg login`; if both are installed chief uses `acli`).
+
+Until the engine is installed the Setup tab is in Chinese, so the button names are given in both languages below.
 
 1. Install the plugin:
 
@@ -27,52 +31,122 @@ Requirements: macOS, the Claude App (the panel and session dispatch do not work 
    claude plugin install chief@chief --scope user
    ```
 
-2. Open any session in the Claude App and type `/chief`. Before the engine is installed, the panel shows only the Settings (设置) tab.
-3. Click **装引擎** (install engine): creates `~/chief`, copies the engine to `~/chief/data/app`, installs dependencies and registers a launchd agent.
-4. Click **登录 Slack**: log in normally in the separate Chrome window. For SSO workspaces, type your workspace name (`xxx` in `xxx.slack.com`) first. The session cookie goes into the macOS Keychain.
-5. Optional: connect GitHub / Jira (uses your logged-in `gh`, `acli` or `twg`).
-6. Start the hub. It must run in `~/chief` so it can read your notes and instructions. Either click **在工作目录开主会话** (the current session opens a new session in `~/chief` using the App's session tool), or create a new session yourself with folder `~/chief`, type `/chief` and click **开消息中心**. Use the bypass permissions mode (see Risks) and keep the hub open.
+2. Open any session in the Claude App and type `/chief`. Before the engine is installed, the panel shows only the Setup (设置) tab.
+3. Click **装引擎** (Install engine): creates the workspace `~/chief`, copies the engine to `~/chief/data/app`, installs dependencies and registers a launchd agent. Takes a minute or two. Now switch **Language · 语言** to English if you like.
+4. Click **Log in to Slack** (登录 Slack): log in normally in the separate Chrome window. For SSO workspaces, type your workspace name (`xxx` in `xxx.slack.com`) first; you then log in only once. The window closes itself and the session cookie goes into the macOS Keychain.
+5. Optional: **Connect** GitHub / Jira (uses your logged-in `gh`, `acli` or `twg`). Notion needs a token: `pbpaste | chief connect notion`.
+6. Start the hub. It must run in `~/chief` so it can read your instructions and notes. Either click **Open hub in workspace** (在工作目录开主会话; the current session opens a new session in `~/chief` with the App's session tool), or create a session yourself with folder `~/chief`, type `/chief` and click **Start hub** (开消息中心). Use the bypass permissions mode (see Risks) and keep the hub open. The session from step 2 can be closed.
+
+## The panel
+
+- **For you** — whether the hub is listening, what it did today, decisions it needs from you (go with its suggestion, open the session, or write your own decision), and replies waiting for your OK.
+- **Outbox** — drafted replies, approvals and messages: send, edit then send, don't send, or ask for a rewrite. Everything sent can be undone for 5 seconds.
+- **Progress** — every thing in flight: what needs attention and why, next step, blockers, results, due dates. From here you can:
+  - **Later** — snooze a thing for 2 hours, until tomorrow morning or next Monday (`chief thing snooze T --until 2h` / `tomorrow 09:00` / `next monday 09:00`; `chief thing wake T` brings it back early). Snoozed things and their questions are tucked away; when the time comes the engine brings them back, notifies you and hands them to the hub.
+  - **Undo** — dropping a thing, the hub's "just note it" / "ignore" decisions and skipping a backlog can all be undone: right after the action at the top of the panel, or later under "Recent actions" (`chief undo --list`, `chief undo <id>`). Undone messages go back to the hub to be judged again.
+  - **Search** past things, questions, replies, messages and decisions, including the archive (`chief search <text>`).
+  - **Notes** — jot remarks on several cards and send them to the hub together.
+- **Policy** — how each kind of message is handled, whether replies need your OK, trusted people, the "always ask me" list, canned replies, writing style, signature, your own rules, and rules the hub proposes.
+- **Eval** — what chief did for you in the last 7 days and the time saved, the hub's usage, a drill that replays saved cases against your rules, and the decision log where you mark calls right or wrong.
+- **Setup** — engine, sources, hub, keep-awake, quiet hours and daily digest, language, and a test message.
 
 ## Update
 
-The plugin follows released tags (`v*`) only. Turn on auto-update under `/plugin` → Marketplaces → chief, or run `claude plugin update chief@chief`. The engine updates itself the next time a session loads the new plugin; click 重读规则 (reload rules) in Settings to make the hub pick up the new skill.
+The plugin follows released tags (`v*`) only; unreleased changes on main do not reach you. Turn on auto-update under `/plugin` → Marketplaces → chief, or run `claude plugin update chief@chief`. The engine updates itself the next time a session loads the new plugin; click **Reload rules** in Setup to make the hub pick up the new skill without restarting it.
 
 ## Risks
 
 Read [SECURITY.md](SECURITY.md) before using chief.
 
-- **Bypass permissions.** The hub and its work sessions run without per-command approval and read text written by other people. The skill tells them to treat messages as data, but that is model behaviour, not isolation: prompt injection is possible.
-- **Sending as you.** The engine gates every outgoing message: you click Send in the panel, you say "send" in the hub (the plugin verifies you typed it), or a rule allows it (exact quick replies, trusted people, scenarios set to auto). Loosening rules from the hub only creates a proposal you must accept.
-- **Slack uses your browser session cookie**, not an official Slack app. It has full access to your account. Check that your workspace policy allows this.
-- **Data is stored in plaintext locally** under `~/chief/data`. Nothing is uploaded elsewhere by chief.
+- **Bypass permissions.** The hub and its work sessions run without per-command approval and read text written by other people. The skill tells them to treat messages as data, but that is model behaviour, not isolation: prompt injection is possible. If that worries you, use the default permission mode and approve commands yourself.
+- **Sending as you.** The engine gates every outgoing message. There are only three ways out: you click Send in the panel; you say "send" in the hub (the plugin verifies you typed it); or a rule allows it (exact canned replies, trusted people, kinds of message set to send directly). By default every reply asks you first. The hub can only propose looser rules; you accept them on the Policy tab.
+- **Slack uses your browser session cookie**, not an official Slack app. It has full access to your account and is kept in the macOS Keychain. Check that your workspace policy allows this.
+- **Data is stored in plaintext locally** under `~/chief/data`. chief uploads nothing elsewhere.
 
 ## Where data lives
 
-- `~/chief/rules.json` — your rules; `~/chief/config.json` — engine settings (`chief config` lists the keys, `chief config set` changes them).
-- `~/chief/CLAUDE.md`, `~/chief/notes/` — your instructions and the hub's notes.
-- `~/chief/data/*.json(l)` — events, decisions, tasks, questions, outbox (contains other people's messages).
-- `~/chief/data/archive/` — finished items older than 7 days, moved here monthly and kept (not deleted).
-- macOS Keychain items `chief:slack.cookie_d` and `chief:notion.token`.
-- The plugin's own store (in Claude's plugin directory) holds the confirm key the panel uses to prove a send was yours; `~/chief/data` only has its fingerprint.
-- `~/Library/LaunchAgents/dev.chief.engine.plist` — the launchd agent.
+Everything is in `~/chief`, and the hub runs there:
 
-Quiet hours and daily digests (`quietHours`, `digest.morning` / `digest.evening` in `config.json`, also settable in the panel's Setup tab, take effect immediately): during quiet hours the engine holds its notifications (except a corrupt data file or a changed confirm key) and the hub holds its pushes unless urgent; held items go into the next digest. Auto-sent replies are not affected. At digest times the hub posts a summary of what's waiting on you (`chief digest` prints the raw material).
+| Path | What |
+| --- | --- |
+| `CLAUDE.md` | Your long-term instructions to the assistant: who you are, usual repos, how you write, what not to touch |
+| `rules.json` | Rules: how each kind of message is handled, whether replies need your OK (Policy tab, or tell the hub) |
+| `config.json` | Engine settings, see Settings below |
+| `notes/` | What the assistant noted: who is who (`people.md`), which work happens in which folder (`projects.md`) |
+| `.claude/skills/` | Skills only the hub uses |
+| `data/*.json`, `data/*.jsonl` | Events, decisions, things, questions, outbox (contains other people's messages) |
+| `data/archive/` | Items finished more than 7 days ago, moved here by month (`<kind>-<yyyy-mm>.jsonl`) and kept |
+| `data/logs/`, `data/drafts/` | Engine logs, reply drafts |
+| `data/app/`, `data/bin/chief` | The engine and the command line |
 
-Backup: `chief export [--out <dir>]` writes `~/chief/exports/chief-export-<time>.tar.gz` (rules, config, CLAUDE.md, notes, data files, archives; no secrets).
+Plugin updates only add missing template files; they never overwrite your edits.
 
-To remove everything: run `chief uninstall --purge` in a terminal and type `purge`. It unloads the engine, deletes `~/chief` (keeping `exports/`) and chief's Keychain items, and lists what it removed. Then uninstall the plugin in Claude (`/plugin` → chief → uninstall).
+- **Back up:** `chief export` packs rules, settings, instructions, notes, data files and archives into `~/chief/exports/chief-export-<time>.tar.gz` (`--out <dir>` to put it elsewhere). No secrets: Keychain credentials and the confirm key fingerprint are left out.
+- **Remove everything:** run `chief uninstall --purge` in a terminal and type `purge`. It unloads the engine, deletes `~/chief` (keeping `exports/`) and chief's two Keychain items, and lists what it removed. It only deletes those known locations and refuses odd paths (symlinks, your home directory and so on). Uninstall the plugin itself in Claude (`/plugin` → chief → uninstall). To just stop chief and keep the data, use `chief uninstall`.
+
+Outside `~/chief` there are only system-defined locations:
+
+- macOS Keychain: `chief:slack.cookie_d` (Slack session), `chief:notion.token` (Notion token).
+- Login item: `~/Library/LaunchAgents/dev.chief.engine.plist`.
+- The plugin and its store (in Claude's plugin directory): the store holds the confirm key the panel uses to prove a send was yours; `~/chief/data` only has its fingerprint.
+
+## Settings
+
+Engine settings live in `~/chief/config.json`. `chief config` lists every setting and its current value; `chief config set <key> <value>` changes one. Rules (`rules.json`) are changed on the Policy tab or by telling the hub, not here.
+
+These are also on the Setup tab and take effect immediately:
+
+- **Language** (`locale`, `"zh"` or `"en"`, default `"zh"`): `chief config set locale en`. Panel, engine notifications and how the hub talks to you.
+- **Quiet hours** (`quietHours`, e.g. `{"start":"22:00","end":"08:00"}`, may cross midnight): the engine holds its notifications and the hub holds its pushes; they go into the next digest, and when quiet hours end the held engine notifications pop up as one. A broken data file or a changed confirm key still notifies; things you marked urgent or due during quiet hours still get pushed. Replies the rules allow to send directly still go out (quiet hours are about not disturbing you, not about ignoring others). `chief quiet` shows whether it is quiet now.
+- **Daily digest** (`digest.morning`, `digest.evening`, `"08:30"` or `null`, both off by default): at that time the hub writes up what is waiting on you, your open decisions, the outbox, what changed and notifications held during quiet hours, in the hub session. If the Mac slept through the time it catches up within 3 hours, otherwise skips; restarts do not repeat it. `chief digest` prints the raw material.
+
+Other keys (poll interval, how long to keep finished items, undo seconds and so on) are listed with their ranges at the top of `plugin/engine/src/config.ts`; they take effect after `chief engine restart`.
+
+## Command line
+
+After the engine is installed there is `~/chief/data/bin/chief` (add an alias to type `chief`). Its help and error messages are in Chinese.
+
+```bash
+chief status            # engine, sources, progress
+chief doctor            # the checks the Setup tab uses (JSON)
+chief logs              # last 50 lines of the engine log
+chief config            # engine settings; chief config set locale en
+chief connect slack     # log in in a browser window; --workspace acme logs in through the workspace; --stdin pastes the cookie
+chief connect github    # use the locally logged-in gh
+chief quiet             # whether it is quiet hours now, and until when
+chief digest            # digest material (JSON)
+chief export            # back up (no secrets), to ~/chief/exports by default
+chief search checkout   # search current and archived things, questions, replies, messages
+chief thing snooze 3 --until "next monday 09:00"   # later; chief thing wake 3 brings it back early
+chief undo --list       # recent undoable actions; chief undo <id> undoes one
+chief uninstall         # unload from launchd (keeps ~/chief)
+chief uninstall --purge # unload and delete chief's data and Keychain items (type purge to confirm)
+```
 
 ## Troubleshooting
 
-Start with `chief status`, `chief logs` and `chief doctor` (`~/chief/data/bin/chief`).
+Start with `chief status`, `chief logs` and `chief doctor`.
 
-- **Node too old / not found**: install Node 24+, then click install again.
-- **Chrome missing**: install Google Chrome; chief opens a separate profile window only for login.
-- **SSO login loops**: enter the workspace name in Settings and log in again, or run `chief connect slack --workspace xxx`.
-- **Slack session expired**: the Slack row turns red and chief notifies you; click 重新登录 (log in again). Events are not lost.
-- **Confirm key mismatch** (panel Send disabled): run `~/chief/data/bin/chief key reset` in a real terminal, then `/reload-plugins`. A reset always notifies you.
-- **Engine not running**: start or restart it from Settings; check `chief logs`.
-- **Messages between sessions are "held"**: the work session's permission mode differs from the hub's; switch it to bypass permissions.
+- **Node too old / not found**: install Node 24+ (nodejs.org or `brew install node`), then click Install engine again. Processes started by the App have a short PATH; the Homebrew default location is the safest.
+- **Chrome missing**: install Google Chrome; chief only opens a separate login window and does not touch your normal Chrome profile.
+- **SSO login loops**: enter the workspace name in Setup and log in again, or run `chief connect slack --workspace xxx` to see the error.
+- **Slack session expired**: the Slack row turns red and chief notifies you; click **Log in again**. Events are not lost.
+- **Send does not work, confirm key mismatch**: usually after reinstalling the plugin. Run `~/chief/data/bin/chief key reset` in a real terminal, then `/reload-plugins`. A reset always notifies you; if you did not do it, find out who did.
+- **Engine not running**: click Start engine or Restart engine in Setup; check `chief logs`. No messages arrive while the Mac sleeps; turn on "Keep the Mac awake on power" in Setup.
+- **The hub does not handle messages**: check the Hub block in Setup. If it is not listening, say "开 chief 消息中心" in the hub session; "已经有一个主会话在听" means another session is already the hub.
+- **Messages between sessions are "held"**: the work session's permission mode differs from the hub's; switch the work session to bypass permissions, or answer in that session yourself.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). Code layout:
+
+| Path | What |
+| --- | --- |
+| `plugin/hooks/` | The panel (`/chief`); its zh / en strings are in `hooks/i18n.ts` |
+| `plugin/skills/hub/` | The hub skill (`SKILL.md` plus a few docs read on demand) |
+| `plugin/engine/` | Background engine and the `chief` command line (TypeScript, run with tsx); notification strings in `src/messages.ts`, shared labels in `src/shared/i18n.ts` |
+| `plugin/setup.sh` | The script behind Install engine |
+| `plugin/workspace/` | Initial files for the `~/chief` workspace |
 
 ## License
 

@@ -84,7 +84,9 @@ chief 的东西都在 `~/chief` 里，消息中心也开在这里：
 
 引擎的设置在 `~/chief/config.json`。`chief config` 列出所有设置项和当前值，`chief config set <项> <值>` 改。规矩（`rules.json`）不在这里改，用面板的策略页或跟消息中心说。
 
-这两项在设置页「免打扰和每天汇总」里也能改，改了马上生效：
+下面几项在设置页也能改，改了马上生效：
+
+- **语言**（`locale`，`"zh"` 或 `"en"`，默认 `"zh"`）：`chief config set locale en`，或设置页最下面的「语言 · Language」。面板、引擎的通知换成英文；主会话下次醒来读到（`chief config`），跟你说话、写进面板的标题、进展、问题和汇总也用英文，替你回别人的话照旧跟着那段对话的语言。
 
 - **免打扰**（`quietHours`，比如 `{"start":"22:00","end":"08:00"}`，可以跨半夜）：这段时间引擎不弹通知、主会话不推送，攒到下一份汇总里；免打扰一过，攒下的引擎通知合成一条弹出来。数据文件坏了、「以你的名义发」的钥匙被换了照样弹；你说过急的、截止就在这段时间里的，主会话照样推。规矩允许直接发的回复照常发（免打扰是不打扰你，不是不回别人）。
 - **每天汇总**（`digest.morning`、`digest.evening`，`"08:30"` 或 `null`，默认都不发）：到点主会话把等你的事、要你定的、待发出、这段时间的变化和免打扰时没弹的提醒写成一份，发在主会话里。电脑睡着错过了点，3 小时内醒来补一次，再晚就跳过；重启不会重复发。
@@ -97,7 +99,7 @@ chief 的东西都在 `~/chief` 里，消息中心也开在这里：
 chief status            # 引擎、来源、进度
 chief doctor            # 设置页用的检查（JSON）
 chief logs              # 引擎日志最后 50 行
-chief config            # 引擎设置
+chief config            # 引擎设置；chief config set locale en 换成英文界面
 chief connect slack     # 开浏览器窗口登录；--workspace acme 直接从工作区登；--stdin 改成从标准输入贴 Cookie
 chief connect github    # 用本机登录的 gh
 chief quiet             # 现在是不是免打扰、到几点

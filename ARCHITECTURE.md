@@ -35,7 +35,7 @@ Notion ─────┤                                                       
 - `engine.ts`：主循环。收 Slack、轮询来源、对账（交给主会话 10 分钟还没判断的事件，补一条「漏掉了」）、发送、归档。
 - `cli.ts`：`chief` 命令行的入口和命令表，主会话和面板都靠它读写数据。各个命令在 `commands/` 里按用途分文件（`events`、`things`、`rules`、`reply`、`key`、`eval`、`setup`），读参数、标准输入的小工具在 `args.ts`。所有写入（标题、问题、进展、回复）在这里检查格式（`plain.ts`），发送前在这里和引擎里把关。
 - `sources/`：外部来源。每个来源实现 `Source`（拉动态、检查），再交一份 `SourceDescriptor`（怎么建、动态怎么变成事件、能不能评论 / approve、怎么连、怎么导入），放进 `sources/registry.ts`。引擎和命令行按注册表走，不写某个来源的分支。Slack 是推送的，收发在 `engine.ts` 里接 `slack/plugin.ts`，连和存 Cookie 在 `slack/source.ts`。
-- `shared/`：引擎和面板共用的纯 TypeScript（不 import Node 的东西）：来源名单和场景（`sources.ts`）、数据的类型（`types.ts`）、规矩里的名字和默认值、回复放哪（`rules.ts`）、文件路径（`paths.ts`）。面板直接 import 这几个文件。
+- `shared/`：引擎和面板共用的纯 TypeScript（不 import Node 的东西）：来源名单和场景（`sources.ts`）、数据的类型（`types.ts`）、规矩里的名字和默认值、回复放哪（`rules.ts`）、文件路径（`paths.ts`）、界面语言和两种语言的名字（`i18n.ts`）。面板直接 import 这几个文件。界面文字的字典：面板在 `hooks/i18n.ts`，引擎的通知在 `src/messages.ts`，语言看 `config.json` 的 `locale`。
 - `store.ts`：数据文件的读写（带锁、先写临时文件再改名），路径按 `shared/paths.ts` 算。
 - `keys.ts`：从文字里认出「是哪件事」的键（PR 地址、工单号、Notion 页面），同一件事在不同来源里出现时靠它归到同一个会话。
 - `quiet.ts`、`shared/schedule.ts`：免打扰（时段里引擎的通知先攒着，要紧的照弹）和每天汇总（到点交一条 `digest` 事件，主会话用 `chief digest` 拿材料）怎么算。
@@ -77,7 +77,7 @@ Notion ─────┤                                                       
 
 来源都登记在一张表上，加一个只碰这几处：
 
-1. `plugin/engine/src/shared/sources.ts` 的 `SOURCE_META` 加一项：名字、推送还是轮询（`mode`）、带来哪几种场景（键是事件的 `why`，每种写名字和默认做法）、设置页怎么连（`cli` 写装和登录的命令，`secret` 从终端给令牌，`browser` 开浏览器登录）、只读的写 `readOnly`。场景表、默认规矩、`Scenario` 类型、面板上的名字和设置页那一行都从这里来。
+1. `plugin/engine/src/shared/sources.ts` 的 `SOURCE_META` 加一项：名字、推送还是轮询（`mode`）、带来哪几种场景（键是事件的 `why`，每种写名字、英文名 `en` 和默认做法）、设置页怎么连（`cli` 写装和登录的命令，`secret` 从终端给令牌，`browser` 开浏览器登录）、只读的写 `readOnly`。场景表、默认规矩、`Scenario` 类型、面板上的名字和设置页那一行都从这里来。
 2. `plugin/engine/src/sources/<名字>.ts`：实现 `sources/types.ts` 里的 `Source`（`poll`、`check`），返回 `SourceItem`，标出 `mine` 和 `asks`；文件末尾导出一份 `SourceDescriptor`：`build`（引擎怎么建）、`event`（这件事的键、回复回到哪）、能发的写 `comment` / `approve`、`connect`、用本机命令的写 `local`，存钥匙的写 `secret`，能导入的写 `open`。
 3. 把它放进 `sources/registry.ts` 的 `SOURCES`（漏了类型检查过不了）。
 4. 跑 `npx vitest run test/registry.spec.ts`：名单和注册表对不上（场景没名字、轮询的没有 `build`、存钥匙的没写钥匙名……）会说哪里不对。
