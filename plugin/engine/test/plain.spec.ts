@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { TITLE_OK } from "../src/args";
 import { chiefIds } from "../src/plain";
 
 describe("给用户看的话里，看的人得知道每个编号指的是什么", () => {
@@ -75,5 +76,55 @@ describe("给用户看的话里，看的人得知道每个编号指的是什么"
     expect(chiefIds("admin#10651", { title: true })).toEqual(["admin#10651"]);
     expect(chiefIds("跟进 #63", { title: true })).toEqual(["#63"]);
     expect(chiefIds("shop-api#2286 同步 master 到 release/tidy")).toEqual(["shop-api#2286"]);
+  });
+});
+
+// locale 是 en 时主会话用英文写：英文的说明括号、英文的 chief 编号说法、英文标题。
+describe("英文写的话", () => {
+  it("放行：外部编号后面跟着英文括号说清是什么事", () => {
+    expect(chiefIds("PR #87 (the checkout fix) is waiting on George")).toEqual([]);
+    expect(chiefIds("PR #87(the checkout fix) is ready")).toEqual([]);
+    expect(chiefIds("PROJ-35191 (status on the detail page) only has one line")).toEqual([]);
+    expect(chiefIds("Merged acme/shop#12 (adds the field) and PROJ-479 (API change), shipping Tuesday")).toEqual([]);
+    expect(chiefIds("See [PR #12](https://github.com/acme/shop/pull/12) for details")).toEqual([]);
+    expect(chiefIds("Bob asked if we can ship this week. Reply next Tuesday?")).toEqual([]);
+  });
+
+  it("放行：英文里的数量、时间、日期不是编号", () => {
+    expect(chiefIds("Replied to 3 people, 2 questions left")).toEqual([]);
+    expect(chiefIds("The reply 2 days ago was enough; event at 10:30")).toEqual([]);
+    expect(chiefIds("UTF-8 and SHA-256 are fine")).toEqual([]);
+  });
+
+  it("拦：英文的 chief 编号说法，加了括号也拦", () => {
+    expect(chiefIds("Reply #107 is ready")).toEqual(["Reply #107"]);
+    expect(chiefIds("question #63 was answered")).toEqual(["question #63"]);
+    expect(chiefIds("Same as thing #3 (the load test)")).toEqual(["thing #3"]);
+    expect(chiefIds("outbox item #99 can wait")).toEqual(["outbox item #99"]);
+    expect(chiefIds("event no. #552 was missed")).toEqual(["event no. #552"]);
+  });
+
+  it("拦：英文里没说明的外部编号", () => {
+    // 小写的普通词不算进编号；大写开头的（PR、Notion，句首的词）当成名字一起报出来，照样拦。
+    expect(chiefIds("Please send #98 first, then answer Joe")).toEqual(["#98"]);
+    expect(chiefIds("Send #98 first")).toEqual(["Send #98"]);
+    expect(chiefIds("PR #87 is waiting on George")).toEqual(["PR #87"]);
+    expect(chiefIds("PROJ-35191 only has one line")).toEqual(["PROJ-35191"]);
+    expect(chiefIds("PR #87 (x)")).toEqual(["PR #87"]);
+  });
+
+  it("回 GitHub 的评论：#123 照样放行；英文标题带仓库名的编号不用括号", () => {
+    expect(chiefIds("Fixed in #123, thanks!", { github: true })).toEqual([]);
+    expect(chiefIds("Reply #107 sent", { github: true })).toEqual([]);
+    expect(chiefIds("shop-api#2286 sync master into release", { title: true })).toEqual([]);
+    expect(chiefIds("PROJ-479 add field to the API", { title: true })).toEqual([]);
+    expect(chiefIds("Follow up on #63", { title: true })).toEqual(["#63"]);
+  });
+
+  it("英文标题：撇号用 ’，& 和破折号也行；直的 ' 和命令替换照样拦", () => {
+    expect(TITLE_OK.test("Bob’s PR review — PROJ-479 & docs")).toBe(true);
+    expect(TITLE_OK.test("Fix login bug (acme/shop#12)")).toBe(true);
+    expect(TITLE_OK.test("Bob's PR")).toBe(false);
+    expect(TITLE_OK.test("$(rm -rf ~)")).toBe(false);
   });
 });

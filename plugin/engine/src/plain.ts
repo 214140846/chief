@@ -4,6 +4,8 @@
 //   - 外部的编号（PR #87、Notion #195、admin #10821、acme/shop#12，单写的 #179 也一样，还有 PROJ-35191 这样的 Jira 单号）
 //     可以写，但后面要紧跟括号说清是什么事：「#179（批准后自动处理的 PR）」「PROJ-35191（自动处理时详情页的状态）」。
 // 引擎在这些话进 chief 之前挡一道，拦下来让写的人改，不靠主会话自觉。
+// 界面是英文（config.json 的 locale 是 en）时主会话用英文写：括号认半角的「PR #87 (the checkout fix)」，
+// chief 编号的英文说法（reply #107、question #63、outbox item #99）也拦。
 //
 // 不用括号也放行的：
 //   - 链接里的（连同链接文字）：https://github.com/o/r/pull/12、[PR #12](https://…)、<https://…|#12>，点开就知道
@@ -14,6 +16,9 @@ const NOUNS = "回复|问题|事件|事情|判断|提议|待发出|要你定";
 const NOUN_ID = new RegExp(`(?:${NOUNS})\\s*号?\\s*([#＃])?\\s*(\\d{1,7})(?!\\d)`, "gu");
 // 不带 # 的「问题 3」后面是量词、日期、时间、小数的，是在说数量或时间（问题 3 个、事件 3 天前、回复 10:30），不是编号。
 const NOT_AN_ID = /^\s*(?:[个条件次位句段封行页张轮遍天周月年岁点分秒%％]|小时|分钟|多|号|[-/:：.．]\d)/u;
+// 英文写的（locale 是 en 时主会话用英文写）：「reply #107」「Question #63」「outbox item #99」。不带 # 的「reply 2」在英文里多半是数量，不拦。
+const EN_NOUNS = "replies|reply|questions|question|events|event|things|thing|decisions|decision|proposals|proposal|asks|ask|outbox\\s+items?|drafts|draft";
+const EN_NOUN_ID = new RegExp(`\\b(?:${EN_NOUNS})\\s*(?:no\\.?\\s*)?[#＃]\\s*(\\d{1,7})(?!\\d)`, "giu");
 // 外部编号：#98，前面可以带名字（PR #87、Notion #195、admin #10821、PR#87、shop#535、acme/shop#12）。
 // 后面紧跟字母数字的不算（#12ab 是颜色之类）；七位以上不算（颜色、时间戳）。
 const REF = /(?<![\w./-])(?:(?:[A-Za-z][\w.-]*\/)?[A-Za-z][\w.-]*\s?)?[#＃]\d{1,6}(?!\w)/gu;
@@ -43,15 +48,23 @@ export function chiefIds(text: string, opts: IdsOptions = {}): string[] {
     if (!hash && NOT_AN_ID.test(plain.slice(m.index + m[0].length))) continue;
     hits.push({ at: m.index, end: m.index + m[0].length, text: m[0].trim() });
   }
+  // 英文的说法都带 #：回 GitHub 的评论里 GitHub 会把 #123 链过去，和中文的一样放行。
+  if (!opts.github) {
+    for (const m of plain.matchAll(EN_NOUN_ID)) hits.push({ at: m.index, end: m.index + m[0].length, text: m[0].trim() });
+  }
   // 回 GitHub 的评论里 #123 GitHub 自己会链过去，只查 Jira 单号（GitHub 不会链）。
   const refs = [...(opts.github ? [] : plain.matchAll(REF)), ...[...plain.matchAll(JIRA)].filter((m) => !NOT_JIRA.test(m[0]))].sort((a, b) => a.index - b.index);
   for (const m of refs) {
-    const at = m.index;
-    if (hits.some((h) => at < h.end && at + m[0].length > h.at)) continue;
-    const after = EXPLAINED.exec(plain.slice(at + m[0].length));
+    // 英文句子里 # 前面隔一个空格的小写词（on #63、send #98）多半只是句子里的词，不是仓库、系统的名字：不算进编号。
+    const loose = /^[a-z][\w.-]*\s([#＃]\d+)$/u.exec(m[0]);
+    const text = loose ? loose[1]! : m[0];
+    const end = m.index + m[0].length;
+    const at = end - text.length;
+    if (hits.some((h) => at < h.end && end > h.at)) continue;
+    const after = EXPLAINED.exec(plain.slice(end));
     if (after && saysWhat(after[1]!)) continue;
-    if (opts.title && /^[A-Za-z]/.test(m[0]) && saysWhat(plain.slice(0, at) + plain.slice(at + m[0].length))) continue;
-    hits.push({ at, end: at + m[0].length, text: m[0] });
+    if (opts.title && /^[A-Za-z]/.test(text) && saysWhat(plain.slice(0, at) + plain.slice(end))) continue;
+    hits.push({ at, end, text });
   }
   return [...new Set(hits.sort((a, b) => a.at - b.at).map((h) => h.text))];
 }

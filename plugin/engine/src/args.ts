@@ -39,12 +39,13 @@ export function num(text: string | undefined, what: string): number {
 
 // 标题由主会话自己写（一句话说清这件事），只许这些字符：主会话按规矩用单引号包起来传参，
 // 这里再挡一道，免得别人的原文被抄进命令行参数里。
-export const TITLE_OK = /^[\p{L}\p{N} #._:/()（）·、，,+-]{1,120}$/u;
+// 英文标题常用的撇号只认弯的 ’（直的 ' 会把单引号包着的参数断开），另加 & 和长短破折号。
+export const TITLE_OK = /^[\p{L}\p{N} #._:/()（）·、，,+\-’&–—]{1,120}$/u;
 
 export function title(text: string | null): string | null {
   if (text === null) return null;
   const t = text.trim();
-  if (!TITLE_OK.test(t)) fail("标题只能用字、数字、空格和 # . _ : / ( ) · 、， , + -，由你自己概括，不要抄对方原文");
+  if (!TITLE_OK.test(t)) fail("标题只能用字、数字、空格和 # . _ : / ( ) · 、， , + - ’ & – —（英文的撇号用 ’，不用 '），由你自己概括，不要抄对方原文");
   return t;
 }
 
