@@ -1,6 +1,10 @@
 // chief 命令行。你在终端里用它连来源、装引擎；消息中心（Claude App 里的主会话）和 chief 面板用它记判断、记事情、管回复。
 //   chief run                          前台跑引擎（launchd 里跑的也是它）
 //   chief install | uninstall          装进 / 卸掉 launchd，并装好 chief 命令（消息中心 skill 和面板在 chief 插件里）
+//   chief uninstall --purge            卸掉，再删光数据、工作目录 ~/chief（exports/ 留着）、钥匙串里 chief 的密钥；要在终端里敲 purge 确认
+//   chief export [--out 目录]           导出规矩、设置、交代、笔记、数据和归档（不含密钥），默认放在 ~/chief/exports
+//   chief quiet                        现在是不是免打扰、到几点（JSON；config.json 的 quietHours）
+//   chief digest [--event N] [--since 时间]  写每天汇总的材料（JSON）：等你的、要你定的、待发出、上一份以后的变化、免打扰时没弹的提醒
 //   chief status | logs                看引擎、来源、进度；看最近的日志
 //   chief config [set <键> <值>]       可调的数字和开关（~/chief/config.json，见 config.ts）
 //   chief connect <来源> | disconnect <来源>   slack 默认开浏览器窗口让你登录（要公司 SSO 的会自己跳到工作区地址；--workspace acme 直接从那登；--stdin 改从标准输入读 Cookie）；notion 从标准输入读令牌；
@@ -39,7 +43,9 @@
 // 问题要提待发出里的某条，用 chief ask add --reply R 挂上。
 import { fail } from "./args";
 import { cursor, events, hub, mark, route, show, watchHome } from "./commands/events";
+import { digest, quiet } from "./commands/digest";
 import { evals, testEvent } from "./commands/eval";
+import { exportCmd } from "./commands/export";
 import { keyCmd } from "./commands/key";
 import { reply } from "./commands/reply";
 import { importCandidates, review, rules } from "./commands/rules";
@@ -52,7 +58,10 @@ import { ensureHome } from "./store";
 const COMMANDS: Readonly<Record<string, (args: string[]) => Promise<void> | void>> = {
   run: () => run(),
   install: () => install(),
-  uninstall: () => uninstall(),
+  uninstall: (args) => uninstall(args),
+  export: (args) => exportCmd(args),
+  quiet: () => quiet(),
+  digest: (args) => digest(args),
   status: () => status(),
   logs: () => logs(),
   config: (args) => configCmd(args),
@@ -89,7 +98,7 @@ async function main(argv: string[]): Promise<void> {
   // 旧格式的数据文件先升到现在的格式（见 migrate.ts）。
   migrateAll();
   if (cmd === undefined || !Object.hasOwn(COMMANDS, cmd)) {
-    fail("chief run|install|uninstall|status|logs|config|connect|disconnect|events|show|cursor|hub|engine|route|reply|mark|board|thing|ask|rules|review|import|test|eval|slack");
+    fail("chief run|install|uninstall|export|status|logs|config|quiet|digest|connect|disconnect|events|show|cursor|hub|engine|route|reply|mark|board|thing|ask|rules|review|import|test|eval|slack");
   }
   return COMMANDS[cmd]!(args);
 }

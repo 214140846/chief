@@ -3,6 +3,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface as Engine, RenderChildren } from 'claude-code'
 
+import { HHMM, parseQuietRange } from '../engine/src/shared/schedule'
 import { SOURCE_IDS, SOURCE_META, sourceLabel, type SetupMeta, type SourceId } from '../engine/src/shared/sources'
 import type { Doctor, Setup, Snapshot } from '../types'
 import { act, engineDo, hubStop, showLogs, skipOld, tell, testMessage } from './actions'
@@ -139,6 +140,24 @@ function connect($: Engine, source: SourceId) {
 
 function setAwake($: Engine, on: boolean) {
   return step($, 'awake', () => chief($, ['awake', on ? 'on' : 'off']))
+}
+
+// 免打扰、每天汇总：写进 config.json（chief config set），引擎每分钟现读，不用重启。
+function setConfig($: Engine, key: string, value: string) {
+  return step($, 'config', () => chief($, ['config', 'set', key, value]))
+}
+
+function setQuiet($: Engine, text: string) {
+  if (text.trim() === '') return setConfig($, 'quietHours', 'null')
+  const q = parseQuietRange(text)
+  if (!q) return void $.ui.toast('免打扰写成 22:00-08:00 这样：开始-结束，可以跨半夜')
+  return setConfig($, 'quietHours', JSON.stringify(q))
+}
+
+function setDigest($: Engine, slot: 'morning' | 'evening', text: string) {
+  const t = text.trim().replace(/^(\d):/, '0$1:')
+  if (t !== '' && !HHMM.test(t)) return void $.ui.toast('时间写成 08:30 这样（24 小时制）')
+  return setConfig($, `digest.${slot}`, t === '' ? 'null' : t)
 }
 
 function recheck($: Engine) {
@@ -316,6 +335,30 @@ export function setupTab($: Engine, ui: Els, st: Setup, s: Snapshot | null, logT
             ? '开着：插着电时电脑不会自己睡，屏幕照样会关、会锁，消息照收照办。没插电、合上盖子还是会睡，醒了再接着处理。'
             : '关着：电脑睡着时收不到消息，醒了才接着处理。')}
           {buttons(button('setup-awake', st.busy === 'awake' ? '…' : d.awake ? '关掉' : '打开', !busy, () => void setAwake($, !d.awake), false))}
+        </Box>
+      ), true)}
+      {d !== null && block('set-quiet', null, '免打扰和每天汇总', (
+        <Box flexDirection="column" gap="xs">
+          {note(d.quietHours
+            ? `免打扰 ${d.quietHours.start}–${d.quietHours.end}：这段时间不弹通知（数据文件坏了、钥匙被换了照样弹），主会话也不推送，攒到下一份汇总里。规矩允许直接发的回复照常发。`
+            : '免打扰没设：写个时段（比如 22:00-08:00），这段时间 chief 不弹通知、主会话不推送。')}
+          {'Input' in ui && (
+            <ui.Input key="quiet-hours" placeholder={d.quietHours ? `${d.quietHours.start}-${d.quietHours.end}（留空是关掉）` : '比如 22:00-08:00'} submitLabel={d.quietHours ? '改免打扰' : '设免打扰'} onSubmit={(v: string) => {
+              if (!busy) void setQuiet($, v)
+            }} />
+          )}
+          {d.quietHours && buttons(button('quiet-off', '关掉免打扰', !busy, () => void setConfig($, 'quietHours', 'null'), false))}
+          {note(`每天汇总：早上 ${d.digest?.morning ?? '不发'} · 晚上 ${d.digest?.evening ?? '不发'}。到点主会话把等你的事、要你定的、待发出和这段时间的变化写成一份，发在主会话里。`)}
+          {'Input' in ui && (
+            <Box flexDirection="column" gap="xs">
+              <ui.Input key="digest-morning" placeholder="早上几点，比如 08:30（留空不发）" submitLabel="设早上" onSubmit={(v: string) => {
+                if (!busy) void setDigest($, 'morning', v)
+              }} />
+              <ui.Input key="digest-evening" placeholder="晚上几点，比如 18:30（留空不发）" submitLabel="设晚上" onSubmit={(v: string) => {
+                if (!busy) void setDigest($, 'evening', v)
+              }} />
+            </Box>
+          )}
         </Box>
       ), true)}
       {s !== null && block('set-try', null, '试一下', (

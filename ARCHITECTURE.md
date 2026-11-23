@@ -38,6 +38,7 @@ Notion ─────┤                                                       
 - `shared/`：引擎和面板共用的纯 TypeScript（不 import Node 的东西）：来源名单和场景（`sources.ts`）、数据的类型（`types.ts`）、规矩里的名字和默认值、回复放哪（`rules.ts`）、文件路径（`paths.ts`）。面板直接 import 这几个文件。
 - `store.ts`：数据文件的读写（带锁、先写临时文件再改名），路径按 `shared/paths.ts` 算。
 - `keys.ts`：从文字里认出「是哪件事」的键（PR 地址、工单号、Notion 页面），同一件事在不同来源里出现时靠它归到同一个会话。
+- `quiet.ts`、`shared/schedule.ts`：免打扰（时段里引擎的通知先攒着，要紧的照弹）和每天汇总（到点交一条 `digest` 事件，主会话用 `chief digest` 拿材料）怎么算。
 - `secrets.ts`：macOS 钥匙串。`launchd.ts`：装卸 LaunchAgent。`images.ts`：回复附图。
 
 引擎不调用 Claude，也不读你的会话内容以外的东西（会话动静只读 App 的会话记录和对话记录的末尾）。
@@ -68,6 +69,8 @@ Notion ─────┤                                                       
 | `data/activity.json` | 引擎 | 工作会话的最近动静 |
 | `data/archive/` | 引擎 | 办完 7 天的旧记录，按月一个文件 |
 | `data/logs/` | 引擎 | 日志（不写密钥和消息原文） |
+| `data/held.json` | 引擎 | 免打扰时没弹的通知（免打扰一过合成一条弹，也进汇总） |
+| `exports/` | `chief export` | 导出的备份（不含密钥；`uninstall --purge` 不删它） |
 
 ## 加一个来源
 

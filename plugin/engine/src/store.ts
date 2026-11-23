@@ -18,6 +18,7 @@
 //   confirm-key.sha256  「以你的名义发」用的钥匙的指纹：钥匙原文只在 chief 插件自己的存储里，主会话拿不到（见 cli.ts 的 chief key）。
 //   key-log.jsonl 钥匙什么时候配的、清的、换的，只追加；面板拿它提醒你钥匙被换过。
 //   reviews.json  你给主会话的判断标的对错（事件号 → 对 / 错和你说的应该怎样）。
+//   held.json     免打扰时没弹的通知（见 quiet.ts）。
 // 几个进程（引擎、主会话的命令、面板的命令）会同时写的文件（replies、things、policy、dispatch、routes、reviews、hub），都拿着 <文件>.lock 读改写。
 // 引擎只写 events.jsonl、state.json；命令行（消息中心在用）只写另外几个。两边不抢同一个文件。
 import { appendFileSync, closeSync, copyFileSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmdirSync, statSync, writeSync } from "node:fs";
@@ -157,6 +158,8 @@ export interface EngineState {
   threads: string[];
   // chief 替你发到 Slack 的消息（频道:ts）：推回来时认出来跳过。存下来，引擎重启后 Slack 补推的也认得。
   sent: string[];
+  // 每天汇总：每个时段上次发的是哪天（当地日期 YYYY-MM-DD），重启不重复发。
+  digest?: Partial<Record<"morning" | "evening", string>>;
 }
 
 const MAX_SEEN = 5000;
@@ -165,7 +168,7 @@ const MAX_SENT = 1000;
 
 export function loadState(): EngineState {
   const s = readJson<Partial<EngineState>>(paths().state, {});
-  return { nextId: s.nextId ?? 1, since: s.since ?? {}, seen: s.seen ?? [], threads: s.threads ?? [], sent: s.sent ?? [] };
+  return { nextId: s.nextId ?? 1, since: s.since ?? {}, seen: s.seen ?? [], threads: s.threads ?? [], sent: s.sent ?? [], digest: s.digest ?? {} };
 }
 
 // 开着的来源（GitHub、Jira 用本机登录的 gh、acli 或 twg，没有密钥，靠这个记「开着」）。

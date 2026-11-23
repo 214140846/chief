@@ -1,4 +1,4 @@
-// 装和连：chief run / install / uninstall / engine / status / logs / config / awake / connect / disconnect / doctor / slack / archive。
+// 装和连：chief run / install / uninstall [--purge] / engine / status / logs / config / awake / connect / disconnect / doctor / slack / archive。
 import { type ChildProcess, spawn } from "node:child_process";
 import { existsSync, lstatSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -6,8 +6,9 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { archiveOld } from "../archive";
 import { fail, flag } from "../args";
-import { CONFIG_KEYS, loadConfig, setConfig } from "../config";
+import { CONFIG_KEYS, LIVE_KEYS, liveConfig, loadConfig, setConfig } from "../config";
 import { Engine, notifyCorrupt } from "../engine";
+import { quietNow } from "../quiet";
 import { LABEL, bootout, bootstrap, kickstart, plistPath, renderPlist, serviceState } from "../launchd";
 import { tailLines } from "../logfile";
 import { scrubTokens } from "../scrub";
@@ -20,6 +21,8 @@ import type { SecretCheck } from "../slack/types";
 import { DESCRIPTORS, SOURCES } from "../sources/registry";
 import { CorruptFileError, ensureHome, loadCursor, loadEnabled, loadReplies, loadRoutes, loadSettings, paths, readEvents, readJson, updateJson, withLock, workspaceDir, writeJson, type Settings } from "../store";
 import { hubAlive } from "./events";
+import { PURGE_LEFT, describePlan, purgePlan, runPurge, type PurgePlan } from "./export";
+import { askInTerminal } from "./key";
 
 // 引擎目录（这个文件在 src/commands/ 下）。
 export const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -143,12 +146,53 @@ export function lstatExists(p: string): boolean {
   }
 }
 
-export async function uninstall(): Promise<void> {
+// 卸掉 launchd 里的引擎和 ~/.local/bin/chief 这个链接（是链接才删）。返回删了的。
+async function unload(): Promise<string[]> {
   await bootout();
+  const done: string[] = [];
   for (const p of [plistPath(), join(homedir(), ".local", "bin", "chief")]) {
-    if (lstatExists(p) && (p === plistPath() || lstatSync(p).isSymbolicLink())) unlinkSync(p);
+    if (lstatExists(p) && (p === plistPath() || lstatSync(p).isSymbolicLink())) {
+      unlinkSync(p);
+      done.push(p);
+    }
   }
+  return done;
+}
+
+// chief uninstall [--purge]：卸掉引擎，数据留着；--purge 连数据、工作目录、钥匙串里的 chief 密钥一起删（要你在终端里敲 purge）。
+export async function uninstall(args: string[] = []): Promise<void> {
+  if (args.includes("--purge")) return purge();
+  await unload();
   process.stdout.write(`卸掉了（${paths().home} 里的数据没删）\n`);
+}
+
+async function purge(): Promise<void> {
+  // 先看是不是你在终端里亲手跑的：主会话、管道里跑的一律不删，什么都不动。
+  if (!process.stdin.isTTY || !process.stderr.isTTY) {
+    fail("chief uninstall --purge 会删掉 chief 的全部数据，要你在终端里亲手敲 purge 确认：请直接在终端里跑。删之前可以先 chief export 留一份。");
+  }
+  let plan: PurgePlan;
+  try {
+    plan = purgePlan(paths().home, homedir());
+  } catch (error) {
+    fail(`不删：${error instanceof Error ? error.message : String(error)}`);
+  }
+  process.stderr.write(`${describePlan(plan)}\n\n删了就找不回来。想先留一份：按回车取消，跑 chief export（导出不含密钥）。\n`);
+  const typed = await askInTerminal("确定全删就敲 purge：");
+  if (typed !== "purge") fail("没敲 purge，什么都没删");
+  const done = [...await unload()];
+  try {
+    done.push(...await runPurge(plan, paths().home, homedir(), new KeychainStore()));
+  } catch (error) {
+    process.stdout.write(`删掉了：\n${done.map((p) => `  - ${p}`).join("\n")}\n`);
+    fail(`删到一半停下了：${error instanceof Error ? error.message : String(error)}`);
+  }
+  process.stdout.write([
+    "删掉了：",
+    ...done.map((p) => `  - ${p}`),
+    ...(plan.keep.length > 0 ? ["留着（你导出的备份）：", ...plan.keep.map((p) => `  - ${p}`)] : []),
+    PURGE_LEFT,
+  ].join("\n") + "\n");
 }
 
 export async function status(): Promise<void> {
@@ -165,8 +209,15 @@ export async function status(): Promise<void> {
     `事件：一共 ${evts.length} 条，消息中心处理到 #${cursor}，还有 ${evts.filter((e) => e.id > cursor).length} 条没处理`,
     `对应表：${Object.keys(loadRoutes()).length} 个键`,
     `回复：${pending.length} 条等你`,
+    `免打扰：${quietLine()}`,
   ];
   process.stdout.write(`${lines.join("\n")}\n`);
+}
+
+function quietLine(): string {
+  const q = quietNow();
+  if (!q.hours) return "没设";
+  return `${q.hours.start}–${q.hours.end}，${q.quiet && q.until ? `现在是，到 ${new Date(q.until).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}` : "现在不是"}`;
 }
 
 // 设置页用：一次看全「还差哪步」。存钥匙的来源看钥匙串里有没有；用本机命令的（gh、acli 或 twg）装了才去试登录，试不过的把原因带回去。
@@ -204,6 +255,8 @@ export async function doctor(): Promise<void> {
     slackWorkspace: loadSettings().slackWorkspace ?? null,
     workspace: { path: workspaceDir(), ready: existsSync(join(workspaceDir(), "CLAUDE.md")) },
     list: DESCRIPTORS.map((d) => ({ id: d.id, label: SOURCE_LABELS[d.id], setup: d.meta.setup.kind, ...sources[d.id]! })),
+    quietHours: liveConfig().quietHours,
+    digest: liveConfig().digest,
   };
   process.stdout.write(`${JSON.stringify(out)}\n`);
 }
@@ -257,7 +310,7 @@ export function configCmd(args: string[]): void {
     } catch (error) {
       fail(error instanceof Error ? error.message : String(error));
     }
-    process.stdout.write(`改好了（${paths().config}）。引擎重启后生效：chief engine restart\n`);
+    process.stdout.write(LIVE_KEYS.includes(key.split(".")[0]!) ? `改好了（${paths().config}），马上生效\n` : `改好了（${paths().config}）。引擎重启后生效：chief engine restart\n`);
     return;
   }
   fail("chief config [show] | chief config set <键> <值>");

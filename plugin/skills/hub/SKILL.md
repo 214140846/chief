@@ -20,6 +20,7 @@ description: chief 消息中心，用户的私人助理主会话。在 Claude Ap
 - `outreach.md`：主动给某人、某个频道发消息。要找人时读。
 - `approve.md`：规矩让你直接 approve PR 时读。
 - `reply.md`：把工作会话写的回复放进待发出、决定怎么发。收到「chief 回复 #N」时读。
+- `digest.md`：每天汇总怎么写。收到 `kind` 是 `digest` 的事件、或用户让你「汇总一下」时读。
 
 ## 铁规矩
 
@@ -57,6 +58,7 @@ description: chief 消息中心，用户的私人助理主会话。在 Claude Ap
   - 加之前 `chief ask list` 看同一件事有没有还开着的问题。新问题接着旧的问、或把旧的某一条拿出来单独问，就把旧的合进新的，旧的 `chief ask answer Q`（标准输入：「合进新的问题一起问了」）关掉。
   - 要提待发出里的某条回复：`chief ask add --reply R`，面板会在卡片上显示那条的摘要。
 - **只在两种时候推送（PushNotification）：** 登记了要他定的问题；有回复放在待发出等他确认。新消息、派了活、记了一笔、事情做完，都不推，只在本会话里汇报。（会话弹框在等用户的，引擎已经弹过系统通知，不用再推。）
+  - **免打扰：** 推之前先 `chief quiet`。`quiet` 是 true 就先不推，照常在本会话里汇报、照常登记；要你定的、待发出的下一份汇总里自然会列出来。只有两种照推：用户说过急的事（他的规矩写了「xx 半夜也叫我」、或消息里他自己标了急），截止就落在这段免打扰时间里的。免打扰只管打扰用户，规矩允许直接发的回复照常发。
 - 本会话和工作会话都用 bypass permissions。两边不是同一类时，会话之间的消息会被扣住（held），告诉用户把那个会话也改成 bypass permissions。
 
 ## 工作目录 ~/chief
@@ -88,6 +90,7 @@ description: chief 消息中心，用户的私人助理主会话。在 Claude Ap
 
 - **`dryrun` 为 true、标题带「[演练]」**：用户在测评页拿例子测你。照常判断，但**什么都不真的做**（不 `send_message`、不开会话、不 `chief reply / ask / thing`），只 `chief mark N <判断> --dry`，标准输入写理由和你具体会怎么办（「会送进『PROJ-123 压测』会话」「会新开会话，目录 ~/dev/my-service」「会回：……」）。汇报一行：`**🧪 演练 · 例子 #<eval>** → <判断>：<一句理由>`。
 - **`kind` 是 `chief.missed`、标题「漏掉了：#N」**：引擎对账发现事件 #N 交给你超过 10 分钟还没 mark。`chief show N` 读原消息，当刚来的办完、`chief mark N <判断>`，再把这条提醒 mark 成 `noted`（理由「补办 #N」）。汇报标题前加「补办」。**不要只 mark 提醒、不办原消息。**
+- **`kind` 是 `digest`（`source` 是 `chief`）**：每天汇总到点了。Read `digest.md` 照它写给用户，`chief mark N noted`。
 - **`test` 为 true、标题带「[测试]」**：用户造的测试消息，照常判断、派活，汇报注明是测试；它的回复发不出去，放进待发出就行。
 
 一次可能来好几条。**先归堆**：`keys` 第一个相同的（同一个 thread、私信、PR、工单）当一件事一起判断、一起 mark。然后每件走下面五步。
@@ -148,7 +151,7 @@ description: chief 消息中心，用户的私人助理主会话。在 Claude Ap
 
 `**<图标> <来源> · <谁/哪里> ·「<这件事，十几个字>」**`
 
-图标：💬 Slack · 🙋 用户在 Slack 上给自己的指令 · 🐙 GitHub · 🎫 Jira · 📝 Notion · 🧵 工作会话 · 🖱 面板 · 🧪 测试。例子：
+图标：💬 Slack · 🙋 用户在 Slack 上给自己的指令 · 🐙 GitHub · 🎫 Jira · 📝 Notion · 🧵 工作会话 · 🖱 面板 · 🧪 测试 · 📋 每天汇总。例子：
 
 > **💬 Slack 私信 · Carol ·「PROJ-479 能加字段吗」**
 > 送进了「PROJ-479 接口加字段」。

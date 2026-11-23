@@ -1,6 +1,6 @@
 // 可调的数字和开关：~/chief/config.json（和 rules.json 放一起；用 CHIEF_HOME 时放在那个目录里）。没有这个文件就全用默认值。
 // 不认得的键不管；值不对（类型不对、格式不对）用默认值，超出范围的取最近的边界，都在 problems 里说一句（引擎启动时写进日志）。
-// 改了以后重启引擎才生效（chief engine restart）。chief config 打出现在生效的值，chief config set <键> <值> 改一项。
+// 改了以后重启引擎才生效（chief engine restart）；免打扰和每天汇总例外，引擎每分钟现读（见 liveConfig）。chief config 打出现在生效的值，chief config set <键> <值> 改一项。
 //   pollMinutes        每隔几分钟拉一次 GitHub / Jira / Notion                 默认 5     1–120
 //   firstLookbackHours 第一次连上一个来源，往回看几小时                          默认 24    1–720
 //   missedMinutes      交给主会话多久还没判断算漏掉了（再交一次）                默认 10    1–1440
@@ -16,6 +16,7 @@
 //   quietHours         免打扰时段：{"start":"22:00","end":"08:00"} 或 null         默认 null
 //   digest             每天汇总：{"morning":"HH:MM" 或 null, "evening":"HH:MM" 或 null} 默认都是 null
 import { existsSync, readFileSync } from "node:fs";
+import { HHMM } from "./shared/schedule";
 import { paths, withLock, writeJson } from "./store";
 
 export interface Config {
@@ -51,7 +52,6 @@ const RANGES: Record<string, [number, number]> = {
 // chief config set 认得的键。
 export const CONFIG_KEYS = [...Object.keys(RANGES), "locale", "quietHours", "quietHours.start", "quietHours.end", "digest", "digest.morning", "digest.evening"];
 
-const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 
 // 把文件里的东西对一遍：好的照用，不好的换成默认值，说一句为什么。
@@ -137,6 +137,14 @@ export function loadConfig(): { config: Config; problems: string[] } {
 export function config(): Config {
   return loadConfig().config;
 }
+
+// 不用缓存、现读一遍文件：免打扰和每天汇总改了马上生效（文件很小，引擎每分钟读一次也不费事）。
+export function liveConfig(): Config {
+  return validateConfig(readRaw().raw).config;
+}
+
+// 改了马上生效、不用重启引擎的键。
+export const LIVE_KEYS = ["quietHours", "digest"];
 
 // 命令行给的值：能当 JSON 读的（数字、null、对象、带引号的字符串）就当 JSON，否则当字符串（08:30、en）。
 function parseValue(text: string): unknown {
