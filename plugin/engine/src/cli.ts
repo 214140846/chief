@@ -40,6 +40,7 @@ import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { archiveOld, archivedEvent } from "./archive";
 import { Engine, SECRET } from "./engine";
+import { autoReason, prsOf } from "./gate";
 import { MAX_IMAGES, takeImage, type ReplyImage } from "./images";
 import { KEY, keysOf } from "./keys";
 import { type ChildProcess, spawn } from "node:child_process";
@@ -55,7 +56,7 @@ import { JiraSource, findJiraCli } from "./sources/jira";
 import { NotionSource } from "./sources/notion";
 import { chiefIds, idsMessage, type IdsOptions } from "./plain";
 import {
-  AUDIENCE_LABELS, HANDLE_LABELS, SCENARIOS, appendDecision, readEvents, expectOf, isTrusted, loadDecisions, appendEvent, ensureHome, loadCursor, loadDispatch, loadEnabled, loadPolicy, loadReplies, loadReviews, loadRoutes, loadThings,
+  AUDIENCE_LABELS, HANDLE_LABELS, SCENARIOS, appendDecision, readEvents, expectOf, loadDecisions, appendEvent, ensureHome, loadCursor, loadDispatch, loadEnabled, loadPolicy, loadReplies, loadReviews, loadRoutes, loadThings,
   loadSettings, loadState, paths, workspaceDir, readJson, saveState, scenarioOf, updateJson, updateReplies, withLock, writeJson,
   type Ask, type Settings, type Decision, type Dispatch, type Enabled, type EventSource, type Handle, type Policy, type ChiefEvent, type RepliesFile,
   type Audience, type CustomScenario, type EvalCase, type EvalRun, type EvalsFile, type Expect, type Placement, type Reply, type ReplyMode, type Reviews, type ScenarioRule, type Routes, type Scenario, type Thing, type ThingsFile,
@@ -135,21 +136,7 @@ function eventById(id: number): ChiefEvent {
   return readEvents().find((e) => e.id === id) ?? archivedEvent(id) ?? fail(`没有事件 #${id}`);
 }
 
-// ── 谁能让回复发出去 ──
-// 规矩允许直接发（--policy）：引擎自己按规矩再算一遍，算出来要问你的发不出去，主会话怎么理解都没用。
-// 返回放行的理由；null 是这条要你确认。
-export function autoReason(r: Reply, pol: Policy, event: ChiefEvent | null): string | null {
-  const body = r.body.trim();
-  // 固定回复：一字不差才算，前后多一个字都不行。
-  if (body !== "" && pol.quick.some((q) => q.trim() === body)) return "固定回复";
-  if (r.kind === "message" || event === null) return null;
-  if (r.kind !== "approve" && isTrusted(pol.trusted, event.from, event.fromId)) return "白名单";
-  if (r.custom !== undefined) {
-    const c = pol.custom.find((x) => x.id === r.custom);
-    return c?.reply === "auto" ? `你加的情况 custom:${c.id}` : null;
-  }
-  return pol.scenarios[scenarioOf(event)].reply === "auto" ? `场景「${SCENARIOS[scenarioOf(event)]}」` : null;
-}
+// ── 谁能让回复发出去（规矩怎么算见 gate.ts）──
 
 // 以你的名义发（confirmed by 你）要带钥匙：钥匙原文只在 chief 插件自己的存储里，这里只存它的指纹。
 function keyHash(key: string): Buffer {
@@ -1198,10 +1185,9 @@ async function reply(args: string[]): Promise<void> {
       all.items.push(x);
       return x;
     });
-    // 回复按哪条规矩发：对方在白名单里就直接发；否则按这个场景的设置。
-    const pol = loadPolicy();
-    const trusted = isTrusted(pol.trusted, event.from, event.fromId);
-    process.stdout.write(`${JSON.stringify({ id: r.id, source: r.source, scenario: scenarioOf(event), policy: trusted ? "auto" : pol.scenarios[scenarioOf(event)].reply, ...(trusted ? { trusted: true } : {}) })}\n`);
+    // 回复按哪条规矩发：引擎按规矩算（和 queue --policy 一样），auto 就可以直接 queue --policy。
+    const why = autoReason(r, loadPolicy(), event);
+    process.stdout.write(`${JSON.stringify({ id: r.id, source: r.source, scenario: scenarioOf(event), policy: why === null ? "ask" : "auto", ...(why === "白名单" ? { trusted: true } : {}) })}\n`);
     return;
   }
   // chief reply approve --event N --ref owner/repo#号 [--thing T] [--custom 号]：放一条「approve 这个 PR」进待发出。
@@ -1210,11 +1196,14 @@ async function reply(args: string[]): Promise<void> {
     const event = eventById(num(flag(args, "--event") ?? undefined, "--event "));
     const ref = flag(args, "--ref") ?? fail("要 --ref owner/repo#号");
     if (!/^[\w.-]{1,100}\/[\w.-]{1,100}#\d{1,9}$/.test(ref)) fail("--ref 写成 owner/repo#号");
+    // 只能 approve 这条消息自己的 PR：GitHub 的事件就是那个 PR，Slack 里的是消息里贴的 PR 链接。
+    const own = prsOf(event);
+    if (!own.includes(ref.toLowerCase())) fail(own.length === 0 ? `事件 #${event.id} 里没有 PR，不能 approve` : `--ref 要是这条消息自己的 PR：${own.join(" / ")}`);
     const thingFlag = flag(args, "--thing");
     const thingId = thingFlag === null ? null : num(thingFlag, "--thing ");
     const customFlag = flag(args, "--custom");
     const pol = loadPolicy();
-    const rule = customFlag !== null ? pol.custom.find((c) => c.id === num(customFlag, "--custom ")) ?? fail(`没有你加的情况 ${customFlag}`) : pol.scenarios[scenarioOf(event)];
+    if (customFlag !== null && !pol.custom.some((c) => c.id === num(customFlag, "--custom "))) fail(`没有你加的情况 ${customFlag}`);
     const r = updateReplies((all) => {
       for (const old of all.items) if (old.event === event.id && old.kind === "approve" && old.status === "pending") old.status = "dropped";
       const x: Reply = {
@@ -1226,7 +1215,7 @@ async function reply(args: string[]): Promise<void> {
       all.items.push(x);
       return x;
     });
-    process.stdout.write(`${JSON.stringify({ id: r.id, kind: "approve", ref, policy: rule.reply })}\n`);
+    process.stdout.write(`${JSON.stringify({ id: r.id, kind: "approve", ref, policy: autoReason(r, pol, event) === null ? "ask" : "auto" })}\n`);
     return;
   }
   // chief reply new --to <Slack 用户编号 U… / 邮箱 / 频道编号 C…> [--name 对方名字] [--thing T] --file <drafts 里的文件>：

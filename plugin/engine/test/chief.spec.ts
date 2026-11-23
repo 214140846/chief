@@ -930,6 +930,53 @@ describe("谁能让回复发出去：引擎把关，不靠主会话自觉", () =
     expect(chief(h, "reply", "queue", "2", "--policy")).toContain("固定回复");
   });
 
+  it("固定回复只用来回收到的那条消息、回到它自己的地方：主动发的新消息、改了去处的都要你确认", async () => {
+    const { autoReason } = await import("../src/gate");
+    const { defaultPolicy } = await import("../src/store");
+    const pol = { ...defaultPolicy(), quick: ["收到 👍"] };
+    const ev = { id: 1, at: "t", source: "slack" as const, kind: "message.received", title: "私信", url: null, from: "Alice", fromId: "U0ALICE", text: "x", why: ["dm"], keys: [], reply: { channel: "D0ALICE", ts: "1.0" } };
+    const r = { id: 1, event: 1, source: "slack" as const, target: { ...ev.reply }, context: { who: null, where: "", said: "", url: null }, body: "收到 👍", status: "pending" as const, at: "t" };
+    expect(autoReason(r, pol, ev)).toBe("固定回复");
+    expect(autoReason({ ...r, target: { ...ev.reply, in: "thread" } }, pol, ev)).toBe("固定回复");
+    // 换了去处：别的频道、别的帖子、多了别的字段。
+    expect(autoReason({ ...r, target: { channel: "C0OTHER1", ts: "1.0" } }, pol, ev)).toBeNull();
+    expect(autoReason({ ...r, target: { ...ev.reply, ts: "2.0" } }, pol, ev)).toBeNull();
+    expect(autoReason({ ...r, target: { ...ev.reply, thread_ts: "9.0" } }, pol, ev)).toBeNull();
+    // 主动发的新消息（reply new）、对不上事件的：一律问你。
+    expect(autoReason({ ...r, kind: "message", event: 0, target: { to: "U0ALICE" } }, pol, null)).toBeNull();
+    expect(autoReason({ ...r, event: 2 }, pol, ev)).toBeNull();
+    // approve 的附言正好是固定回复：不算。
+    expect(autoReason({ ...r, kind: "approve", source: "github", target: { ref: "o/r#1" } }, pol, { ...ev, source: "github", reply: { ref: "o/r#1" } })).toBeNull();
+  });
+
+  it("reply new 发的固定回复：queue --policy 拒掉", () => {
+    const h = setup();
+    withStdin(h, "收到 👍", "rules", "quick", "add");
+    chief(h, "reply", "new", "--to", "U0EVE9999", "--file", draft(h, "n.md", "收到 👍"));
+    expect(chiefFails(h, "reply", "queue", "1", "--policy")).toContain("要你确认");
+    expect(status(h, 1).status).toBe("pending");
+  });
+
+  it("approve 只能 approve 这条消息自己的 PR", () => {
+    const h = home();
+    writeFileSync(join(h, "events.jsonl"), [
+      { id: 1, at: "t", source: "github", kind: "github.pr", title: "o/r#7", url: null, from: null, text: "请你 review，顺便看看 https://github.com/o/r/pull/8", why: ["review"], keys: ["github.com/o/r/pull/7", "github.com/o/r/pull/8"], reply: { ref: "o/r#7" } },
+      { id: 2, at: "t", source: "slack", kind: "message.received", title: "#dev", url: null, from: "Alice", fromId: "U0ALICE", text: "帮忙 approve https://github.com/o/r/pull/44", why: ["mention"], keys: ["slack:C1:1.0", "github.com/o/r/pull/44"], reply: { channel: "C0DEV123", ts: "1.0" } },
+      { id: 3, at: "t", source: "slack", kind: "message.received", title: "#dev", url: null, from: "Alice", fromId: "U0ALICE", text: "在吗", why: ["mention"], keys: ["slack:C1:2.0"], reply: { channel: "C0DEV123", ts: "2.0" } },
+    ].map((e) => JSON.stringify(e)).join("\n") + "\n");
+    // GitHub 的事件：只能是它自己的 PR，原文里提到的别的 PR 不行。
+    expect(chiefFails(h, "reply", "approve", "--event", "1", "--ref", "o/r#8")).toContain("o/r#7");
+    expect(JSON.parse(chief(h, "reply", "approve", "--event", "1", "--ref", "o/r#7"))).toMatchObject({ ref: "o/r#7", policy: "ask" });
+    // Slack 里贴的 PR 链接：就是它；按默认的 custom:1 可以直接发，记下是按哪条情况。
+    expect(chiefFails(h, "reply", "approve", "--event", "2", "--ref", "o/r#45", "--custom", "1")).toContain("o/r#44");
+    expect(JSON.parse(chief(h, "reply", "approve", "--event", "2", "--ref", "o/r#44", "--custom", "1"))).toMatchObject({ ref: "o/r#44", policy: "auto" });
+    expect(chief(h, "reply", "queue", "2", "--policy")).toContain("custom:1");
+    const r = (JSON.parse(chief(h, "reply", "list", "--all")) as { id: number; custom?: number; status: string }[]).find((x) => x.id === 2);
+    expect(r).toMatchObject({ custom: 1, status: "queued" });
+    // 消息里没有 PR：不能 approve。
+    expect(chiefFails(h, "reply", "approve", "--event", "3", "--ref", "o/r#44")).toContain("没有 PR");
+  });
+
   it("以你的名义发要钥匙：不对的不行；配过的钥匙不能偷偷换，你 reset 了才能重配", () => {
     const h = setup();
     chief(h, "reply", "add", "--event", "1", "--file", draft(h, "a.md", "好的"));
