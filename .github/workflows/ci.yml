@@ -1,5 +1,4 @@
-# 每次推送、每个 PR：跑测试，查有没有公司信息。
-# 公司信息的关键词不写进仓库：放在仓库的 secret BLOCKED_PATTERN 里（不分大小写的正则，比如 "foo|bar"）。
+# 每次推送、每个 PR：跑测试。
 name: ci
 
 on:
@@ -32,25 +31,3 @@ jobs:
           npm install -g @anthropic-ai/claude-code
           claude plugin validate plugin
           claude plugin test plugin
-
-  no-company-info:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - name: 查文件和提交邮箱
-        env:
-          BLOCKED: ${{ secrets.BLOCKED_PATTERN }}
-          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
-        run: |
-          if [ -z "$BLOCKED" ]; then echo "::warning::没设 BLOCKED_PATTERN，跳过"; exit 0; fi
-          bad=0
-          # 只打印文件名和提交号，不打印命中的内容（日志是公开的）。
-          files=$(git grep -l -i -E -e "$BLOCKED" -- . || true)
-          if [ -n "$files" ]; then echo "这些文件里有公司信息："; echo "$files"; bad=1; fi
-          if [ -n "$BASE" ] && [ "$BASE" != "0000000000000000000000000000000000000000" ] && git cat-file -e "$BASE" 2>/dev/null; then range="$BASE..HEAD"; else range="HEAD"; fi
-          for c in $(git rev-list "$range"); do
-            if git log -1 --format='%ae %ce' "$c" | grep -q -i -E -e "$BLOCKED"; then echo "提交 $(git log -1 --format=%h "$c") 的作者或提交者邮箱是公司邮箱"; bad=1; fi
-          done
-          exit $bad

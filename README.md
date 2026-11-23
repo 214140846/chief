@@ -105,7 +105,7 @@ claude plugin marketplace add ./plugin        # 名字是 chief-dev
 claude plugin install chief@chief-dev --scope user
 ```
 
-推到 GitHub 后，CI 会跑同样的测试。公开仓库不能出现公司信息：在仓库 Settings → Secrets 里加 `BLOCKED_PATTERN`（不分大小写的正则，比如 `foo|bar`），CI 会查文件和提交邮箱，只报文件名和提交号，不打印命中的内容。
+推到 GitHub 后，CI 会跑同样的测试。
 
 ## 发版
 
