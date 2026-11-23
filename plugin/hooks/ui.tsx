@@ -55,6 +55,20 @@ export function dueLabel(due: string): { text: string; color: 'error' | 'warning
 
 export const live = (t: ThingRow) => t.status !== 'done' && t.status !== 'dropped'
 
+// 稍后再说、还没到点的：不在进行中的列表里，它的问题也先收起。到点了引擎还没来得及叫醒的（比如引擎停着）照常显示。
+export const snoozed = (t: ThingRow) => live(t) && t.snooze !== undefined && Date.parse(t.snooze.until) > Date.now()
+
+// 现在要跟的：没办完、也没在稍后再说。
+export const awake = (t: ThingRow) => live(t) && !snoozed(t)
+
+// 什么时候叫醒：今天 15:00、明天 09:00、11/30 09:00。
+export function wakeLabel(iso: string): string {
+  const d = new Date(iso)
+  const hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+  const days = Math.round((new Date(d).setHours(0, 0, 0, 0) - startOfToday()) / 86_400_000)
+  return days === 0 ? `今天 ${hm}` : days === 1 ? `明天 ${hm}` : `${d.getMonth() + 1}/${d.getDate()} ${hm}`
+}
+
 // 一条回复一句话说清：回谁、发给谁、approve 哪个 PR。
 export function whatOf(r: ReplyRow): string {
   return r.kind === 'approve' ? `approve PR ${r.target.ref ?? ''}` : r.kind === 'message' ? `发给 ${r.context.who ?? r.target.to ?? ''}` : `回 ${r.context.who ?? r.context.where}`

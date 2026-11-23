@@ -92,6 +92,9 @@ chief logs              # 引擎日志最后 50 行
 chief config            # 引擎设置
 chief connect slack     # 开浏览器窗口登录；--workspace acme 直接从工作区登；--stdin 改成从标准输入贴 Cookie
 chief connect github    # 用本机登录的 gh
+chief search 支付回调    # 在现在的和归档的事情、问题、回复、消息里找以前的事（面板进度页顶上也能搜）
+chief thing snooze 3 --until 下周一   # 稍后再说：到点再拿出来交给消息中心；chief thing wake 3 提前拿出来
+chief undo --list       # 最近能撤回的：不做了、只记下 / 忽略、跳过积下的；chief undo <号> 撤回
 chief uninstall         # 从 launchd 卸掉（~/chief 的数据不删）
 ```
 

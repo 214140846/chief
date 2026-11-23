@@ -3,7 +3,15 @@ import { MAX_TEXT, SESSION, fail, flag, num, oneLine, oops, plainOnly, stdinText
 import { KEY } from "../keys";
 import { serviceState } from "../launchd";
 import { loadDispatch, loadReplies, loadThings, paths, readEvents, updateJson, type Ask, type Thing, type ThingsFile } from "../store";
+import { parseUntil } from "../snooze";
+import { recordDrop } from "../undo";
 import { eventById, hubAlive } from "./events";
+
+// 给人看的本地时间：11/24 09:00。
+function localTime(d: Date): string {
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getMonth() + 1}/${d.getDate()} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
 
 export const THING_STATUSES = ["doing", "waiting_you", "waiting_others", "done", "dropped"] as const;
 
@@ -34,6 +42,28 @@ export async function thing(args: string[]): Promise<void> {
     const want = new Set(args);
     const hits = loadThings().things.filter((x) => x.status !== "done" && x.status !== "dropped" && (x.keys ?? []).some((k) => want.has(k)));
     process.stdout.write(`${JSON.stringify(hits)}\n`);
+    return;
+  }
+  // chief thing snooze T --until <时间>：稍后再说，到点引擎叫醒它、交给主会话（见 snooze.ts）。chief thing wake T：现在就拿出来。
+  if (sub === "snooze" || sub === "wake") {
+    const id = num(args.shift(), "事情号");
+    const untilText = sub === "snooze" ? flag(args, "--until") ?? fail("要 --until <时间>：2h、1d、tomorrow 09:00、明天9点、下周一、2026-11-30 15:00") : null;
+    const until = untilText === null ? null : parseUntil(untilText) ?? fail(`--until 看不懂，或者不在以后：${oneLine(untilText, 60)}（写 2h、1d、tomorrow 09:00、明天9点、下周一、2026-11-30 15:00）`);
+    const at = new Date().toISOString();
+    const out = updateThings((t) => {
+      const x = t.things.find((y) => y.id === id) ?? oops(`没有事情 ${id}`);
+      if (until) {
+        if (x.status === "done" || x.status === "dropped") oops(`事情 ${id} 已经${x.status === "done" ? "办完了" : "不做了"}，不用稍后再说`);
+        x.snooze = { until: until.toISOString(), at };
+        x.log = [...x.log, { at, text: `稍后再说：${localTime(until)} 再拿出来` }].slice(-MAX_LOG);
+      } else {
+        if (!x.snooze) oops(`事情 ${id} 没有在稍后再说`);
+        delete x.snooze;
+        x.log = [...x.log, { at, text: "提前拿出来了" }].slice(-MAX_LOG);
+      }
+      return { id: x.id, ...(until ? { until: until.toISOString(), local: localTime(until) } : { woke: true }) };
+    });
+    process.stdout.write(`${JSON.stringify(out)}\n`);
     return;
   }
   const session = flag(args, "--session");
@@ -88,9 +118,12 @@ export async function thing(args: string[]): Promise<void> {
     return;
   }
   if (sub === "update" && id !== null) {
-    updateThings((t) => {
+    const dropped = updateThings((t) => {
       const x = t.things.find((y) => y.id === id) ?? oops(`没有事情 ${id}`);
+      // 标成不做了：记下原来的状态，能撤回（chief undo）。
+      const was = status === "dropped" && x.status !== "dropped" ? x.status : null;
       if (status) x.status = status;
+      if (status === "done" || status === "dropped") delete x.snooze;
       if (session) x.session = session;
       if (titleText) x.title = titleText;
       if (event !== null && !x.events.includes(event)) x.events.push(event);
@@ -114,10 +147,12 @@ export async function thing(args: string[]): Promise<void> {
       if (dueFlag === "none") delete x.due;
       else if (dueFlag) x.due = dueFlag;
       x.updatedAt = at;
+      return was === null ? null : { thing: { id: x.id, title: x.title }, was };
     });
+    if (dropped) recordDrop(at, dropped.thing, dropped.was);
     return;
   }
-  fail("chief thing add|update|list|find");
+  fail("chief thing add|update|list|find|snooze|wake");
 }
 
 export async function ask(args: string[]): Promise<void> {
@@ -149,6 +184,8 @@ export async function ask(args: string[]): Promise<void> {
       const a: Ask = { id: t.nextAsk++, thing: x.id, question, suggest, status: "open", at: new Date().toISOString(), ...(replyId !== null ? { reply: replyId } : {}) };
       t.asks.push(a);
       x.status = "waiting_you";
+      // 稍后再说的事情来了新问题：要你定的不能等，拿出来。
+      delete x.snooze;
       x.updatedAt = a.at;
       return a.id;
     });
@@ -195,6 +232,7 @@ export async function board(): Promise<void> {
     unhandledMaxId: unhandled.reduce((m, e) => Math.max(m, e.id), 0),
     asks: t.asks.filter((a) => a.status === "open").length,
     live: t.things.filter((x) => x.status === "doing" || x.status === "waiting_you" || x.status === "waiting_others").length,
+    snoozed: t.things.filter((x) => x.snooze && x.status !== "done" && x.status !== "dropped").length,
     replies: loadReplies().items.filter((r) => r.status === "pending" || r.status === "failed").length,
   })}\n`);
 }

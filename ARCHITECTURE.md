@@ -66,6 +66,7 @@ Notion ─────┤                                                       
 | `data/replies.json` | `chief reply`、引擎 | 待发出和发过的回复 |
 | `data/routes.json` | `chief route` | 事情的键 → 会话 |
 | `data/activity.json` | 引擎 | 工作会话的最近动静 |
+| `data/undo.json` | `chief thing`、`chief mark`、`chief undo` | 最近能撤回的操作（不做了、只记下 / 忽略、跳过积下的）和撤回要用的原样，留最近 50 笔 |
 | `data/archive/` | 引擎 | 办完 7 天的旧记录，按月一个文件 |
 | `data/logs/` | 引擎 | 日志（不写密钥和消息原文） |
 

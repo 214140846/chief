@@ -44,6 +44,8 @@ export type ThingRow = {
   due?: string
   keys?: string[]
   origin?: 'chief' | 'import'
+  // 稍后再说：until 之前不在进行中的列表里，到点引擎叫醒它。
+  snooze?: { until: string; at: string }
   events: number[]
   updatedAt: string
   log: { at: string; text: string }[]
@@ -101,6 +103,22 @@ export type PolicyFile = {
 
 export type Reviews = Record<string, { ok: boolean; note?: string; at: string }>
 
+// 能撤回的操作（undo.json）：不做了、只记下 / 忽略、跳过积下的。undone 是撤回的时间。
+export type UndoRow = { id: number; at: string; kind: 'drop' | 'mark' | 'skip'; label: string; undone?: string }
+
+// chief search 的一条结果。
+export type SearchHit = {
+  kind: 'thing' | 'ask' | 'reply' | 'event' | 'decision'
+  id: number
+  date: string
+  title: string
+  snippet: string
+  url?: string
+  thing?: number
+  session?: string
+  archived?: boolean
+}
+
 export type Health = { ok: boolean; at: string; fails: number; error?: string }
 
 export type EvalCaseRow = { id: number; text: string; from: string; expect: 'dispatch' | 'note' | 'ignore' | 'ask'; note?: string }
@@ -135,6 +153,8 @@ export type Snapshot = {
   hubUsage: HubUsage
   // 「以你的名义发」的钥匙被清过 / 换过、你还没在面板上点知道了的（key-log.jsonl）。
   keyAlerts: { at: string; what: 'reset' | 'set' }[]
+  // 最近做的、能撤回的（新的在前）。
+  undo: UndoRow[]
 }
 
 // 主会话一天用掉的额度（hooks/usage.ts 记）：five / week 是 5 小时、每周窗口涨了几个百分点（量到的加估的），
@@ -203,6 +223,8 @@ declare module 'claude-code' {
       said: { text: string; at: number } | null
       // 本会话是不是主会话（挂过 chief events --follow 的 Monitor）。
       hub: boolean
+      // 进度页上搜以前的事：搜的字和结果。
+      found: { q: string; hits: SearchHit[]; error?: string } | null
       // 本会话上一次调完模型读到的额度百分比。
       reading: { at: number; five: number | null; week: number | null } | null
     }

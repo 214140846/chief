@@ -28,6 +28,7 @@ const edits = atom({ plugin: 'chief', key: 'edits' } as const, {})
 const open = atom({ plugin: 'chief', key: 'open' } as const, [])
 const logs = atom({ plugin: 'chief', key: 'logs' } as const, '')
 const basket = atom({ plugin: 'chief', key: 'basket' } as const, [])
+const found = atom({ plugin: 'chief', key: 'found' } as const, null)
 
 const PANE = 'chief'
 const TITLE = 'chief'
@@ -151,7 +152,7 @@ async function draw($: Engine, ui: Els) {
     const said = await read($, note)
     const opened = await read($, open)
     const body = current === 'outbox' ? outboxTab($, ui, s, await read($, edits), opened)
-      : current === 'things' ? thingsTab($, ui, s, opened)
+      : current === 'things' ? thingsTab($, ui, s, opened, await read($, found))
       : current === 'policy' ? policyTab($, ui, s, opened)
       : current === 'eval' ? evalTab($, ui, s, opened)
       // 原来的「控制」页并进了「设置」：上次停在控制页的也到设置页。

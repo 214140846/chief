@@ -333,6 +333,111 @@ test('数据文件坏了：顶上说坏了、带上原因，不说成连不上',
   await ui.unmount()
 })
 
+test('稍后再说、撤回、搜以前的事', async ($, on) => {
+  const runs: string[] = []
+  on('command.register', () => ({ value: { command: 'chief' } }))
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  memStore(on)
+  on('clock.every', () => ({ value: { cancel: () => {} } }))
+  const later = new Date(Date.now() + 3 * 86_400_000)
+  later.setHours(9, 0, 0, 0)
+  const files: Record<string, string> = {
+    ...FILES,
+    '/Users/me/chief/data/things.json': JSON.stringify({
+      things: [
+        { id: 1, title: 'PROJ-479 接口改造', session: 'local_abc', status: 'doing', progress: '在改', events: [], updatedAt: now, log: [] },
+        { id: 4, title: 'PROJ-123 压测报告', session: 'local_xyz', status: 'waiting_you', progress: '等你定', next: '定了就发', events: [], updatedAt: now, log: [], snooze: { until: later.toISOString(), at: now } },
+        // 到点了引擎还没叫醒（引擎停着）：照常显示。
+        { id: 5, title: 'o/r#9 review', status: 'doing', progress: '看了一半', events: [], updatedAt: now, log: [], snooze: { until: '2026-01-01T00:00:00Z', at: now } },
+      ],
+      asks: [{ id: 8, thing: 4, question: '压测报告发给谁？', suggest: '发给 Joe', status: 'open', at: now }],
+    }),
+    '/Users/me/chief/data/undo.json': JSON.stringify({
+      nextId: 4,
+      items: [
+        { id: 1, at: '2026-11-20T00:00:00Z', kind: 'mark', label: '忽略：#dev（Carol）', events: [{ id: 3, before: null }], undone: '2026-11-20T00:01:00Z' },
+        { id: 2, at: '2026-11-21T00:00:00Z', kind: 'mark', label: '只记下：#proj（Alice）', events: [{ id: 4, before: null }] },
+        { id: 3, at: now, kind: 'drop', label: '不做了：o/r#3 review', thing: { id: 2, status: 'doing' } },
+      ],
+    }),
+  }
+  on('fs.read', (_, e) => {
+    if (e.path === '/Users/me/chief/data/bin/chief') return { value: '#!/bin/sh' }
+    const text = files[e.path]
+    if (text === undefined) throw new Error('missing')
+    return { value: text }
+  })
+  on('process.run', (_, e) => {
+    runs.push(e.argv.slice(1).join(' '))
+    if (e.argv[0] === '/usr/bin/env') return { value: { exitCode: 0, stdout: 'HOME=/Users/me\nPATH=/usr/bin\n', stderr: '' } }
+    if (e.argv[1] === 'search') {
+      const hits = [
+        { kind: 'thing', id: 9, date: '2026-10-01T00:00:00Z', title: '旧的支付迁移', snippet: '支付迁移做完了', url: 'https://github.com/acme/shop/pull/12', session: 'local_old', archived: true },
+        { kind: 'event', id: 30, date: '2026-09-01T00:00:00Z', title: '#pay（Bob）', snippet: '支付回调又超时了', url: 'javascript:alert(1)' },
+      ]
+      return { value: { exitCode: 0, stdout: hits.map(h => JSON.stringify(h)).join('\n'), stderr: '' } }
+    }
+    return { value: { exitCode: 0, stdout: '', stderr: '' } }
+  })
+
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+  await $.command.run({ command: 'chief', args: '' })
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  // 稍后再说的事情：它的问题也先收起，不算在「现在要你」里。
+  expect(await ui.find({ type: 'Text', text: /压测报告发给谁/ })).toBeFalsy()
+  // 刚在面板上点的「不做了」：顶上留一个撤回；主会话自己判断的（只记下）不在顶上。
+  expect(await ui.find({ type: 'Text', text: /不做了：o\/r#3 review/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /只记下：#proj/ })).toBeFalsy()
+  await ui.press({ key: 'undo-fresh' })
+  expect(runs.at(-1)).toBe('undo 3')
+
+  await ui.press({ key: 'tab-things' })
+  expect(await ui.find({ type: 'Text', text: /2 件在做/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /o\/r#9 review/ })).toBeTruthy()
+  // 稍后再说的收在下面，点开看什么时候拿出来，能提前拿出来。
+  expect(await ui.find({ type: 'Text', text: /PROJ-123 压测报告/ })).toBeFalsy()
+  await ui.press({ key: 'later-list' })
+  expect(await ui.find({ type: 'Text', text: /PROJ-123 压测报告/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: new RegExp(`${later.getMonth() + 1}/${later.getDate()} 09:00 拿出来`) })).toBeTruthy()
+  await ui.press({ key: 'wk4' })
+  expect(runs.at(-1)).toBe('thing wake 4')
+
+  // 事情卡上：稍后再说 → 三个快捷选项。
+  await ui.press({ key: 'tg1' })
+  expect(await ui.find({ key: 'sntm-1' })).toBeFalsy()
+  await ui.press({ key: 'sn1' })
+  await ui.press({ key: 'sntm-1' })
+  expect(runs.at(-1)).toBe('thing snooze 1 --until tomorrow 09:00')
+  await ui.press({ key: 'sn1' })
+  await ui.press({ key: 'snmon-1' })
+  expect(runs.at(-1)).toBe('thing snooze 1 --until next monday 09:00')
+  await ui.press({ key: 'sn1' })
+  await ui.press({ key: 'sn2h-1' })
+  expect(runs.at(-1)).toBe('thing snooze 1 --until 2h')
+
+  // 最近做的：更早的也能撤；撤过的写已撤回。
+  await ui.press({ key: 'undo-list' })
+  expect(await ui.find({ text: /最近做的 · 3/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: '已撤回' })).toBeTruthy()
+  expect(await ui.find({ key: 'un1' })).toBeFalsy()
+  await ui.press({ key: 'un2' })
+  expect(runs.at(-1)).toBe('undo 2')
+
+  // 搜以前的事：要找的字放在 -- 后面；结果带链接（只认普通网址）、能跳到会话。
+  await ui.input({ key: 'search', text: '支付' })
+  expect(runs.at(-1)).toBe('search --limit 20 -- 支付')
+  expect(await ui.find({ type: 'Text', text: /搜「支付」· 2 条/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /事情 · 2026-10-01 · 归档 · 旧的支付迁移/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: '支付回调又超时了' })).toBeTruthy()
+  expect(await ui.find({ text: /javascript:/ })).toBeFalsy()
+  await ui.press({ key: 'shs0' })
+  expect(runs.at(-1)).toBe('claude://code/continue?session=local_old')
+  await ui.press({ key: 'search-clear' })
+  expect(await ui.find({ type: 'Text', text: /搜「支付」/ })).toBeFalsy()
+  await ui.unmount()
+})
+
 test('引擎比插件新算装好了；插件新才更新', () => {
   expect(engineBehind('0.3.0', '0.3.0')).toBe(false)
   expect(engineBehind('0.4.0', '0.3.0')).toBe(false)

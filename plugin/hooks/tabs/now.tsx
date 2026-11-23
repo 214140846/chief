@@ -3,7 +3,7 @@ import type { EngineInterface as Engine } from 'claude-code'
 
 import type { AskRow, DecisionRow, Snapshot } from '../../types'
 import { answerAsk, openSession, setTab } from '../actions'
-import { daysLeft, dueLabel, listify, live, md, replyGist, short, splitAsk, startOfToday, type Els } from '../ui'
+import { awake, daysLeft, dueLabel, listify, md, replyGist, short, snoozed, splitAsk, startOfToday, type Els } from '../ui'
 import { replyCard } from './outbox'
 
 export function nowTab($: Engine, ui: Els, s: Snapshot, opened: string[] = [], edit: Record<string, string> = {}) {
@@ -12,11 +12,12 @@ export function nowTab($: Engine, ui: Els, s: Snapshot, opened: string[] = [], e
   const today = s.decisions.filter(d => Date.parse(d.at) >= dayStart)
   const count = (...v: DecisionRow['verdict'][]) => today.filter(d => v.includes(d.verdict)).length
   const sentToday = s.replies.filter(r => r.status === 'sent' && r.sentAt !== undefined && Date.parse(r.sentAt) >= dayStart).length
-  const asks = s.asks.filter(a => a.status === 'open')
+  // 稍后再说的事情：它的问题也先收起。
+  const asks = s.asks.filter(a => a.status === 'open' && !s.things.some(t => t.id === a.thing && snoozed(t)))
   const toSend = s.replies.filter(r => r.status === 'pending' || r.status === 'failed').length
   const thingOf = (id: number) => s.things.find(t => t.id === id)
-  const dueSoon = s.things.filter(t => live(t) && t.due !== undefined && daysLeft(t.due) <= 3).sort((a, b) => (a.due ?? '').localeCompare(b.due ?? ''))
-  const blocked = s.things.filter(t => live(t) && t.blocker !== undefined)
+  const dueSoon = s.things.filter(t => awake(t) && t.due !== undefined && daysLeft(t.due) <= 3).sort((a, b) => (a.due ?? '').localeCompare(b.due ?? ''))
+  const blocked = s.things.filter(t => awake(t) && t.blocker !== undefined)
 
   const askCard = (q: AskRow) => {
     const t = thingOf(q.thing)

@@ -45,6 +45,8 @@ const DATA = {
   corrupt: "corrupt.json",
   // 主会话用掉的额度（面板的 hooks/usage.ts 记）。
   hubUsage: "hub-usage.json",
+  // 能撤回的操作：不做了、只记下 / 忽略、跳过积下的（见 undo.ts）。
+  undo: "undo.json",
 } as const;
 
 // 放在 top 的：你的规矩、可调的数字和开关（见 config.ts）。
