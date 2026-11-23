@@ -4,7 +4,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface as Engine } from 'claude-code'
 
-import type { Handle, ReplyMode, ReplyRow, Tab, ThingRow } from '../types'
+import type { Handle, ReplyMode, ReplyRow, SearchHit, Tab, ThingRow } from '../types'
 import { confirmFromPanel, editFromPanel, noteUserSaid, rulesFromPanel } from './confirm'
 import { refresh, chiefDir } from './data'
 
@@ -14,6 +14,7 @@ const edits = atom({ plugin: 'chief', key: 'edits' } as const, {})
 const open = atom({ plugin: 'chief', key: 'open' } as const, [])
 const logs = atom({ plugin: 'chief', key: 'logs' } as const, '')
 const basket = atom({ plugin: 'chief', key: 'basket' } as const, [])
+const found = atom({ plugin: 'chief', key: 'found' } as const, null)
 
 // 面板顶上那句提示带着时间（「时间|文字」），过几秒就不再显示。
 function stamp(text: string): string {
@@ -158,6 +159,39 @@ export async function finish($: Engine, t: ThingRow, how: 'done' | 'dropped') {
   }
   // 不做了：会话里可能还在干，让主会话去叫停。
   await tell($, `chief：事情 #${t.id} 不做了（${t.title}）`, '不做了')
+}
+
+// 稍后再说：until 是 chief 认的写法（2h、tomorrow 09:00、next monday 09:00），到点引擎叫醒它、交给主会话。
+export async function snooze($: Engine, t: ThingRow, until: string, label: string) {
+  await act($, `「${short(t.title, 20)}」${label}再说`, ['thing', 'snooze', String(t.id), '--until', until])
+}
+
+export async function wake($: Engine, t: ThingRow) {
+  await act($, `「${short(t.title, 20)}」拿出来了`, ['thing', 'wake', String(t.id)])
+}
+
+// ── 撤回、找以前的事 ──
+
+export async function undo($: Engine, id: number) {
+  await act($, '撤回', ['undo', String(id)])
+}
+
+// 搜以前的事：结果放在 found 里，进度页上画出来。
+export async function search($: Engine, q: string) {
+  const bin = `${await chiefDir($)}/bin/chief`
+  const out = await $.process.run([bin, 'search', '--limit', '20', '--', q])
+  const hits = out.exitCode !== 0 ? [] : out.stdout.split('\n').flatMap(l => {
+    try {
+      return l.trim() ? [JSON.parse(l) as SearchHit] : []
+    } catch {
+      return []
+    }
+  })
+  await update($, found, () => ({ q, hits, ...(out.exitCode !== 0 ? { error: short(out.stderr.trim() || '没说为什么', 120) } : {}) }))
+}
+
+export async function clearSearch($: Engine) {
+  await update($, found, () => null)
 }
 
 // ── 策略 ──

@@ -91,6 +91,8 @@ description: chief 消息中心，用户的私人助理主会话。在 Claude Ap
 - **`dryrun` 为 true、标题带「[演练]」**：用户在测评页拿例子测你。照常判断，但**什么都不真的做**（不 `send_message`、不开会话、不 `chief reply / ask / thing`），只 `chief mark N <判断> --dry`，标准输入写理由和你具体会怎么办（「会送进『PROJ-123 压测』会话」「会新开会话，目录 ~/dev/my-service」「会回：……」）。汇报一行：`**🧪 演练 · 例子 #<eval>** → <判断>：<一句理由>`。
 - **`kind` 是 `chief.missed`、标题「漏掉了：#N」**：引擎对账发现事件 #N 交给你超过 10 分钟还没 mark。`chief show N` 读原消息，当刚来的办完、`chief mark N <判断>`，再把这条提醒 mark 成 `noted`（理由「补办 #N」）。汇报标题前加「补办」。**不要只 mark 提醒、不办原消息。**
 - **`kind` 是 `digest`（`source` 是 `chief`）**：每天汇总到点了。Read `digest.md` 照它写给用户，`chief mark N noted`。
+- **`kind` 是 `thing.woke`**：用户之前说「稍后再说」的事情到点了，引擎已经把它拿回进行中。看一眼现状（有会话的可以问进展），跟用户说一句这件事回来了、卡在哪、下一步；要他拍板的 `chief ask add`。`chief mark N noted --thing T`。
+- **`kind` 是 `chief.undo`**：用户在面板上撤回了一步。照 `text` 办：撤回「不做了」的，`send_message` 告诉那个会话接着做；撤回判断、撤回跳过的，那些消息重新算没判断，照平常的办法重新判断（用户多半觉得刚才不该这么办）。这条本身 `mark noted`。
 - **`test` 为 true、标题带「[测试]」**：用户造的测试消息，照常判断、派活，汇报注明是测试；它的回复发不出去，放进待发出就行。
 
 一次可能来好几条。**先归堆**：`keys` 第一个相同的（同一个 thread、私信、PR、工单）当一件事一起判断、一起 mark。然后每件走下面五步。
@@ -180,9 +182,12 @@ description: chief 消息中心，用户的私人助理主会话。在 Claude Ap
 
 | 用户说 | 你做 |
 |---|---|
-| 「我在忙什么 / 进度怎么样 / 今天 / 这周 / 还欠谁什么」 | `chief thing list --all`、`chief ask list`、`chief reply list`，汇总：先已过期和 3 天内到期的（带截止日），再卡住的（写阻碍），然后要你定的、在做的、等别人的、办完的；每件一行：标题 · 进展 · 下一步。 |
+| 「我在忙什么 / 进度怎么样 / 今天 / 这周 / 还欠谁什么」 | `chief thing list --all`、`chief ask list`、`chief reply list`，汇总：先已过期和 3 天内到期的（带截止日），再卡住的（写阻碍），然后要你定的、在做的、等别人的、办完的；每件一行：标题 · 进展 · 下一步。带 `snooze` 的是稍后再说的，最后单独列一行「稍后再说：…（几号拿出来）」。 |
 | 「遇到 xx 情况就 yy」（比如「有人在 Slack 发 PR 让我看就直接 approve」） | `chief rules custom add`，标准输入 `{"when": "<什么情况>", "handle": "dispatch|note|ignore|approve", "reply": "ask|auto", "brief": "<交代，有的话>"}`。 |
 | 「以后 xx 直接发 / 都要问我 / 不用管」 | 整个场景：`chief rules set <场景> reply=auto`（或 `handle=dispatch/note/ignore`）。某句话不问就发：加进固定回复（`chief rules quick add`，标准输入给那句原文）。具体的人或情况：「回 xx 直接发」加白名单（`chief rules trust add`，写 Slack 用户编号或完整名字）；「xx 一定要问我」加进「一定问我」列表（`chief rules` 帮助里有命令）；其余写成一句文字规矩 `chief rules add`。删：`chief rules remove`，标准输入给原文。 |
-| 「这件事不做了」 | `chief thing update T --status dropped`（标准输入：用户说不做了），`send_message` 告诉那个会话停下。 |
+| 「这件事不做了」 | `chief thing update T --status dropped`（标准输入：用户说不做了），`send_message` 告诉那个会话停下。用户能在面板上撤回。 |
+| 「这件事下周再说 / 明天再提醒我 / 先放两小时」 | `chief thing snooze T --until <时间>`（`2h`、`1d`、`tomorrow 09:00`、`明天9点`、`下周一`、`2026-11-30 15:00`）。到点引擎会交给你一条 `thing.woke`。提前拿出来：`chief thing wake T`。 |
+| 「之前那个 xx 怎么样了 / 上次谁问过 xx」 | `chief search xx`（`--kind thing` / `ask` / `reply` / `event` / `decision` 缩小范围），连归档里办完的也找；再按结果去看事情、问会话。 |
+| 「撤回刚才那个」 | `chief undo --list` 看最近能撤的（不做了、只记下 / 忽略、跳过积下的），`chief undo <号>`；不写号撤最近一笔。 |
 
 改规矩都走标准输入，改完把改后的那条念给用户确认。**放宽的改动**（直接发、加白名单、固定回复）引擎可能只记成提议：那就告诉用户「在策略页点采纳才生效」，不要换别的办法绕过去。

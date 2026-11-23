@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import type * as Panel from "../../types";
-import type { Audience, Ask, Decision, Doctor, EvalCase, EvalRun, Handle, Placement, Policy, Reply, ReplyMode, Reviews, ScenarioRule, SourceHealth, Thing } from "../src/shared/types";
+import type { Audience, Ask, Decision, Doctor, EvalCase, EvalRun, Handle, Placement, Policy, Reply, ReplyMode, Reviews, ScenarioRule, SearchHit, SourceHealth, Thing, UndoEntry } from "../src/shared/types";
 
 // 面板的类型合同（plugin/types/index.d.ts）不能 import，照抄了引擎的数据类型。这里在类型上检查：
 // 引擎写出来的每样东西，都能当成面板那份读。不成立时 tsc --noEmit 报错（这个文件本身运行时什么都不做）。
@@ -23,6 +23,8 @@ export type Checks = [
   Fits<EvalCase, Panel.EvalCaseRow>,
   Fits<EvalRun, Panel.EvalRunRow>,
   Fits<Doctor, Panel.Doctor>,
+  Fits<UndoEntry, Panel.UndoRow>,
+  Fits<SearchHit, Panel.SearchHit>,
   // 反过来：面板认得的判断、做法，引擎都认得（面板会把它们写回去）。
   Fits<Panel.Verdict, Decision["verdict"]>,
   Fits<Panel.Handle, Handle>,

@@ -43,11 +43,12 @@ export const MIGRATIONS: Readonly<Record<string, readonly Step[]>> = {
   "settings.json": [() => {}],
   "hub.json": [() => {}],
   "config.json": [() => {}],
+  "undo.json": [(d) => nextOf(d, "nextId", arr(d, "items"))],
 };
 
 const files = () => {
   const p = paths();
-  return [p.state, p.replies, p.things, p.policy, p.evals, p.settings, p.hub, p.config];
+  return [p.state, p.replies, p.things, p.policy, p.evals, p.settings, p.hub, p.config, p.undo];
 };
 
 // 升一个文件：返回升了没有。没有的、比现在新的（新版 chief 写的）不动。

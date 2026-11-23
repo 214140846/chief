@@ -11,6 +11,7 @@ import { sendCheck } from "./gate";
 import { rotateLog } from "./logfile";
 import { holdIfQuiet, takeHeld } from "./quiet";
 import { scrubTokens } from "./scrub";
+import { wakeDue } from "./snooze";
 import { KeychainStore, type SecretStore } from "./secrets";
 import { keysOf } from "./keys";
 import { DATA_HEALTH } from "./shared/rules";
@@ -57,6 +58,8 @@ const hubDownMs = () => config().hubDownMinutes * 60_000;
 const hubNagMs = () => config().nagMinutes * 60_000;
 const HEALTH_MS = 60_000;
 const ARCHIVE_MS = 24 * 3600_000;
+// 稍后再说的事情多久看一次到点没有。
+const WAKE_MS = 60_000;
 
 // 漏掉的消息：交出去（firstSeen 记着引擎第一次看到它没判断的时间）过了 missedMs 还没判断。演练消息和提醒本身不算。
 export function missedEvents(events: readonly ChiefEvent[], handled: Record<string, unknown>, firstSeen: Map<number, number>, now: number, after = missedMs()): ChiefEvent[] {
@@ -244,6 +247,7 @@ export class Engine {
   private activityTimer: NodeJS.Timeout | null = null;
   private healthTimer: NodeJS.Timeout | null = null;
   private archiveTimer: NodeJS.Timeout | null = null;
+  private wakeTimer: NodeJS.Timeout | null = null;
   // 每个来源最近一次收 / 拉的结果，跟心跳一起写进 engine.json，面板拿它把连不上的来源标红。
   private readonly health: Record<string, SourceHealth> = {};
   private readonly startedAt = Date.now();
@@ -309,6 +313,26 @@ export class Engine {
     // 办完的旧东西每天搬一次（起来时先搬一次）。
     this.archive();
     this.archiveTimer = setInterval(() => this.archive(), ARCHIVE_MS);
+    // 稍后再说的事情到点了就叫醒（起来时先看一次：关机时到点的也补上）。
+    this.wakeSnoozed();
+    this.wakeTimer = setInterval(() => this.wakeSnoozed(), WAKE_MS);
+  }
+
+  // 叫醒到点的事情：弹个通知，再交给主会话一条 thing.woke（它重新跟进、告诉你）。测试直接调。
+  wakeSnoozed(now = Date.now()): void {
+    try {
+      for (const t of wakeDue(now)) {
+        log(`事情 ${t.id} 稍后再说的时间到了`);
+        (this.deps.notify ?? say)("chief · 稍后再说的事到点了", t.title);
+        this.emit({
+          at: new Date(now).toISOString(), source: "session", kind: "thing.woke", title: `到点了：${t.title}`.slice(0, 200), url: null, from: null,
+          text: `事情 #${t.id}「${t.title}」用户之前说稍后再说，现在到点了，已经拿回进行中。看一眼现状（chief thing list；有会话的可以问它进展），跟用户说一句这件事回来了、现在卡在哪、下一步是什么；要他拍板的 chief ask add。这条 mark noted --thing ${t.id}。`,
+          why: ["woke"], keys: [...(t.keys ?? []), ...(t.session ? [t.session] : [])], reply: {},
+        }, `woke:${t.id}:${now}`);
+      }
+    } catch (error) {
+      log(`叫醒稍后再说的事情没成：${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   private rotateLog(maxBytes: number): void {
@@ -388,6 +412,7 @@ export class Engine {
     if (this.activityTimer) clearInterval(this.activityTimer);
     if (this.healthTimer) clearInterval(this.healthTimer);
     if (this.archiveTimer) clearInterval(this.archiveTimer);
+    if (this.wakeTimer) clearInterval(this.wakeTimer);
     this.sessionWatcher?.close();
     this.abort.abort();
     await this.slack?.stop();

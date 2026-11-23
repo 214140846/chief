@@ -20,13 +20,13 @@ function put(kind: string, rows: { month: string; row: unknown }[]): void {
 
 const monthOf = (at: string | undefined) => (at && /^\d{4}-\d{2}/.test(at) ? at.slice(0, 7) : "unknown");
 
-function rewriteLines(file: string, rows: unknown[]): void {
+export function rewriteLines(file: string, rows: unknown[]): void {
   const tmp = `${file}.${process.pid}.tmp`;
   writeFileSync(tmp, rows.map((r) => `${JSON.stringify(r)}\n`).join(""), { mode: 0o600 });
   renameSync(tmp, file);
 }
 
-function readLines<T>(file: string): T[] {
+export function readLines<T>(file: string): T[] {
   if (!existsSync(file)) return [];
   return readFileSync(file, "utf8").split("\n").flatMap((l) => {
     try {

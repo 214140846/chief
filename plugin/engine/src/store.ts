@@ -19,8 +19,9 @@
 //   key-log.jsonl 钥匙什么时候配的、清的、换的，只追加；面板拿它提醒你钥匙被换过。
 //   reviews.json  你给主会话的判断标的对错（事件号 → 对 / 错和你说的应该怎样）。
 //   held.json     免打扰时没弹的通知（见 quiet.ts）。
-// 几个进程（引擎、主会话的命令、面板的命令）会同时写的文件（replies、things、policy、dispatch、routes、reviews、hub），都拿着 <文件>.lock 读改写。
-// 引擎只写 events.jsonl、state.json；命令行（消息中心在用）只写另外几个。两边不抢同一个文件。
+//   undo.json     最近能撤回的操作（不做了、只记下 / 忽略、跳过积下的）和撤回要用的原样（见 undo.ts）。
+// 几个进程（引擎、主会话的命令、面板的命令）会同时写的文件（replies、things、policy、dispatch、routes、reviews、hub、undo），都拿着 <文件>.lock 读改写。
+// 引擎只写 events.jsonl、state.json，外加拿着锁改 things.json（叫醒稍后再说的、归档）、replies.json（发送）；命令行（消息中心在用）也往 events.jsonl 追加（测试消息、撤回），拿着 state 的锁取号。
 import { appendFileSync, closeSync, copyFileSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmdirSync, statSync, writeSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
@@ -59,6 +60,7 @@ export function ensureHome(): void {
 // 改了某个文件的样子：这里加一，migrate.ts 里补一步。
 export const SCHEMA: Readonly<Record<string, number>> = {
   "state.json": 1, "replies.json": 1, "things.json": 1, "rules.json": 1, "evals.json": 1, "settings.json": 1, "hub.json": 1, "config.json": 1,
+  "undo.json": 1,
 };
 
 // 这几个坏了不能当空的用：编号会从头算、等你的回复和事情全没了、规矩变回默认。读到坏的就报错，不往下走，也不覆盖它。
@@ -211,6 +213,17 @@ export function readEvents(): ChiefEvent[] {
 
 export function appendEvent(e: ChiefEvent): void {
   appendFileSync(paths().events, `${JSON.stringify(e)}\n`, { mode: 0o600 });
+}
+
+// 命令行自己造一条事件交给主会话（撤回了判断、撤回了不做了）：拿着 state 的锁取号再追加，和引擎不会拿到同一个号。
+export function addEvent(e: Omit<ChiefEvent, "id">): ChiefEvent {
+  return withLock(paths().state, () => {
+    const st = loadState();
+    const ev: ChiefEvent = { id: st.nextId++, ...e };
+    saveState(st);
+    appendEvent(ev);
+    return ev;
+  });
 }
 
 // ── 对应表 ──

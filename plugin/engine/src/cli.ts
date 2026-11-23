@@ -22,6 +22,9 @@
 //   chief board                        一份汇总（JSON）
 //   chief thing add|update|list|find   事情清单：标准输入给一句进展，或 JSON {progress, next, blocker, result}；--due YYYY-MM-DD 截止日；
 //                                      --key 记这件事的键，--import 标成导入的；find 按键找事情
+//   chief thing snooze <T> --until <时间> | wake <T>   稍后再说：到点引擎叫醒它、交给主会话；时间写 2h、1d、tomorrow 09:00、明天9点、下周一、ISO
+//   chief undo [--list] [号]           撤回最近做的：不做了、只记下 / 忽略、跳过积下的（撤回的消息重新交给主会话）
+//   chief search <字> [--limit N] [--kind thing|ask|reply|event|decision]  在现在的数据和归档里找以前的事，一行一条 JSON
 //   chief test [--from 名字] [--where 位置] [--why dm|mention|thread]  造一条测试消息（标准输入给内容），回复不会真的发出去
 //   chief eval add|from-event|list|remove|run|report  演练：拿例子测主会话会怎么办（不真的办），对结果
 //   chief import                       导入用：Jira 指派给你没做完的、GitHub 你开着的 / 等你 review 的 PR
@@ -50,7 +53,9 @@ import { keyCmd } from "./commands/key";
 import { reply } from "./commands/reply";
 import { importCandidates, review, rules } from "./commands/rules";
 import { archive, awake, configCmd, connect, disconnect, doctor, engineCmd, install, logs, run, slackCmd, status, uninstall } from "./commands/setup";
+import { searchCmd } from "./commands/search";
 import { ask, board, thing } from "./commands/things";
+import { undoCmd } from "./commands/undo";
 import { migrateAll } from "./migrate";
 import { ensureHome } from "./store";
 
@@ -89,6 +94,8 @@ const COMMANDS: Readonly<Record<string, (args: string[]) => Promise<void> | void
   eval: (args) => evals(args),
   slack: (args) => slackCmd(args),
   archive: () => archive(),
+  undo: (args) => undoCmd(args),
+  search: (args) => searchCmd(args),
 };
 
 async function main(argv: string[]): Promise<void> {
@@ -98,7 +105,7 @@ async function main(argv: string[]): Promise<void> {
   // 旧格式的数据文件先升到现在的格式（见 migrate.ts）。
   migrateAll();
   if (cmd === undefined || !Object.hasOwn(COMMANDS, cmd)) {
-    fail("chief run|install|uninstall|export|status|logs|config|quiet|digest|connect|disconnect|events|show|cursor|hub|engine|route|reply|mark|board|thing|ask|rules|review|import|test|eval|slack");
+    fail("chief run|install|uninstall|export|status|logs|config|quiet|digest|connect|disconnect|events|show|cursor|hub|engine|route|reply|mark|board|thing|ask|rules|review|import|test|eval|slack|undo|search");
   }
   return COMMANDS[cmd]!(args);
 }

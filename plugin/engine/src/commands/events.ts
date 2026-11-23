@@ -5,6 +5,7 @@ import { SESSION, fail, flag, num, oneLine, stdinText, title } from "../args";
 import { KEY } from "../keys";
 import { LineTail } from "../tail";
 import { appendDecision, loadCursor, loadDecisions, loadDispatch, loadRoutes, loadThings, paths, readEvents, readJson, scenarioOf, updateJson, withLock, writeJson, type ChiefEvent, type Decision, type Dispatch, type Routes } from "../store";
+import { recordMark, recordSkip } from "../undo";
 import { updateThings } from "./things";
 
 // 一条事件在 Monitor 通知里最多带这么多字，全文用 chief show 看。
@@ -177,11 +178,14 @@ export async function mark(args: string[]): Promise<void> {
   const reason = upto !== null ? "你让跳过之前积下的旧消息" : await stdinText();
   const at = new Date().toISOString();
   // 判断过的不再判断第二次（Monitor 重新挂上时可能又收到一遍）：除非 --force。
+  // before：改之前每条是怎么处理的（撤回用，见 undo.ts）。
+  const before: Record<string, Dispatch> = {};
   const marked = updateJson<Record<string, Dispatch>, number[] | string>(paths().dispatch, {}, (dispatch) => {
     const ids = upto !== null ? evts.filter((e) => e.id <= num(upto, "--upto ") && !dispatch[e.id]).map((e) => e.id) : listed;
     if (ids.length === 0) return "没有要标的事件";
     const done = ids.filter((id) => dispatch[id]);
     if (done.length > 0 && !force) return `这些已经判断过了：${done.map((id) => `#${id}`).join(" ")}（不用再办；真要改判断加 --force）`;
+    for (const id of done) before[id] = dispatch[id]!;
     for (const id of ids) dispatch[id] = { status: status === "asked" ? "noted" : status, at, ...(session ? { session } : {}), ...(titleText ? { title: titleText } : {}) };
     return ids;
   });
@@ -204,6 +208,9 @@ export async function mark(args: string[]): Promise<void> {
       });
     }
   }
+  // 记一笔能撤回的：跳过积下的、只记下 / 忽略（chief undo）。
+  if (upto !== null) recordSkip(at, marked);
+  else if (!dry) recordMark(status as Decision["verdict"], at, marked.map((id) => byId.get(id)!), before, thingId);
   process.stdout.write(`标好了 ${marked.length} 条\n`);
 }
 

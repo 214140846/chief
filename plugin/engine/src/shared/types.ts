@@ -123,6 +123,8 @@ export interface Thing {
   keys?: string[];
   // 从哪来的：chief（主会话派活时记的）、import（你让它导入的）。
   origin?: "chief" | "import";
+  // 稍后再说：until 之前不在面板的进行中列表里（它的问题也先收起）；到点引擎叫醒它（去掉这一项，状态不变），交给主会话一条 thing.woke。
+  snooze?: { until: string; at: string };
   updatedAt: string;
   // 进展的历史，新的在后，只留最近的。
   log: { at: string; text: string }[];
@@ -147,6 +149,49 @@ export interface ThingsFile {
   nextAsk: number;
   things: Thing[];
   asks: Ask[];
+}
+
+// ── 能撤回的操作（undo.json，见 undo.ts）──
+
+export interface UndoEntry {
+  id: number;
+  at: string;
+  // drop：事情标成不做了；mark：主会话把几条消息判断成只记下 / 忽略；skip：跳过积下的旧消息。
+  kind: "drop" | "mark" | "skip";
+  // 给人看的一句（不带 chief 的编号）。
+  label: string;
+  // drop：这件事原来是什么状态。
+  thing?: { id: number; status: Thing["status"] };
+  // mark / skip：每条消息原来怎么处理的（null：原来没判断）。
+  events?: { id: number; before: Dispatch | null }[];
+  // mark --thing：这次把哪几条消息记到了哪件事上（撤回时拿掉）。
+  addedTo?: { thing: number; events: number[] };
+  // 什么时候撤回的（撤回过的不能再撤）。
+  undone?: string;
+}
+
+export interface UndoFile {
+  nextId: number;
+  items: UndoEntry[];
+}
+
+// ── chief search 的一条结果 ──
+
+export interface SearchHit {
+  kind: "thing" | "ask" | "reply" | "event" | "decision";
+  // 事情号、问题号、回复号、事件号（判断用它的事件号）。
+  id: number;
+  date: string;
+  // 这条是什么：事情标题、消息在哪、回谁。
+  title: string;
+  // 对上的那一段。
+  snippet: string;
+  url?: string;
+  // 属于哪件事、在哪个会话（面板拿它跳过去）。
+  thing?: number;
+  session?: string;
+  // 归档里的（办完很久的）。
+  archived?: boolean;
 }
 
 // ── 场景和规矩 ──

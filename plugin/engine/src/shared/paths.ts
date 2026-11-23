@@ -47,6 +47,8 @@ const DATA = {
   hubUsage: "hub-usage.json",
   // 免打扰时没弹的通知（见 quiet.ts）：免打扰一结束合成一条弹出来，也进下一份汇总。
   held: "held.json",
+  // 能撤回的操作：不做了、只记下 / 忽略、跳过积下的（见 undo.ts）。
+  undo: "undo.json",
 } as const;
 
 // 放在 top 的：你的规矩、可调的数字和开关（见 config.ts）、chief export 导出的备份。

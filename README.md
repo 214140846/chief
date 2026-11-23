@@ -103,6 +103,9 @@ chief connect github    # 用本机登录的 gh
 chief quiet             # 现在是不是免打扰、到几点
 chief digest            # 汇总的材料（JSON）
 chief export            # 导出一份（不含密钥），默认放在 ~/chief/exports
+chief search 支付回调    # 在现在的和归档的事情、问题、回复、消息里找以前的事（面板进度页顶上也能搜）
+chief thing snooze 3 --until 下周一   # 稍后再说：到点再拿出来交给消息中心；chief thing wake 3 提前拿出来
+chief undo --list       # 最近能撤回的：不做了、只记下 / 忽略、跳过积下的；chief undo <号> 撤回
 chief uninstall         # 从 launchd 卸掉（~/chief 的数据不删）
 chief uninstall --purge # 卸掉并删光 chief 的数据和钥匙串里的凭证（要在终端里敲 purge 确认）
 ```

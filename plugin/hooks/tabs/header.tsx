@@ -4,13 +4,15 @@ import type { EngineInterface as Engine } from 'claude-code'
 import { DATA_HEALTH } from '../../engine/src/shared/rules'
 import { sourceLabel } from '../../engine/src/shared/sources'
 import type { Snapshot } from '../../types'
-import { ackKeyAlerts, clearBasket, sendBasket, setTab, skipOld, unannotate } from '../actions'
-import { ago, short, type Els } from '../ui'
+import { ackKeyAlerts, clearBasket, sendBasket, setTab, skipOld, unannotate, undo } from '../actions'
+import { ago, short, snoozed, type Els } from '../ui'
 
 export function header($: Engine, ui: Els, s: Snapshot, said: string, current: string, basket: { key: string; label: string; text: string }[] = [], setupMissing = 0) {
   const { Box, Text, Button } = ui
   const toSend = s.replies.filter(r => r.status === 'pending' || r.status === 'failed').length
-  const asks = s.asks.filter(a => a.status === 'open').length
+  const asks = s.asks.filter(a => a.status === 'open' && !s.things.some(t => t.id === a.thing && snoozed(t))).length
+  // 你刚在面板上点的「不做了」「跳过积下的」：两分钟内顶上留一个撤回（更早的在进度页「最近做的」里撤）。
+  const fresh = s.undo.find(x => !x.undone && x.kind !== 'mark' && Date.now() - Date.parse(x.at) < 120_000)
   const proposals = s.policy?.proposals.length ?? 0
   // 提示是「时间|文字」：只显示最近 8 秒的。
   const bar = said.indexOf('|')
@@ -62,6 +64,12 @@ export function header($: Engine, ui: Els, s: Snapshot, said: string, current: s
           : <Button key={`tab-${t.key}`} plain onPress={() => setTab($, t.key)}>{t.n > 0 ? `${t.label} ${t.n}` : t.label}</Button>)}
       </Box>
       {noteText !== '' && <Text size="footnote" color="suggestion">{noteText}</Text>}
+      {fresh && (
+        <Box flexDirection="row" gap="sm" alignItems="center">
+          <Box flexShrink={1}><Text size="footnote" wrap="truncate-end"><Text dimColor>刚才　</Text>{fresh.label}</Text></Box>
+          <Button key="undo-fresh" onPress={() => undo($, fresh.id)}>撤回</Button>
+        </Box>
+      )}
       {basket.length > 0 && (
         <Box flexDirection="column" borderStyle="round" borderColor="claude" paddingX="md" paddingY="sm" gap="xs">
           <Text weight="semibold">要发给主会话的批注 · {basket.length}</Text>

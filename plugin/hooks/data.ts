@@ -3,7 +3,7 @@ import { atom, update } from 'claude-code'
 import type { EngineInterface as Engine } from 'claude-code'
 
 import { defaultHomeOf, layoutOf, topOf, type Layout } from '../engine/src/shared/paths'
-import type { AskRow, DecisionRow, HubUsage, PolicyFile, ReplyRow, Reviews, Snapshot, ThingRow } from '../types'
+import type { AskRow, DecisionRow, HubUsage, PolicyFile, ReplyRow, Reviews, Snapshot, ThingRow, UndoRow } from '../types'
 
 // 面板的状态都在 PluginState['chief'] 里（types/index.d.ts）；引擎要求每个文件用到哪份就在本文件里声明哪份。
 const snap = atom({ plugin: 'chief', key: 'snap' } as const, null)
@@ -56,7 +56,7 @@ async function readLines<T>($: Engine, path: string): Promise<T[]> {
 
 export async function refresh($: Engine) {
   const f = await chiefFiles($)
-  const [alive, engine, state, dispatch, things, replies, decisions, reviews, policy, sources, activity, evals, people, hubUsage] = await Promise.all([
+  const [alive, engine, state, dispatch, things, replies, decisions, reviews, policy, sources, activity, evals, people, hubUsage, undo] = await Promise.all([
     readJson<{ at?: string; stopped?: boolean }>($, f.alive, {}),
     readJson<{ at?: string; health?: Snapshot['health'] }>($, f.engineAlive, {}),
     readJson<{ nextId?: number }>($, f.state, {}),
@@ -71,6 +71,7 @@ export async function refresh($: Engine) {
     readJson<Snapshot['evals']>($, f.evals, { cases: [], runs: [] }),
     readJson<Record<string, string>>($, f.people, {}),
     readJson<HubUsage>($, f.hubUsage, { days: {} }),
+    readJson<{ items?: UndoRow[] }>($, f.undo, {}),
   ])
   // 钥匙清过、换过的记录：你点过「知道了」的（记在插件自己的存储里，主会话改不了 chief 的数据就能抹掉它）不再提醒。
   const keyAck = await $.store.get('keyAck').catch(() => null)
@@ -97,6 +98,7 @@ export async function refresh($: Engine) {
     people,
     hubUsage,
     keyAlerts,
+    undo: [...(undo.items ?? [])].reverse(),
     hubMode: ((activity as Record<string, unknown>)._hub as { permissionMode?: string | null } | undefined)?.permissionMode ?? null,
   }
   await update($, snap, () => next)
