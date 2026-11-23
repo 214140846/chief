@@ -20,6 +20,8 @@ describe("给用户看的话里，看的人得知道每个编号指的是什么"
     expect(chiefIds("shop#535 改法对")).toEqual(["shop#535"]);
     expect(chiefIds("acme/shop#12 加字段")).toEqual(["acme/shop#12"]);
     expect(chiefIds("全角的 ＃98 也算")).toEqual(["＃98"]);
+    expect(chiefIds("需求单 PROJ-35191 只写了一句")).toEqual(["PROJ-35191"]);
+    expect(chiefIds("PROJ-479、PROJ-480 都提测了")).toEqual(["PROJ-479", "PROJ-480"]);
     // 括号里只有别的编号、或者太短，不算说清了。
     expect(chiefIds("PR #87（#88）")).toEqual(["PR #87", "#88"]);
     expect(chiefIds("PR #87 (x)")).toEqual(["PR #87"]);
@@ -34,6 +36,8 @@ describe("给用户看的话里，看的人得知道每个编号指的是什么"
       "admin #10821 (bot 挑出的文案问题) 已改",
       "acme/shop#12（加字段）请你 review",
       "o/r#3 (登录超时) review",
+      "PROJ-35191（自动处理时详情页的状态）还没排期",
+      "PROJ-479 (接口加字段) 提测了",
     ]) expect(chiefIds(ok), ok).toEqual([]);
   });
 
@@ -43,7 +47,6 @@ describe("给用户看的话里，看的人得知道每个编号指的是什么"
       "看 https://github.com/acme/shop/pull/12#issuecomment-123 和 https://github.com/a/b/blob/main/x.ts#L42",
       "[PR #12](https://github.com/o/r/pull/12) 已合",
       "<https://github.com/o/r/pull/12|#12> 已合",
-      "PROJ-35189 Jira 单要你定上线时间",
       "Jira 单在这 https://acme.example.net/browse/PROJ-35189",
       "Slack 链接 https://acme.slack.com/archives/C123/p1795079290188699",
       "两件事要你定：1. 要不要本周上线？2. 谁来回 Joe？",
@@ -51,6 +54,8 @@ describe("给用户看的话里，看的人得知道每个编号指的是什么"
       "回复 10:30 前给",
       "事情 2026-11-30 截止",
       "颜色用 #fafafa，频道 <#C0123|dev>",
+      "文件用 UTF-8 存，哈希用 SHA-256，时间按 ISO-8601",
+      "分支 feat/PROJ-35191-status 已推",
       "没问题",
     ]) expect(chiefIds(ok), ok).toEqual([]);
   });
@@ -59,11 +64,14 @@ describe("给用户看的话里，看的人得知道每个编号指的是什么"
     expect(chiefIds("和 #12 是同一个问题，已在 #13 修了", { github: true })).toEqual([]);
     expect(chiefIds("回复 107 已发", { github: true })).toEqual(["回复 107"]);
     expect(chiefIds("和 #12 是同一个问题")).toEqual(["#12"]);
+    expect(chiefIds("对应 PROJ-35191", { github: true })).toEqual(["PROJ-35191"]);
   });
 
   it("事情标题：带仓库名的编号后面跟着描述就行，单写的 #63 照样拦", () => {
     expect(chiefIds("shop-api#2286 同步 master 到 release/tidy", { title: true })).toEqual([]);
     expect(chiefIds("review track-widgets#367 carrier 下拉只渲染可见行", { title: true })).toEqual([]);
+    expect(chiefIds("PROJ-479 接口加字段", { title: true })).toEqual([]);
+    expect(chiefIds("PROJ-35191", { title: true })).toEqual(["PROJ-35191"]);
     expect(chiefIds("admin#10651", { title: true })).toEqual(["admin#10651"]);
     expect(chiefIds("跟进 #63", { title: true })).toEqual(["#63"]);
     expect(chiefIds("shop-api#2286 同步 master 到 release/tidy")).toEqual(["shop-api#2286"]);

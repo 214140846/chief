@@ -901,7 +901,7 @@ describe("写给你看的话里不许有 chief 自己的编号", () => {
     expect(fails(h, JSON.stringify({ question: "要发吗" }), "ask", "add", "--thing", "1", "--reply", "9")).toContain("没有回复 9");
     // PR、Jira 单照常写。
     expect(fails(h, JSON.stringify({ question: "o/r#44 能合吗？", suggest: "合" }), "ask", "add", "--thing", "1")).toContain("「o/r#44」");
-    withStdin(h, JSON.stringify({ question: "o/r#44（接口加字段）能合吗？PROJ-35189 要一起上", suggest: "合，见 https://github.com/o/r/pull/44" }), "ask", "add", "--thing", "1");
+    withStdin(h, JSON.stringify({ question: "o/r#44（接口加字段）能合吗？PROJ-35189（下单接口加字段）要一起上", suggest: "合，见 https://github.com/o/r/pull/44" }), "ask", "add", "--thing", "1");
     expect(JSON.parse(chief(h, "ask", "list"))).toHaveLength(2);
   });
 
@@ -916,8 +916,8 @@ describe("写给你看的话里不许有 chief 自己的编号", () => {
     expect(fails(h, JSON.stringify({ blocker: "回复 12 没发出去" }), "thing", "update", "1")).toContain("卡在哪里有");
     expect(fails(h, JSON.stringify({ result: "PR #45 开好了" }), "thing", "update", "1")).toContain("结果里有");
     expect(JSON.parse(chief(h, "thing", "list"))[0]).toMatchObject({ progress: "", log: [] });
-    withStdin(h, JSON.stringify({ progress: "改完了", result: "[PR #45](https://github.com/o/r/pull/45) 开好了，PROJ-35189 已提测" }), "thing", "update", "1");
-    expect(JSON.parse(chief(h, "thing", "list"))[0]).toMatchObject({ progress: "改完了", results: ["[PR #45](https://github.com/o/r/pull/45) 开好了，PROJ-35189 已提测"] });
+    withStdin(h, JSON.stringify({ progress: "改完了", result: "[PR #45](https://github.com/o/r/pull/45) 开好了，PROJ-35189（下单接口加字段）已提测" }), "thing", "update", "1");
+    expect(JSON.parse(chief(h, "thing", "list"))[0]).toMatchObject({ progress: "改完了", results: ["[PR #45](https://github.com/o/r/pull/45) 开好了，PROJ-35189（下单接口加字段）已提测"] });
   });
 
   it("回复正文：Slack 的拒收 #12；回 GitHub 的放行 #12（GitHub 自己会链过去）；你在面板上自己改的稿子带钥匙照原样收", () => {
