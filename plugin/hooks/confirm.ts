@@ -70,3 +70,8 @@ export async function confirmAsked($: Engine) {
 export async function confirmFromPanel($: Engine): Promise<string> {
   return JSON.stringify({ key: await confirmKey($), how: 'panel' })
 }
+
+// 面板上你自己改稿：新稿子连同钥匙一起交给 chief reply edit-yours。
+export async function editFromPanel($: Engine, text: string): Promise<string> {
+  return JSON.stringify({ key: await confirmKey($), text })
+}

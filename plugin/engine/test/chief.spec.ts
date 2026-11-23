@@ -832,3 +832,74 @@ describe("谁能让回复发出去：引擎把关，不靠主会话自觉", () =
     expect(status(h, 1).confirmAsk).toBeTruthy();
   });
 });
+
+describe("写给你看的话里不许有 chief 自己的编号", () => {
+  function fails(h: string, input: string, ...args: string[]): string {
+    try {
+      withStdin(h, input, ...args);
+    } catch (error) {
+      return String((error as { stderr?: string }).stderr);
+    }
+    throw new Error("没失败");
+  }
+  const slackEvent = (id: number) => JSON.stringify({ id, at: "t", source: "slack", kind: "message.received", title: "私信", url: null, from: "Joe", fromId: "U9", text: "能本周上线吗", why: ["dm"], keys: [], reply: { channel: "D1", ts: `${id}.0` } });
+  const githubEvent = (id: number) => JSON.stringify({ id, at: "t", source: "github", kind: "github.pr", title: "o/r#44", url: null, from: "bob", text: "看下", why: ["mention"], keys: [], reply: { ref: "o/r#44" } });
+
+  it("问题和建议：带 #98、回复 107 的拒收，什么都不记；提待发出的那条用 --reply 挂上", () => {
+    const h = home();
+    chief(h, "cursor");
+    writeFileSync(join(h, "events.jsonl"), `${slackEvent(1)}\n`);
+    withStdin(h, "", "thing", "add", "--title", "Joe 问上线时间");
+    writeFileSync(join(h, "drafts", "1.md"), "下周二上线");
+    chief(h, "reply", "add", "--event", "1", "--thing", "1", "--file", join(h, "drafts", "1.md"));
+    const err = fails(h, JSON.stringify({ question: "Joe 问能不能本周上线", suggest: "先发 #1，再回他" }), "ask", "add", "--thing", "1");
+    expect(err).toContain("建议（suggest）里有 chief 自己的编号：「#1」");
+    expect(err).toContain("--reply");
+    expect(fails(h, JSON.stringify({ question: "回复 1 要不要发？", suggest: "发" }), "ask", "add", "--thing", "1")).toContain("「回复 1」");
+    expect(JSON.parse(chief(h, "ask", "list"))).toEqual([]);
+    // 一句话说清是哪条，再用 --reply 挂上那条回复。
+    withStdin(h, JSON.stringify({ question: "Joe 问能不能本周上线", suggest: "发给 Joe 的那条回复：下周二上线" }), "ask", "add", "--thing", "1", "--reply", "1");
+    expect(JSON.parse(chief(h, "ask", "list"))[0]).toMatchObject({ reply: 1, suggest: "发给 Joe 的那条回复：下周二上线" });
+    expect(fails(h, JSON.stringify({ question: "要发吗" }), "ask", "add", "--thing", "1", "--reply", "9")).toContain("没有回复 9");
+    // PR、Jira 单照常写。
+    withStdin(h, JSON.stringify({ question: "o/r#44 能合吗？PROJ-35189 要一起上", suggest: "合，见 https://github.com/o/r/pull/44" }), "ask", "add", "--thing", "1");
+    expect(JSON.parse(chief(h, "ask", "list"))).toHaveLength(2);
+  });
+
+  it("事情的标题、进展、下一步、卡在哪、结果：带 chief 编号的拒收", () => {
+    const h = home();
+    expect(fails(h, "", "thing", "add", "--title", "跟进 #63")).toContain("标题里有 chief 自己的编号：「#63」");
+    expect(withStdin(h, "", "thing", "add", "--title", "o/r#12 review").trim()).toBe("1");
+    expect(fails(h, "等事件 #552 的人回话", "thing", "update", "1")).toContain("进展里有");
+    expect(fails(h, JSON.stringify({ progress: "改完了", next: "等问题 #3 拍板" }), "thing", "update", "1")).toContain("下一步里有");
+    expect(fails(h, JSON.stringify({ blocker: "回复 12 没发出去" }), "thing", "update", "1")).toContain("卡在哪里有");
+    expect(fails(h, JSON.stringify({ result: "PR #45 开好了" }), "thing", "update", "1")).toContain("结果里有");
+    expect(JSON.parse(chief(h, "thing", "list"))[0]).toMatchObject({ progress: "", log: [] });
+    withStdin(h, JSON.stringify({ progress: "改完了", result: "[PR #45](https://github.com/o/r/pull/45) 开好了，PROJ-35189 已提测" }), "thing", "update", "1");
+    expect(JSON.parse(chief(h, "thing", "list"))[0]).toMatchObject({ progress: "改完了", results: ["[PR #45](https://github.com/o/r/pull/45) 开好了，PROJ-35189 已提测"] });
+  });
+
+  it("回复正文：Slack 的拒收 #12；回 GitHub 的放行 #12（GitHub 自己会链过去）；你在面板上自己改的稿子带钥匙照原样收", () => {
+    const h = home();
+    chief(h, "cursor");
+    writeFileSync(join(h, "events.jsonl"), `${slackEvent(1)}\n${githubEvent(2)}\n`);
+    writeFileSync(join(h, "drafts", "bad.md"), "已经在 #12 修了");
+    expect(chiefFails(h, "reply", "add", "--event", "1", "--file", join(h, "drafts", "bad.md"))).toContain("回复正文里有 chief 自己的编号：「#12」");
+    expect(chiefFails(h, "reply", "new", "--to", "U0ABC123", "--file", join(h, "drafts", "bad.md"))).toContain("消息正文里有");
+    expect(JSON.parse(chief(h, "reply", "list"))).toEqual([]);
+    // GitHub 的评论里 #12 是同一个仓库的 PR。
+    expect(JSON.parse(chief(h, "reply", "add", "--event", "2", "--file", join(h, "drafts", "bad.md")))).toMatchObject({ id: 1, source: "github" });
+    writeFileSync(join(h, "drafts", "ok.md"), "已经在 acme/shop#12 修了：https://github.com/acme/shop/pull/12");
+    expect(JSON.parse(chief(h, "reply", "add", "--event", "1", "--file", join(h, "drafts", "ok.md")))).toMatchObject({ id: 2, source: "slack" });
+    // 主会话改稿一样拦。
+    expect(fails(h, "按回复 1 的意思改", "reply", "edit", "2")).toContain("「回复 1」");
+    expect(fails(h, "见 #12", "reply", "edit", "2")).toContain("「#12」");
+    withStdin(h, "见 #13", "reply", "edit", "1");
+    // 你在面板上自己改的：带钥匙照原样收；钥匙不对不收。
+    withStdin(h, KEY, "key", "set");
+    expect(fails(h, JSON.stringify({ key: "cd".repeat(32), text: "见 #12" }), "reply", "edit-yours", "2")).toContain("钥匙对不上");
+    withStdin(h, JSON.stringify({ key: KEY, text: "见 #12，我自己写的" }), "reply", "edit-yours", "2");
+    const items = JSON.parse(chief(h, "reply", "list")) as { id: number; body: string }[];
+    expect(items.map((r) => r.body)).toEqual(["见 #13", "见 #12，我自己写的"]);
+  });
+});

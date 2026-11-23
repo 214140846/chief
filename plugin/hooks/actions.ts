@@ -5,7 +5,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface as Engine } from 'claude-code'
 
 import type { Handle, ReplyMode, ReplyRow, Tab, ThingRow } from '../types'
-import { confirmFromPanel, noteUserSaid } from './confirm'
+import { confirmFromPanel, editFromPanel, noteUserSaid } from './confirm'
 import { refresh, chiefDir } from './data'
 
 const note = atom({ plugin: 'chief', key: 'note' } as const, '')
@@ -128,7 +128,8 @@ export async function send($: Engine, r: ReplyRow, typed?: string) {
   }
   const edited = text !== r.body.trim()
   if (edited) {
-    if (!(await act($, '保存修改', ['reply', 'edit', String(r.id)], text))) return
+    // 你自己改的稿子带上钥匙（edit-yours）：引擎照原样收，不按「不许写 chief 编号」去拦你自己写的话。
+    if (!(await act($, '保存修改', ['reply', 'edit-yours', String(r.id)], await editFromPanel($, text)))) return
   }
   // 你在面板上点的发送：插件带钥匙以你的名义发（主会话没有钥匙，发不了 confirmed by 你）。
   if (await act($, `回 ${r.context.who ?? r.context.where}`, ['reply', 'confirm', String(r.id)], await confirmFromPanel($))) {

@@ -32,7 +32,7 @@ const FILES: Record<string, string> = {
       { id: 1, title: 'PROJ-479 接口改造', session: 'local_abc', status: 'waiting_you', progress: '改完了，等你定上线时间', next: '等你定了就提测', blocker: '等后端接口', results: ['[PR #12](https://github.com/o/r/pull/12)'], due: new Date().toISOString().slice(0, 10), events: [9], updatedAt: now, log: [{ at: now, text: '开了会话' }, { at: now, text: '改完了，等你定上线时间' }] },
       { id: 2, title: 'o/r#3 review', session: 'local_def', status: 'done', progress: '已批准', events: [10], updatedAt: now, log: [] },
     ],
-    asks: [{ id: 3, thing: 1, question: 'Joe 问能不能本周上线', suggest: '回复下周二上线', status: 'open', at: now }],
+    asks: [{ id: 3, thing: 1, question: 'Joe 问能不能本周上线', suggest: '回复下周二上线', status: 'open', at: now, reply: 5 }],
   }),
   '/Users/me/chief/data/replies.json': JSON.stringify({
     items: [
@@ -102,6 +102,9 @@ test('面板：主会话状态、要你定、待发出；按钮各做各的', as
   }
 
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  // 问题挂着的回复：显示回谁、说什么，不显示回复号。
+  expect(await ui.find({ type: 'Text', text: /相关的待发出：回 Bob Chen「处理了，报告在 thread 里」/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /#5/ })).toBeFalsy()
   // 要你定的卡片只有三条路：照建议办、看细节、写你的决定发送；没有批注。
   expect(await ui.find({ key: 'ok3' })).toBeTruthy()
   expect(await ui.find({ key: 'an-a3' })).toBeFalsy()
@@ -121,8 +124,11 @@ test('面板：主会话状态、要你定、待发出；按钮各做各的', as
   await ui.press({ key: 'ed5' })
   await ui.input({ key: 'body5', text: '处理了，报告发你私信了', kind: 'change' })
   await ui.press({ key: 'sd5' })
-  const tail = runs.slice(-4).map(r => `${r.argv.slice(1).join(' ')}${r.stdin ? ` <${r.stdin}` : ''}`)
-  expect(tail).toContain('reply edit 5 <处理了，报告发你私信了')
+  // 你自己改的稿子带着钥匙交给 chief（edit-yours），引擎照原样收，不按「不许写 chief 编号」拦你自己写的话。
+  const edit5 = runs.slice(-4).find(r => r.argv.slice(1).join(' ') === 'reply edit-yours 5')
+  expect(edit5).toBeTruthy()
+  expect(JSON.parse(edit5!.stdin ?? '{}')).toMatchObject({ text: '处理了，报告发你私信了' })
+  expect(JSON.parse(edit5!.stdin ?? '{}').key).toMatch(/^[0-9a-f]{64}$/)
   // 面板上点的发送：带着插件的钥匙以你的名义发（主会话自己发不了 confirmed by 你）。
   const sent5 = runs.slice(-4).find(r => r.argv.slice(1).join(' ') === 'reply confirm 5')
   expect(sent5).toBeTruthy()
@@ -164,6 +170,9 @@ test('面板：主会话状态、要你定、待发出；按钮各做各的', as
   await ui.input({ key: 'ai-t1', text: '今天下班前改完报告' })
   expect(prompts.length).toBe(before)
   expect(await ui.find({ type: 'Text', text: /要发给主会话的批注 · 1/ })).toBeTruthy()
+  // 篮子里显示批在哪件事，不显示事情号；发给主会话的那句照旧带着编号，主会话靠它找到是哪件。
+  expect(await ui.find({ type: 'Text', text: /【事情 PROJ-479 接口改造】/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /事情 #1/ })).toBeFalsy()
   await ui.press({ key: 'send-basket' })
   expect(prompts.at(-1)).toBe('chief：批注（1 条）\n1. 关于【事情 #1 PROJ-479 接口改造】：今天下班前改完报告')
   expect(await ui.find({ type: 'Text', text: /要发给主会话的批注/ })).toBeFalsy()
