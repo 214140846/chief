@@ -531,6 +531,71 @@ describe("认出 chief 自己发的", () => {
   });
 });
 
+describe("chief 替你发出去的帖子，别人在下面回复也收", () => {
+  it("新发到频道的、回到别人 thread 的、修之前发的：后面别人的回复当成「我在的 thread 有后续」；chief 自己的回显不收，你自己回的照旧", async () => {
+    const { SlackPlugin, sentThreadKey } = await import("../src/slack/plugin");
+    const { inYourThread, eventOfSlack } = await import("../src/engine");
+    const { scenarioOf } = await import("../src/store");
+    const handlers: Record<string, (evt: unknown) => Promise<void>> = {};
+    let n = 0;
+    const fake = {
+      selfUserId: "UME1",
+      core: { callWebApi: async () => ({}) },
+      on: (name: string, fn: (...args: never[]) => void) => { handlers[name] = fn as unknown as (evt: unknown) => Promise<void>; },
+      onError: () => {}, start: async () => {}, stop: async () => {},
+      chat: { send: async (opts: { channel: string }) => ({ channel: opts.channel, ts: `${++n}0.0` }) },
+      reactions: { add: async () => {} },
+    };
+    // 和引擎一样记：发出去的编号（sent）、正文落在的 thread（threads）。
+    const state = { threads: [] as string[], sent: ["C3:5.0"] };
+    const got: InboundMessage[] = [];
+    const plugin = new SlackPlugin({ createClient: async () => fake });
+    await plugin.start({ secrets: { cookie_d: "xoxd-x" }, deliver: async (m) => { got.push(m); }, threadSeen: (k) => inYourThread(k, state.threads, state.sent), status: () => {}, log: () => {} });
+    const sendAndRecord = (sent: Parameters<typeof sentThreadKey>[0]) => {
+      state.sent.push(sent.ref);
+      state.threads.push(sentThreadKey(sent));
+    };
+    const channel = { id: "C2", name: "proj", isIm: false, isMpim: false };
+    const msg = (over: Record<string, unknown>) => ({ channel, sender: { id: "UZING", displayName: "Zing", isBot: false }, origin: "other_user", isThreadReply: true, isMentioningMe: false, ...over });
+    const reply = (ts: string, root: string, over: Record<string, unknown> = {}) =>
+      handlers["message.created"]!(msg({ ts, text: "收到", markdown: "收到", thread: { rootTs: root, isReply: true }, eventId: `C2:${ts}:created`, ...over }));
+
+    // chief reply new --to <频道>：正文是频道里的新消息（ts 10.0）。
+    sendAndRecord(await plugin.sendNew("C2", "<@URYAN> 这个需求怎么定？"));
+    expect(state.threads).toEqual(["slack:C2:10.0"]);
+    // 它的回显（gabriel-slack 认得是自己这边发的）：不收。
+    await handlers["message.created"]!(msg({ ts: "10.0", origin: "this_client", sender: { id: "UME1", isBot: false }, text: "x", markdown: "x", thread: null, isThreadReply: false, eventId: "C2:10.0:created" }));
+    expect(got).toEqual([]);
+    // Zing 在它的 thread 里回：收，算「我在的 thread 有后续」。
+    await reply("11.0", "10.0");
+    expect(got).toHaveLength(1);
+    expect(got[0]).toMatchObject({ relevance: "thread", role: "message", sender: { name: "Zing" }, replyTarget: { channel: "C2", ts: "11.0", thread_ts: "10.0" } });
+    expect(scenarioOf(eventOfSlack(got[0]!, "UME1")!)).toBe("slack_thread");
+    // 你自己在下面回的：照旧是你自己说的（self），不当成找你的。
+    await reply("12.0", "10.0", { origin: "self_other_client", sender: { id: "UME1", isBot: false } });
+    expect(got[1]).toMatchObject({ role: "self", relevance: null });
+    // 回到别人帖子的 thread（帖子 1.0）：那个 thread 也算。
+    sendAndRecord(await plugin.send({ channel: "C2", ts: "1.0", audience: "channel" }, "好的", true));
+    await reply("21.0", "1.0");
+    expect(got[2]).toMatchObject({ relevance: "thread", replyTarget: { ts: "21.0", thread_ts: "1.0" } });
+    // 修之前发的（只在 sent 里记着发出编号 C3:5.0）：下面的回复也收。
+    await reply("6.0", "5.0", { channel: { id: "C3", name: "old", isIm: false, isMpim: false }, eventId: "C3:6.0:created" });
+    expect(got[3]).toMatchObject({ relevance: "thread", replyTarget: { channel: "C3", thread_ts: "5.0" } });
+    // 和你无关的 thread：照旧不收。
+    await reply("31.0", "30.0");
+    expect(got).toHaveLength(4);
+    await plugin.stop();
+  });
+
+  it("登记的 thread 写法和收消息时算的一样：频道按正文或它所在的 thread，私信里直接回的是整段对话", async () => {
+    const { sentThreadKey } = await import("../src/slack/plugin");
+    expect(sentThreadKey({ ref: "C2:10.0", channel: "C2", ts: "10.0" })).toBe("slack:C2:10.0");
+    expect(sentThreadKey({ ref: "C2:11.0", channel: "C2", ts: "11.0", threadTs: "1.0" })).toBe("slack:C2:1.0");
+    expect(sentThreadKey({ ref: "D1:3.0", channel: "D1", ts: "3.0", direct: true })).toBe("slack:D1:dm");
+    expect(sentThreadKey({ ref: "D1:4.0", channel: "D1", ts: "4.0", threadTs: "2.0", direct: true })).toBe("slack:D1:2.0");
+  });
+});
+
 describe("Slack 回复放哪", () => {
   it("私信直接回、频道回 thread、对方在 thread 里就回 thread、稿子能指定", async () => {
     const { placementOf, defaultPolicy } = await import("../src/store");

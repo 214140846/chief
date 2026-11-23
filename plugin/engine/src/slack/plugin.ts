@@ -76,6 +76,13 @@ export function imageThreadOf(to: SentTo): string | undefined {
   return to.threadTs ?? (to.direct ? undefined : to.ts);
 }
 
+// 正文落在哪个 thread，写法和收消息时 classify 算的 threadKey 一样。chief 替你发出去以后登记成「你在的 thread」，
+// 别人在下面回复才会当成「我在的 thread 有后续」交给消息中心（chief 自己发的那条回显被当成自己发的挡掉了，走不到登记那一步）。
+export function sentThreadKey(to: SentTo): string {
+  if (to.direct) return to.threadTs ? `slack:${to.channel}:${to.threadTs}` : `slack:${to.channel}:dm`;
+  return `slack:${to.channel}:${to.threadTs ?? to.ts}`;
+}
+
 export interface CheckCookieResult {
   valid: boolean;
   detail: string;

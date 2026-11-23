@@ -8,7 +8,7 @@ import { sessionsRoot, syncActivity, type SessionUpdate } from "./activity";
 import { archiveOld } from "./archive";
 import { KeychainStore, type SecretStore } from "./secrets";
 import { keysOf } from "./keys";
-import { SlackPlugin, SLACK_COOKIE_D, type SlackAttribution } from "./slack/plugin";
+import { SlackPlugin, SLACK_COOKIE_D, sentThreadKey, type SlackAttribution } from "./slack/plugin";
 import type { InboundMessage } from "./slack/types";
 import { GitHubSource, findGh, ghRunner } from "./sources/github";
 import { JiraSource, acliRunner, findAcli } from "./sources/jira";
@@ -72,6 +72,11 @@ export function signatureAttribution(signature: string, by: Reply["by"]): SlackA
   return by === "you"
     ? { text: `${sign} · confirmed by {self}`, review: "confirmed" }
     : { text: `${sign} · sent for {self} · not reviewed`, review: "unconfirmed" };
+}
+
+// 这个 thread 算不算「你在的」：你说过话、找过你的（threads），或者根消息是 chief 替你发出去的（sent 里记着，修之前发的也算）。
+export function inYourThread(key: string, threads: readonly string[], sent: readonly string[]): boolean {
+  return threads.includes(key) || (key.startsWith("slack:") && sent.includes(key.slice("slack:".length)));
 }
 
 // 这条 Slack 消息是不是 chief（或别的 agent）替你发的，不是新消息：
@@ -350,7 +355,7 @@ export class Engine {
           this.persist();
         }
       },
-      threadSeen: (key) => this.state.threads.includes(key),
+      threadSeen: (key) => inYourThread(key, this.state.threads, this.state.sent),
       status: (s) => {
         log(`[slack] ${s.state === "error" ? `出错：${s.error}` : s.state}`);
         if (s.state === "error") this.sourceResult("slack", String(s.error));
@@ -433,6 +438,9 @@ export class Engine {
         ? await this.slack.sendNew(r.target.to ?? "", r.body, r.target.thread_ts, attribution)
         : await this.slack.send(r.target, r.body, placementOf(r.target, loadPolicy().placement) === "thread", attribution);
       this.state.sent.push(sent.ref);
+      // 正文落在的 thread 记成「你在的」：别人在下面回复，和你自己发的帖子一样交给消息中心。
+      const key = sentThreadKey(sent);
+      if (!this.state.threads.includes(key)) this.state.threads.push(key);
       this.persist();
       // 附的图跟着正文（发进哪个 thread 见 imageThreadOf）。正文已经发出去了：图没发上也不能算整条失败（重发会把正文再发一遍），记在 error 里给你看。
       const failed = r.images?.length ? await this.slack.sendImages(sent, r.images) : [];
