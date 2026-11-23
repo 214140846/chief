@@ -350,6 +350,14 @@ test('引擎和插件一样新：什么都不做', async ($, on) => {
   expect(w.toasts).toEqual([])
 })
 
+test('插件比引擎旧（别的会话已经更新过）：不往回装，只提示一句', async ($, on) => {
+  const w = autoUpdateWorld(on, '0.10.0')
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+  await new Promise(r => setTimeout(r, 50))
+  expect(w.runs.some(r => r.endsWith('/setup.sh'))).toBe(false)
+  expect(w.toasts.some(t => t.includes('比引擎（0.10.0）旧'))).toBe(true)
+})
+
 test('设置页：没记过 Slack 工作区时先问一句，填了从工作区登，留空也能登', async ($, on) => {
   const runs: string[] = []
   const doctor = {
@@ -405,9 +413,9 @@ test('会话里确认：只放行你说完话以后提的请求；还能发的�
 })
 
 test('挤在一段里的几个问题拆成编号列表，日期和「第 9 层」不算编号', () => {
-  const q = '前端方案里写明是占位英文、等 Ivy 定。两件事要你定：1 现在就改成「Processing」，还是等 Ivy 这批文案一起改？2 迁移栈第 9 层的 PR 描述里要不要补一段占位文案清单？'
-  expect(listify(q)).toBe('前端方案里写明是占位英文、等 Ivy 定。两件事要你定：\n\n1. 现在就改成「Processing」，还是等 Ivy 这批文案一起改？\n2. 迁移栈第 9 层的 PR 描述里要不要补一段占位文案清单？')
-  expect(listify('1 等 Ivy 这批一起改，她 25/26 号就给文案，省得改两次；2 补上，方便 review。')).toBe('1. 等 Ivy 这批一起改，她 25/26 号就给文案，省得改两次\n2. 补上，方便 review。')
+  const q = '前端方案里写明是占位英文、等 小林 定。两件事要你定：1 现在就改成「Processing」，还是等 小林 这批文案一起改？2 迁移栈第 9 层的 PR 描述里要不要补一段占位文案清单？'
+  expect(listify(q)).toBe('前端方案里写明是占位英文、等 小林 定。两件事要你定：\n\n1. 现在就改成「Processing」，还是等 小林 这批文案一起改？\n2. 迁移栈第 9 层的 PR 描述里要不要补一段占位文案清单？')
+  expect(listify('1 等 小林 这批一起改，她 25/26 号就给文案，省得改两次；2 补上，方便 review。')).toBe('1. 等 小林 这批一起改，她 25/26 号就给文案，省得改两次\n2. 补上，方便 review。')
   expect(listify('只有一件事：要不要等 1 天？')).toBe('只有一件事：要不要等 1 天？')
   expect(listify('已经分好行：\n1. 甲\n2. 乙')).toBe('已经分好行：\n1. 甲\n2. 乙')
 })
