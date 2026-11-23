@@ -29,6 +29,6 @@ REF="v$v" SHA="$sha" node -e '
   src.sha = process.env.SHA;
   fs.writeFileSync(p, JSON.stringify(m, null, 2) + "\n");
 '
-git commit -q -m "发布 $v" -- .claude-plugin/marketplace.json
-echo "已打 tag v$v（$sha），marketplace.json 已指过去并提交在本地。"
-echo "确认没问题再推：git push origin main v$v"
+git commit -q -m "发布 ${v}" -- .claude-plugin/marketplace.json
+echo "已打 tag v${v}（${sha}），marketplace.json 已指过去并提交在本地。"
+echo "确认没问题再推：git push origin main v${v}"
