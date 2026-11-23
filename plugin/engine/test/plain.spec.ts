@@ -1,27 +1,44 @@
 import { describe, expect, it } from "vitest";
 import { chiefIds } from "../src/plain";
 
-describe("给用户看的话里不许有 chief 自己的编号", () => {
-  it("拦：单写的 #数字、chief 的说法加编号", () => {
-    expect(chiefIds("建议先发 #98，再回 Joe")).toEqual(["#98"]);
+describe("给用户看的话里，看的人得知道每个编号指的是什么", () => {
+  it("拦：chief 自己的编号，加了括号也拦", () => {
     expect(chiefIds("问题 #63 已经答过了")).toEqual(["问题 #63"]);
     expect(chiefIds("回复 107 改好了")).toEqual(["回复 107"]);
     expect(chiefIds("事件 #552 漏掉了")).toEqual(["事件 #552"]);
     expect(chiefIds("和事情#3 是同一件事")).toEqual(["事情#3"]);
     expect(chiefIds("回复号 12 等你确认")).toEqual(["回复号 12"]);
-    expect(chiefIds("待发出 #7 先别发")).toEqual(["待发出 #7"]);
-    expect(chiefIds("PR #12 要改")).toEqual(["#12"]);
+    expect(chiefIds("待发出 #99（给 Victor 的回复）先别发")).toEqual(["待发出 #99"]);
+  });
+
+  it("拦：编号后面没用括号说清是什么事", () => {
+    expect(chiefIds("建议先发 #98，再回 Joe")).toEqual(["#98"]);
+    expect(chiefIds("等于把 #179 / #181 的决定推翻了")).toEqual(["#179", "#181"]);
+    expect(chiefIds("PR #87 等 George")).toEqual(["PR #87"]);
     expect(chiefIds("PR#12 要改")).toEqual(["PR#12"]);
+    expect(chiefIds("Notion #195 那边还要跟")).toEqual(["Notion #195"]);
+    expect(chiefIds("shop#535 改法对")).toEqual(["shop#535"]);
+    expect(chiefIds("acme/shop#12 加字段")).toEqual(["acme/shop#12"]);
     expect(chiefIds("全角的 ＃98 也算")).toEqual(["＃98"]);
-    expect(chiefIds("shop#535 / #534 都能合")).toEqual(["#534"]);
+    // 括号里只有别的编号、或者太短，不算说清了。
+    expect(chiefIds("PR #87（#88）")).toEqual(["PR #87", "#88"]);
+    expect(chiefIds("PR #87 (x)")).toEqual(["PR #87"]);
     expect(chiefIds("先发 #98，问题 #63 关掉，#98 别忘")).toEqual(["#98", "问题 #63"]);
   });
 
-  it("放：仓库名#号、链接（连同链接文字）、Jira 单号、数量和时间", () => {
+  it("放：编号后面用括号说清了是什么事", () => {
     for (const ok of [
-      "acme/shop#12 加字段，请你 review",
-      "shop#535 改法对",
-      "o/r#3 review",
+      "等于把 #179（批准后自动处理）/ #181（寄回运费）的决定推翻了",
+      "PR #87（browser-agent 降成本）等 George",
+      "Notion #195（要验 OS 侧的那条）那边还要跟",
+      "admin #10821 (bot 挑出的文案问题) 已改",
+      "acme/shop#12（加字段）请你 review",
+      "o/r#3 (登录超时) review",
+    ]) expect(chiefIds(ok), ok).toEqual([]);
+  });
+
+  it("放：链接（连同链接文字）、Jira 单号、数量和时间", () => {
+    for (const ok of [
       "PR 在这：https://github.com/acme/shop/pull/12",
       "看 https://github.com/acme/shop/pull/12#issuecomment-123 和 https://github.com/a/b/blob/main/x.ts#L42",
       "[PR #12](https://github.com/o/r/pull/12) 已合",
@@ -38,9 +55,17 @@ describe("给用户看的话里不许有 chief 自己的编号", () => {
     ]) expect(chiefIds(ok), ok).toEqual([]);
   });
 
-  it("回 GitHub 的评论：单写的 #123 是 GitHub 自己的写法，放行；不带 # 的 chief 说法照样拦", () => {
+  it("回 GitHub 的评论：#123 是 GitHub 自己的写法，放行；不带 # 的 chief 说法照样拦", () => {
     expect(chiefIds("和 #12 是同一个问题，已在 #13 修了", { github: true })).toEqual([]);
     expect(chiefIds("回复 107 已发", { github: true })).toEqual(["回复 107"]);
     expect(chiefIds("和 #12 是同一个问题")).toEqual(["#12"]);
+  });
+
+  it("事情标题：带仓库名的编号后面跟着描述就行，单写的 #63 照样拦", () => {
+    expect(chiefIds("shop-api#2286 同步 master 到 release/tidy", { title: true })).toEqual([]);
+    expect(chiefIds("review track-widgets#367 carrier 下拉只渲染可见行", { title: true })).toEqual([]);
+    expect(chiefIds("admin#10651", { title: true })).toEqual(["admin#10651"]);
+    expect(chiefIds("跟进 #63", { title: true })).toEqual(["#63"]);
+    expect(chiefIds("shop-api#2286 同步 master 到 release/tidy")).toEqual(["shop-api#2286"]);
   });
 });

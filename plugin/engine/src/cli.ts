@@ -515,7 +515,7 @@ async function thing(args: string[]): Promise<void> {
       fail("标准输入的 JSON 看不懂：{\"progress\", \"next\", \"blocker\", \"result\"}");
     }
   } else if (raw) report = { progress: raw };
-  plainOnly(titleText, "标题");
+  plainOnly(titleText, "标题", { title: true });
   plainOnly(report.progress, "进展");
   plainOnly(report.next, "下一步");
   plainOnly(report.blocker, "卡在哪");

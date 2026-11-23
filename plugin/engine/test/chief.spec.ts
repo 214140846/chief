@@ -891,7 +891,7 @@ describe("写给你看的话里不许有 chief 自己的编号", () => {
     writeFileSync(join(h, "drafts", "1.md"), "下周二上线");
     chief(h, "reply", "add", "--event", "1", "--thing", "1", "--file", join(h, "drafts", "1.md"));
     const err = fails(h, JSON.stringify({ question: "Joe 问能不能本周上线", suggest: "先发 #1，再回他" }), "ask", "add", "--thing", "1");
-    expect(err).toContain("建议（suggest）里有 chief 自己的编号：「#1」");
+    expect(err).toContain("建议（suggest）里有看的人看不懂的编号：「#1」");
     expect(err).toContain("--reply");
     expect(fails(h, JSON.stringify({ question: "回复 1 要不要发？", suggest: "发" }), "ask", "add", "--thing", "1")).toContain("「回复 1」");
     expect(JSON.parse(chief(h, "ask", "list"))).toEqual([]);
@@ -900,14 +900,17 @@ describe("写给你看的话里不许有 chief 自己的编号", () => {
     expect(JSON.parse(chief(h, "ask", "list"))[0]).toMatchObject({ reply: 1, suggest: "发给 Joe 的那条回复：下周二上线" });
     expect(fails(h, JSON.stringify({ question: "要发吗" }), "ask", "add", "--thing", "1", "--reply", "9")).toContain("没有回复 9");
     // PR、Jira 单照常写。
-    withStdin(h, JSON.stringify({ question: "o/r#44 能合吗？PROJ-35189 要一起上", suggest: "合，见 https://github.com/o/r/pull/44" }), "ask", "add", "--thing", "1");
+    expect(fails(h, JSON.stringify({ question: "o/r#44 能合吗？", suggest: "合" }), "ask", "add", "--thing", "1")).toContain("「o/r#44」");
+    withStdin(h, JSON.stringify({ question: "o/r#44（接口加字段）能合吗？PROJ-35189 要一起上", suggest: "合，见 https://github.com/o/r/pull/44" }), "ask", "add", "--thing", "1");
     expect(JSON.parse(chief(h, "ask", "list"))).toHaveLength(2);
   });
 
   it("事情的标题、进展、下一步、卡在哪、结果：带 chief 编号的拒收", () => {
     const h = home();
-    expect(fails(h, "", "thing", "add", "--title", "跟进 #63")).toContain("标题里有 chief 自己的编号：「#63」");
-    expect(withStdin(h, "", "thing", "add", "--title", "o/r#12 review").trim()).toBe("1");
+    expect(fails(h, "", "thing", "add", "--title", "跟进 #63")).toContain("标题里有看的人看不懂的编号：「#63」");
+    // 标题本身就在说这个 PR 是什么：带仓库名的编号不用括号；单写的、光秃秃的编号照样拦。
+    expect(fails(h, "", "thing", "add", "--title", "o/r#12")).toContain("「o/r#12」");
+    expect(withStdin(h, "", "thing", "add", "--title", "o/r#12 登录超时 review").trim()).toBe("1");
     expect(fails(h, "等事件 #552 的人回话", "thing", "update", "1")).toContain("进展里有");
     expect(fails(h, JSON.stringify({ progress: "改完了", next: "等问题 #3 拍板" }), "thing", "update", "1")).toContain("下一步里有");
     expect(fails(h, JSON.stringify({ blocker: "回复 12 没发出去" }), "thing", "update", "1")).toContain("卡在哪里有");
@@ -922,12 +925,12 @@ describe("写给你看的话里不许有 chief 自己的编号", () => {
     chief(h, "cursor");
     writeFileSync(join(h, "events.jsonl"), `${slackEvent(1)}\n${githubEvent(2)}\n`);
     writeFileSync(join(h, "drafts", "bad.md"), "已经在 #12 修了");
-    expect(chiefFails(h, "reply", "add", "--event", "1", "--file", join(h, "drafts", "bad.md"))).toContain("回复正文里有 chief 自己的编号：「#12」");
+    expect(chiefFails(h, "reply", "add", "--event", "1", "--file", join(h, "drafts", "bad.md"))).toContain("回复正文里有看的人看不懂的编号：「#12」");
     expect(chiefFails(h, "reply", "new", "--to", "U0ABC123", "--file", join(h, "drafts", "bad.md"))).toContain("消息正文里有");
     expect(JSON.parse(chief(h, "reply", "list"))).toEqual([]);
     // GitHub 的评论里 #12 是同一个仓库的 PR。
     expect(JSON.parse(chief(h, "reply", "add", "--event", "2", "--file", join(h, "drafts", "bad.md")))).toMatchObject({ id: 1, source: "github" });
-    writeFileSync(join(h, "drafts", "ok.md"), "已经在 acme/shop#12 修了：https://github.com/acme/shop/pull/12");
+    writeFileSync(join(h, "drafts", "ok.md"), "已经在 acme/shop#12（登录超时那个 PR）修了：https://github.com/acme/shop/pull/12");
     expect(JSON.parse(chief(h, "reply", "add", "--event", "1", "--file", join(h, "drafts", "ok.md")))).toMatchObject({ id: 2, source: "slack" });
     // 主会话改稿一样拦。
     expect(fails(h, "按回复 1 的意思改", "reply", "edit", "2")).toContain("「回复 1」");
