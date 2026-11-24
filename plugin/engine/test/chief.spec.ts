@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import { eventOfItem, eventOfSlack, hubDown, missedEvents } from "../src/engine";
 import { keysOf } from "../src/keys";
 import { parsePermalink } from "../src/slack/people";
+import { describeSendError } from "../src/slack/plugin";
 import type { InboundMessage } from "../src/slack/types";
 import { paths, workspaceDir } from "../src/store";
 
@@ -1304,6 +1305,44 @@ describe("写给你看的话里不许有 chief 自己的编号", () => {
   });
 });
 
+describe("发送失败文案", () => {
+  // 用库自己的错误类，顺便锁住 code 字段名和取值。
+  const timeout = async (code: "NETWORK_TIMEOUT" | "SERVER_ERROR" | "CANCELLED" | "SLACK_API_ERROR", message: string) => {
+    const { GabrielError } = await import("gabriel-slack");
+    return new GabrielError(code, message);
+  };
+
+  it("库认为可能已发出的三种错：提示 Slack 可能已经收到，请先确认再重发，并带原文", async () => {
+    for (const code of ["NETWORK_TIMEOUT", "SERVER_ERROR", "CANCELLED"] as const) {
+      const text = describeSendError(await timeout(code, "chat.postMessage exceeded itemDeadlineMs"));
+      expect(text).toContain("可能已经收到");
+      expect(text).toContain("先到 Slack 确认");
+      expect(text).toContain("chat.postMessage exceeded itemDeadlineMs");
+    }
+  });
+
+  it("可能已发出的错，原文只留前 120 字", async () => {
+    const text = describeSendError(await timeout("NETWORK_TIMEOUT", `${"a".repeat(120)}${"b".repeat(50)}`));
+    expect(text).toContain("a".repeat(120));
+    expect(text).not.toContain("b");
+  });
+
+  it("其它错保持原文：Slack 明确拒绝的、普通 Error、不是 Error 的值", async () => {
+    const rejected = describeSendError(await timeout("SLACK_API_ERROR", "channel_not_found"));
+    expect(rejected).toBe("channel_not_found");
+    expect(describeSendError(new Error("对方的频道不见了"))).toBe("对方的频道不见了");
+    expect(describeSendError("boom")).toBe("boom");
+    expect(describeSendError(undefined)).toBe("undefined");
+    expect(describeSendError(null)).toBe("null");
+    expect(`${rejected}${describeSendError(new Error("x"))}`).not.toContain("可能已经收到");
+  });
+
+  it("其它错超长：原文保持只留前 200 字", () => {
+    expect(describeSendError(new Error("c".repeat(300)))).toBe("c".repeat(200));
+    expect(describeSendError("d".repeat(300))).toBe("d".repeat(200));
+  });
+});
+
 describe("引擎发之前再核一遍", () => {
   type Row = { id: number; status: string; by?: string; body: string; target: Record<string, string>; sendAt?: string; sentAt?: string; error?: string; confirm?: { hash?: string } };
   const ev = { id: 1, at: "t", source: "slack", kind: "message.received", title: "Alice 的私信", url: null, from: "Alice", fromId: "U0ALICE", text: "帮我看下", why: ["dm"], keys: [], reply: { channel: "D0ALICE", ts: "1795079290.188699" } };
@@ -1381,6 +1420,22 @@ describe("引擎发之前再核一遍", () => {
       throw new Error("对方的频道不见了");
     });
     expect(rows(h)[0]).toMatchObject({ status: "failed", error: "对方的频道不见了" });
+  });
+
+  it("Slack 发送超时：failed，写明 Slack 可能已经收到，通知里也是这句", async () => {
+    const h = setup();
+    sendByYou(h, "1");
+    edit(h, due);
+    await engineIn(h, async (e, _sent, notes) => {
+      await e.sendDue();
+      expect(notes.join()).toContain("可能已经收到");
+    }, async () => {
+      const { GabrielError } = await import("gabriel-slack");
+      throw new GabrielError("NETWORK_TIMEOUT", "chat.postMessage exceeded itemDeadlineMs");
+    });
+    expect(rows(h)[0]).toMatchObject({ status: "failed" });
+    expect(rows(h)[0]!.error).toContain("可能已经收到");
+    expect(rows(h)[0]!.error).toContain("chat.postMessage exceeded itemDeadlineMs");
   });
 
   it("你确认之后稿子或去处被改了、确认记录没了：不发，failed", async () => {
