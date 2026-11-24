@@ -92,7 +92,7 @@ export function nowTab($: Engine, ui: Els, s: Snapshot, opened: string[] = [], e
   )
 
   // ── 一件事一张卡：标题、截止、去会话；会话在等你点的最前，然后问题、回复 ──
-  // ── 一件事一组，浅框框起来：小标题（事情、截止、等你的有几样、去会话），下面会话等你点、每个问题、每条回复各一个浅框。
+  // ── 一件事一组，外框 inactive、里面每项淡 inactive（深一档才分得出两层）：小标题（事情、截止、等你的有几样、去会话），下面会话等你点、每个问题、每条回复各一个浅框。
   // 不用底色（主题的 subtle 底在 App 里是深灰），也不用 Svg 细线（App 里看不出来）。过期、今天截止、会话在等你点的组，框是红的。
   const group = (c: Card) => {
     const th = c.thing
@@ -102,7 +102,7 @@ export function nowTab($: Engine, ui: Els, s: Snapshot, opened: string[] = [], e
     const counts = [c.waiting ? w.nWaiting : '', c.asks.length > 0 ? w.nAsks(c.asks.length) : '', c.replies.length > 0 ? w.nReplies(c.replies.length) : ''].filter(Boolean).join(' · ')
     const id = th ? `card${th.id}` : `card-${c.key}`
     return (
-      <Box key={id} flexDirection="column" gap="sm" marginTop="md" borderStyle="round" borderColor={c.rank <= 1 ? 'error' : 'inactive'} borderDimColor paddingX="md" paddingY="sm">
+      <Box key={id} flexDirection="column" gap="sm" marginTop="md" borderStyle="round" borderColor={c.rank <= 1 ? 'error' : 'inactive'} paddingX="md" paddingY="sm">
         <Box flexDirection="row" justifyContent="space-between" alignItems="flex-start" gap="sm">
           <Box flexDirection="column" flexShrink={1}>
             <Text weight="semibold" wrap="wrap">{title}</Text>
