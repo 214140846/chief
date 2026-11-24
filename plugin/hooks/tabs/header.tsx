@@ -43,7 +43,7 @@ export function header($: Engine, ui: Els, s: Snapshot, said: string, current: s
           : <Button key={`tab-${x.key}`} plain onPress={() => setTab($, x.key)}>{x.n > 0 ? `${x.label} ${x.n}` : x.label}</Button>)}
         {current === 'setup'
           ? <Text key="tab-setup" weight="semibold" color="claude" underline>{w.tabs.setup}{setupMissing > 0 ? ` ${setupMissing}` : ''}</Text>
-          : <Button key="tab-setup" plain onPress={() => setTab($, 'setup')}>{setupMissing > 0 ? `⚙ ${setupMissing}` : '⚙'}</Button>}
+          : <Button key="tab-setup" plain onPress={() => setTab($, 'setup')}>{setupMissing > 0 ? `${w.tabs.setup} ${setupMissing}` : w.tabs.setup}</Button>}
       </Box>
       {noteText !== '' && <Text size="footnote" color="suggestion">{noteText}</Text>}
       {fresh && (

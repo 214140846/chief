@@ -117,6 +117,9 @@ const zh = {
     goSession: '去会话',
     waiting: '会话在等你点',
     goPoint: '去点',
+    context: '背景',
+    hideContext: '收起背景',
+    moreAsks: (n: number) => `还有 ${n} 个问题`,
   },
   outbox: {
     them: '对方',
@@ -584,6 +587,9 @@ const en: Dict = {
     goSession: 'Open session',
     waiting: 'A session is waiting for your click',
     goPoint: 'Go click',
+    context: 'Context',
+    hideContext: 'Hide context',
+    moreAsks: (n: number) => `${n} more question${n === 1 ? '' : 's'}`,
   },
   outbox: {
     them: 'them',

@@ -147,6 +147,7 @@ description: chief 消息中心，用户的私人助理主会话。在 Claude Ap
 3. 都没有就开新会话：`start_session` 开独立会话（不用 `spawn_task`、不用子代理）。看不到 `start_session` 就 `chief ask add` 告诉用户「开不了新会话」，不要退而在本会话里办。
    - 目录，挑到就停：`list_start_targets` 看能开在哪 → `~/chief/CLAUDE.md`「常用的仓库」和 `notes/projects.md` → GitHub 按 `reply.ref` 的仓库、Jira / Slack 按原文里的仓库、PR 链接、服务名找本地目录，或参考同一工单前缀以前开在哪 → 还拿不准就 `chief ask add` 问「<哪条消息> 开在哪个目录」（列两三个最像的），先 `chief mark N asked`；答了再开，并在 `notes/projects.md` 补一行「<这类事> → <目录>」。
    - 标题一句话说清这件事（「PROJ-479 接口加字段」）。
+   - **`initiation` 看这一轮是谁发起的**：App 只在用户亲手打字的那一轮里直接开会话。这一轮是用户在本会话里亲口说的（「开吧」「派个会话去做」），用 `user_asked`，会话直接开起来。其余都用 `own_initiative`：Monitor 来的事件、面板发来的「chief：…」（照办、回答、批注都算，那是插件替他发的，不是他打的字）、工作会话发来的消息。`own_initiative` 会在 App 里放一张会话卡片，用户点一下才开始；用 `user_asked` 会被 App 拒掉（「no session started」）。放了卡片就 `chief thing update T`，next 写「等你在 App 里点开会话的卡片」，汇报一句「开会话的卡片放好了，在 App 里点一下开始」，推送；用户在本会话里说「开吧」时，再用 `start_session` 只带 `proposal_id` 开起来。
    - **开好马上 `detach_session`**（用 `start_session` 返回的编号），移到侧边栏顶层。失败或没这个工具不影响派活，汇报里提一句「会话挂在消息中心下面了」。进度靠它用 `send_message` 发来的汇报。
 
 **送出去之前先 Read `handoff.md`**，照它写转交内容（新会话作为第一句话，老会话用 `send_message`）。送完：

@@ -2,7 +2,7 @@
 //   要你：所有要你动手的事都在这（inbox.ts 算）——会话等你点、要你定的、等你确认的回复、chief 自己出的问题、它提议的规矩。
 //   进度：每件事做到哪了；搜以前的事；最近 7 天它做了什么，判断错了在这里说。只看，要你动手的在「要你」。
 //   规矩：每种消息怎么办、你的规矩、人、回复怎么写、它做得怎么样（准确率、演练）。
-//   ⚙ 设置：引擎、来源、主会话、免打扰和汇总、语言、导入、额度（setup.tsx）。引擎还没装时面板只有这一页。
+//   设置：引擎、来源、主会话、免打扰和汇总、语言、导入、额度（setup.tsx）。引擎还没装时面板只有这一页。
 // 数据直接读 ~/chief/data 里的文件（data.ts，每 3 秒一次）；动作在 actions.ts；每个页签的画法在 tabs/ 里，共用的小东西在 ui.tsx。
 import { atom, read } from 'claude-code'
 import type { EngineInterface as Engine, Register } from 'claude-code'

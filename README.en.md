@@ -39,7 +39,7 @@ Until the engine is installed the Setup tab is in Chinese, so the button names a
 
 ## The panel
 
-Three pages for the three questions you ask, plus ⚙ for setup. When everything is fine the top shows a single green dot; it only spells things out when something is wrong.
+Three pages for the three questions you ask, plus Setup. When everything is fine the top shows a single green dot; it only spells things out when something is wrong.
 
 - **For you** — everything that needs you, one card per thing, most urgent first:
   - A session stuck on a dialog (Allow, a choice): **Go click** jumps straight to it.
@@ -49,7 +49,7 @@ Three pages for the three questions you ask, plus ⚙ for setup. When everything
   - At the bottom, one line on what chief did today.
 - **Progress** — one row per thing with a status tag first (session waiting, overdue, blocked are coloured); open a row for the next step and results; ⋯ has ask for progress, **Later** (snooze: `chief thing snooze T --until 2h` / `tomorrow 09:00` / `next monday 09:00`), note and drop. Search past things at the top (`chief search <text>`). Below: snoozed, done, and **What it did in the last 7 days**: mark each judgment right or wrong (wrong becomes a rule proposal), save it as a drill case, undo "just note" / "ignore" calls; sent replies are listed there too (`chief undo --list`).
 - **Rules** — how each kind of message is handled; your rules (cases the engine enforces through the dropdowns, plus guidance for the hub); people (trusted, always ask me); replies (style, canned replies, placement, signature); how it is doing (accuracy, drills). Changes take effect immediately.
-- **⚙ Setup** — engine, sources, hub (reload rules), keep-awake, quiet hours and daily digest, language, import what you are working on, a test message, and the hub's usage. Rarely used actions (stop engine, reinstall, disconnect) are under ⋯.
+- **Setup** — engine, sources, hub (reload rules), keep-awake, quiet hours and daily digest, language, import what you are working on, a test message, and the hub's usage. Rarely used actions (stop engine, reinstall, disconnect) are under ⋯.
 
 ## Update
 
@@ -95,7 +95,7 @@ Outside `~/chief` there are only system-defined locations:
 
 Engine settings live in `~/chief/config.json`. `chief config` lists every setting and its current value; `chief config set <key> <value>` changes one. Rules (`rules.json`) are changed on the Rules page or by telling the hub, not here.
 
-These are also on the Setup page (⚙) and take effect immediately:
+These are also on the Setup page and take effect immediately:
 
 - **Language** (`locale`, `"zh"` or `"en"`, default `"zh"`): `chief config set locale en`. Panel, engine notifications and how the hub talks to you.
 - **Quiet hours** (`quietHours`, e.g. `{"start":"22:00","end":"08:00"}`, may cross midnight): the engine holds its notifications and the hub holds its pushes; they go into the next digest, and when quiet hours end the held engine notifications pop up as one. A broken data file or a changed confirm key still notifies; things you marked urgent or due during quiet hours still get pushed. Replies the rules allow to send directly still go out (quiet hours are about not disturbing you, not about ignoring others). `chief quiet` shows whether it is quiet now.

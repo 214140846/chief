@@ -414,6 +414,12 @@ test('要你定按事情合成一张卡：每个问题各自回，刚定的能�
   await want(ui, { key: 'card2' })
   await has(/2 个待定/)
   await has(/新/)
+  // 背景收着，点「背景」才出来；设置页签写字，不是图标。
+  expect(await ui.find({ type: 'Text', text: /^方案出来了。$/ })).toBeFalsy()
+  await ui.press({ key: 'cx11' })
+  await has(/^方案出来了。$/)
+  await want(ui, { key: 'tab-setup' })
+  expect(await ui.find({ text: /⚙/ })).toBeFalsy()
   // 刚定的缩成一行，能撤回；撤掉的灰字说为什么；答了很久的不显示。
   await has(/✓ 要不要问设计稿？ · 已定 → 照建议办/)
   await has(/已撤：对方已经拉了/)
