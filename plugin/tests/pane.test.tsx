@@ -2,7 +2,7 @@ import { expect, test } from 'claude-code/testing'
 
 import { askedAfter } from '../hooks/confirm'
 import { listify, splitAsk } from '../hooks/ui'
-import { inboxOf } from '../hooks/inbox'
+import { inboxOf, overlaySending, SENDING_MS } from '../hooks/inbox'
 import { addCall, dayOf, isHubMonitor } from '../hooks/usage'
 import { engineBehind } from '../hooks/setup'
 import type { ReplyRow } from '../types'
@@ -897,4 +897,174 @@ test('认出主会话：挂的是 chief events --follow 的 Monitor', () => {
   expect(isHubMonitor('~/chief/data/bin/chief events --after 3')).toBe(false)
   expect(isHubMonitor('tail -f log')).toBe(false)
   expect(isHubMonitor(undefined)).toBe(false)
+})
+
+// ── 点发送：卡片立刻收起 ──
+
+type Out = { exitCode: number; stdout: string; stderr: string }
+const OK: Out = { exitCode: 0, stdout: '', stderr: '' }
+
+// 挂上面板，chief 命令的结果由 run 决定（可以是一直不返回的 Promise）；files 是 chief 数据目录里读到的文件，测试中途能换。
+async function mountSend(
+  $: Parameters<Parameters<typeof test>[1]>[0],
+  on: Parameters<Parameters<typeof test>[1]>[1],
+  run: (args: string) => Out | Promise<Out>,
+) {
+  const runs: string[] = []
+  const stdins: Record<string, string | undefined> = {}
+  const files = { ...FILES }
+  on('command.register', () => ({ value: { command: 'chief' } }))
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  memStore(on)
+  on('clock.every', () => ({ value: { cancel: () => {} } }))
+  on('fs.read', (_, e) => {
+    if (e.path === '/Users/me/chief/data/bin/chief') return { value: '#!/bin/sh' }
+    const text = files[e.path]
+    if (text === undefined) throw new Error('missing')
+    return { value: text }
+  })
+  on('process.run', async (_, e) => {
+    if (e.argv[0] === '/usr/bin/env') return { value: { exitCode: 0, stdout: 'HOME=/Users/me\nPATH=/usr/bin\n', stderr: '' } }
+    const args = e.argv.slice(1).join(' ')
+    runs.push(args)
+    stdins[args] = e.init?.stdin
+    return { value: await run(args) }
+  })
+  on('prompt.submit', (_, e) => ({ text: e.text }))
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+  await $.command.run({ command: 'chief', args: '' })
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  return { ui, runs, stdins, files }
+}
+
+// 等到条件成立（最多 5 秒），不靠固定的睡眠。
+async function until(cond: () => boolean | Promise<boolean>, what: string) {
+  for (let i = 0; i < 100; i++) {
+    if (await cond()) return
+    await new Promise(r => setTimeout(r, 50))
+  }
+  throw new Error(`等不到：${what}`)
+}
+// 点了发送以后：命令已经跑起来，卡片已经收起。
+async function cardGone(ui: { find: (q: never) => Promise<unknown> }, runs: string[], id: number) {
+  await until(() => runs.includes(`reply confirm ${id}`), `reply confirm ${id}`)
+  await until(async () => !(await ui.find({ key: `sd${id}` } as never)), `卡片 sd${id} 收起`)
+}
+
+test('点发送：卡片马上收起变成「正在发」，不等命令跑完', async ($, on) => {
+  let finish: (out: Out) => void = () => {}
+  const { ui, runs, stdins } = await mountSend($, on, args => (args === 'reply confirm 5' ? new Promise<Out>(r => (finish = r)) : OK))
+  await want(ui, { key: 'sd5' })
+  const pressed = ui.press({ key: 'sd5' })
+  await cardGone(ui, runs, 5)
+  await want(ui, { type: 'Text', text: /正在发：/ })
+  expect(await ui.find({ key: 'ud5' })).toBeFalsy()
+  finish(OK)
+  await pressed
+  expect(runs.filter(a => a === 'reply confirm 5').length).toBe(1)
+  expect(JSON.parse(stdins['reply confirm 5'] ?? '{}')).toMatchObject({ how: 'panel' })
+  // 命令跑完：静态的 replies.json 里 5 号还是 pending，卡片按文件里的样子回来（也说明 sending 已清掉）。
+  await want(ui, { key: 'sd5' })
+})
+
+// 在 replies.json 里把 5 号回复换成这个状态（其余照旧）。
+function withReply5(patch: Record<string, unknown>) {
+  const file = JSON.parse(FILES['/Users/me/chief/data/replies.json']!) as { items: Record<string, unknown>[] }
+  return JSON.stringify({ items: file.items.map(r => (r.id === 5 ? { ...r, ...patch } : r)) })
+}
+const REPLIES = '/Users/me/chief/data/replies.json'
+
+test('点发送：approve 也先收起；命令跑完卡片按文件里的样子回来', async ($, on) => {
+  const held: Record<string, (out: Out) => void> = {}
+  const { ui, runs } = await mountSend($, on, args => (args.startsWith('reply confirm') ? new Promise<Out>(r => (held[args] = r)) : OK))
+  const pressed = ui.press({ key: 'sd7' })
+  await cardGone(ui, runs, 7)
+  await want(ui, { key: 'sd5' })
+  held['reply confirm 7']!(OK)
+  await pressed
+  // 静态的 replies.json 里 7 号还是 pending：命令跑完后记录已清掉，卡片回来。
+  await want(ui, { key: 'sd7' })
+})
+
+test('点发送：命令失败，卡片回来、错误说清楚、能再点', async ($, on) => {
+  let fails = true
+  const { ui, runs } = await mountSend($, on, args => (args === 'reply confirm 5' && fails ? { exitCode: 1, stdout: '', stderr: '不能发' } : OK))
+  await ui.press({ key: 'sd5' })
+  await want(ui, { key: 'sd5' })
+  await want(ui, { type: 'Text', text: /没成功：不能发/ })
+  fails = false
+  await ui.press({ key: 'sd5' })
+  expect(runs.filter(a => a === 'reply confirm 5').length).toBe(2)
+})
+
+test('点发送：命令没跑完（抛异常），卡片回来并提示不确定有没有排上队', async ($, on) => {
+  const { ui, runs } = await mountSend($, on, args => {
+    if (args === 'reply confirm 5') throw new Error('timeout')
+    return OK
+  })
+  await ui.press({ key: 'sd5' })
+  expect(runs).toContain('reply confirm 5')
+  await want(ui, { key: 'sd5' })
+  await want(ui, { type: 'Text', text: /不确定有没有排上队/ })
+})
+
+test('点发送：文件里已经往前走的状态不被盖成「正在发」', async ($, on) => {
+  let finish: (out: Out) => void = () => {}
+  const { ui, runs, files } = await mountSend($, on, args => (args === 'reply confirm 5' ? new Promise<Out>(r => (finish = r)) : OK))
+  await want(ui, { key: 'pa1' })
+  const pressed = ui.press({ key: 'sd5' })
+  await cardGone(ui, runs, 5)
+  expect(await ui.find({ key: 'ud5' })).toBeFalsy()
+  // 命令写了盘、别处触发了一次重读：读到 queued 就有撤回按钮。
+  files[REPLIES] = withReply5({ status: 'queued', sendAt: new Date(Date.now() + 5000).toISOString() })
+  await ui.press({ key: 'pa1' })
+  await until(async () => !!(await ui.find({ key: 'ud5' })), '撤回按钮 ud5')
+  // 已经发出：算进「替你发出」，不再是「正在发」。
+  files[REPLIES] = withReply5({ status: 'sent', by: 'you', sentAt: new Date().toISOString() })
+  await ui.press({ key: 'pa1' })
+  await until(async () => !(await ui.find({ key: 'ud5' })), '撤回按钮收起')
+  expect(await ui.find({ type: 'Text', text: /正在发：/ })).toBeFalsy()
+  await want(ui, { type: 'Text', text: /替你发出 2/ })
+  finish(OK)
+  await pressed
+})
+
+test('点发送：引擎报了发送失败，命令跑完后错误和重发按钮都在', async ($, on) => {
+  let finish: (out: Out) => void = () => {}
+  const { ui, runs, files } = await mountSend($, on, args => (args === 'reply confirm 5' ? new Promise<Out>(r => (finish = r)) : OK))
+  await want(ui, { key: 'pa1' })
+  const pressed = ui.press({ key: 'sd5' })
+  await cardGone(ui, runs, 5)
+  // 命令还没返回时引擎已经发过并失败：这一刻文件里是 failed，卡片先保持「正在发」，不闪回。
+  files[REPLIES] = withReply5({ status: 'failed', error: 'chat.postMessage exceeded itemDeadlineMs' })
+  await ui.press({ key: 'pa1' })
+  expect(await ui.find({ key: 'sd5' })).toBeFalsy()
+  finish(OK)
+  await pressed
+  await want(ui, { key: 'sd5' })
+  await want(ui, { type: 'Text', text: /exceeded itemDeadlineMs/ })
+})
+
+test('点发送的本地覆盖：只改 pending / failed；记录过了 60 秒就不算', () => {
+  const row = (id: number, status: ReplyRow['status']) => ({ id, status }) as ReplyRow
+  const rows = [row(1, 'pending'), row(2, 'failed'), row(3, 'queued'), row(4, 'sending'), row(5, 'sent'), row(6, 'pending')]
+  const now = 1_000_000
+  const out = overlaySending(rows, { 1: now - 1000, 2: now - 1000, 3: now - 1000, 4: now - 1000, 5: now - 1000, 6: now - SENDING_MS }, now)
+  expect(out.map(r => r.status)).toEqual(['sending', 'sending', 'queued', 'sending', 'sent', 'pending'])
+  // 没点过的不动。
+  expect(overlaySending(rows, {}, now)).toEqual(rows)
+})
+
+test('点发送：同一条连点两下，只发一次', async ($, on) => {
+  let finish: (out: Out) => void = () => {}
+  const { ui, runs } = await mountSend($, on, args => (args === 'reply confirm 5' ? new Promise<Out>(r => (finish = r)) : OK))
+  const first = ui.press({ key: 'sd5' })
+  const second = ui.press({ key: 'sd5' })
+  await cardGone(ui, runs, 5)
+  // 第二次触发要是漏过去，会在这一小会儿里出现第二条命令。
+  await new Promise(r => setTimeout(r, 200))
+  expect(runs.filter(a => a === 'reply confirm 5').length).toBe(1)
+  finish(OK)
+  await Promise.allSettled([first, second])
 })

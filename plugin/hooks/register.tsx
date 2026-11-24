@@ -12,6 +12,7 @@ import { confirmAsked, ensureKey, noteUserSaid } from './confirm'
 import { isHub, isHubMonitor, markHub, recordCall } from './usage'
 import { autoUpdate, checkSetup, missing, readSetup, setupTab } from './setup'
 import { t } from './i18n'
+import { overlaySending } from './inbox'
 import { header } from './tabs/header'
 import { nowTab } from './tabs/now'
 import { policyTab } from './tabs/policy'
@@ -22,6 +23,7 @@ const snap = atom({ plugin: 'chief', key: 'snap' } as const, null)
 const note = atom({ plugin: 'chief', key: 'note' } as const, '')
 const tab = atom({ plugin: 'chief', key: 'tab' } as const, 'now')
 const edits = atom({ plugin: 'chief', key: 'edits' } as const, {})
+const sending = atom({ plugin: 'chief', key: 'sending' } as const, {})
 const open = atom({ plugin: 'chief', key: 'open' } as const, [])
 const logs = atom({ plugin: 'chief', key: 'logs' } as const, '')
 const basket = atom({ plugin: 'chief', key: 'basket' } as const, [])
@@ -143,8 +145,10 @@ async function draw($: Engine, ui: Els) {
     void startRefresh($)
     const st = await readSetup($)
     if (!st.installed) return <Box flexDirection="column" padding="sm">{setupTab($, ui, st, null)}</Box>
-    const s = await read($, snap)
-    if (s === null) return <Text dimColor>{t().app.loading}</Text>
+    const snapped = await read($, snap)
+    if (snapped === null) return <Text dimColor>{t().app.loading}</Text>
+    // 点了发送、命令还没跑完的回复先显示成「正在发」（规则见 overlaySending）。
+    const s = { ...snapped, replies: overlaySending(snapped.replies, await read($, sending), Date.now()) }
     const current = await read($, tab)
     const said = await read($, note)
     const opened = await read($, open)

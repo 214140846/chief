@@ -9,10 +9,12 @@ import type { Handle, ReplyMode, ReplyRow, SearchHit, Tab, ThingRow } from '../t
 import { confirmFromPanel, editFromPanel, noteUserSaid, rulesFromPanel } from './confirm'
 import { refresh, chiefDir } from './data'
 import { t } from './i18n'
+import { SENDING_MS } from './inbox'
 
 const note = atom({ plugin: 'chief', key: 'note' } as const, '')
 const tab = atom({ plugin: 'chief', key: 'tab' } as const, 'now')
 const edits = atom({ plugin: 'chief', key: 'edits' } as const, {})
+const sending = atom({ plugin: 'chief', key: 'sending' } as const, {})
 const open = atom({ plugin: 'chief', key: 'open' } as const, [])
 const logs = atom({ plugin: 'chief', key: 'logs' } as const, '')
 const basket = atom({ plugin: 'chief', key: 'basket' } as const, [])
@@ -137,9 +139,39 @@ export async function setEdit($: Engine, id: number, text: string) {
   await update($, edits, x => ({ ...x, [String(id)]: text }))
 }
 
-// 发送：改过就先存改后的稿子，再排队（5 秒后引擎发出，之前能撤回）。
-// typed 是输入框回车时交来的当前文字（最准）；点按钮时用记下的修改；都没有就是原稿。
+// 正在发的回复号 → 点的时间（防重复触发用）；sending atom 是同一份记录，用来让面板重画。
+const claimed = new Map<string, number>()
+
+// 发送：点下去卡片先收起，命令跑完（成功、失败都算）再按文件里的真实状态画。
+// 同一条已经在发就不再发（输入框回车和按钮会各触发一次）。
 export async function send($: Engine, r: ReplyRow, typed?: string) {
+  const id = String(r.id)
+  const at = Date.now()
+  // 占位要同步做（atom 的读和写之间隔着 await，两次几乎同时的触发会都看到空的）。
+  const earlier = claimed.get(id)
+  if (earlier !== undefined && at - earlier < SENDING_MS) return
+  claimed.set(id, at)
+  await update($, sending, s => ({ ...s, [id]: at }))
+  try {
+    await sendNow($, r, typed)
+  } catch {
+    // 命令没跑完（超时、起不来）：不知道有没有排上队，卡片回来时说一句，再读一次文件。
+    await update($, note, () => stamp(t().act.sendUnsure))
+    await refresh($)
+  } finally {
+    if (claimed.get(id) === at) claimed.delete(id)
+    await update($, sending, s => {
+      if (s[id] !== at) return s
+      const rest = { ...s }
+      delete rest[id]
+      return rest
+    })
+  }
+}
+
+// 改过就先存改后的稿子，再排队（5 秒后引擎发出，之前能撤回）。
+// typed 是输入框回车时交来的当前文字（最准）；点按钮时用记下的修改；都没有就是原稿。
+async function sendNow($: Engine, r: ReplyRow, typed?: string) {
   if (r.kind === 'approve') {
     if (await act($, `approve ${r.target.ref ?? 'PR'}`, ['reply', 'confirm', String(r.id)], await confirmFromPanel($))) {
       await update($, note, () => stamp(t().act.approveIn(r.target.ref ?? 'PR')))
