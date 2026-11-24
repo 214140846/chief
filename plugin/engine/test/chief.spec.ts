@@ -236,6 +236,38 @@ describe("事情和要你定的", () => {
     expect(failsIn("", "ask", "reopen", "2")).toMatch(/办完了/);
   });
 
+  it("问题挂着的回复发了 / 不发了 / 让它重写：问题跟着关；撤回发送问题回来；approve 发了只为它记的事情就办完", () => {
+    const h = home();
+    chief(h, "cursor");
+    const dm = (id: number, text: string) => JSON.stringify({ id, at: "t", source: "slack", kind: "slack.message", title: "私信", url: null, from: "Alex", fromId: "U9", text, why: ["dm"], keys: [`slack:D1:${id}.0`], reply: { channel: "D1", ts: `${id}.0` } });
+    writeFileSync(join(h, "events.jsonl"), `${dm(1, "能赶上 12/2 吗")}\n${dm(2, "那 1.0 呢")}\n${JSON.stringify({ ...JSON.parse(dm(3, "帮忙看下 https://github.com/o/r/pull/44")), keys: ["slack:D1:3.0", "github.com/o/r/pull/44"] })}\n`);
+    chiefIn(h, "", "thing", "add", "--title", "运费卡片", "--session", "local_x");
+    for (const n of [1, 2]) {
+      writeFileSync(join(h, "drafts", `${n}.md`), n === 1 ? "能赶上" : "一起改");
+      chief(h, "reply", "add", "--event", String(n), "--thing", "1", "--file", join(h, "drafts", `${n}.md`));
+      chiefIn(h, JSON.stringify({ question: n === 1 ? "这样回 Alex 吗？" : "这样回 1.0 的问题吗？", suggest: "发" }), "ask", "add", "--thing", "1", "--reply", String(n));
+    }
+    const asks = () => JSON.parse(readFileSync(join(h, "things.json"), "utf8")).asks as { status: string; answer?: string; reason?: string }[];
+    // 你在面板上点了发送：问题记成答了；撤回发送：问题回来。
+    sendByYou(h, "1");
+    expect(asks()[0]).toMatchObject({ status: "answered", answer: "回复发了" });
+    chief(h, "reply", "undo", "1");
+    expect(asks()[0]).toMatchObject({ status: "open" });
+    expect(JSON.parse(chief(h, "thing", "list"))[0].status).toBe("waiting_you");
+    // 不发了 / 让它重写：问题撤掉，写上为什么。
+    chief(h, "reply", "drop", "1");
+    expect(asks()[0]).toMatchObject({ status: "withdrawn", reason: "回复不发了" });
+    chiefIn(h, "太硬了", "reply", "redo", "2");
+    expect(asks()[1]).toMatchObject({ status: "withdrawn", reason: "回复让它重写了" });
+    expect(JSON.parse(chief(h, "thing", "list"))[0].status).toBe("doing");
+    // approve：只为它记的事情（没有会话、没有开着的问题），approve 一发就办完。
+    chiefIn(h, "", "thing", "add", "--title", "o/r#44 (Alex 让看的 PR)");
+    const a = JSON.parse(chief(h, "reply", "approve", "--event", "3", "--ref", "o/r#44", "--custom", "1", "--thing", "2"));
+    chief(h, "reply", "queue", String(a.id), "--policy");
+    const t2 = JSON.parse(chief(h, "thing", "list", "--all")).find((x: { id: number }) => x.id === 2);
+    expect(t2).toMatchObject({ status: "done", results: ["approve 了 o/r#44"] });
+  });
+
   it("规矩：场景表加自由规矩，能改", () => {
     const h = home();
     expect(chief(h, "rules")).toContain("Slack 私信（slack_dm）：派人去办；回复先给我确认");

@@ -834,6 +834,10 @@ test('「要你」：一件事一张卡，会话等你点最前、截止近的�
   // 等你的：会话等你点 1 + 开着的问题 4（稍后再说的那件不算）。
   expect(box.count).toBe(4)
   expect(inboxOf(s, t0 + 120_000).cards.map(c => c.thing?.id)).toEqual([6, 3, 1, 2])
+  // 问题挂着的回复已经发了：问题不用再答（以前留下的、引擎还没关掉的也不算）。
+  const sent = { ...s, replies: [{ id: 9, status: 'sent', at: at(1) }], asks: [...s.asks, ask(7, 2, { reply: 9 })] } as unknown as typeof s
+  expect(inboxOf(sent, t0).count).toBe(4)
+  expect(inboxOf(sent, t0).cards.find(c => c.thing?.id === 2)?.asks.map(a => a.id)).toEqual([2])
   // chief 自己出的问题、插件更新了要重读、它提议的规矩：都进「要你」，也算进数字。
   const bad = { ...s, engineAt: null, reread: true, keyAlerts: [{ at: at(1), what: 'reset' }], policy: { ...base.policy, proposals: [{ id: 1, text: 'x', basis: '', at: at(1) }] } } as typeof s
   expect(inboxOf(bad, t0).system.map(x => x.kind)).toEqual(['key', 'engine', 'reread', 'proposal'])

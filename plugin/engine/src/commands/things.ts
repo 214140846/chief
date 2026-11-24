@@ -181,6 +181,54 @@ function settle(t: ThingsFile, thingId: number): Thing | undefined {
   return x;
 }
 
+// 问题挂着的回复（ask add --reply R）有了结果：问题跟着关掉，不用你再去答一个已经办了的问题。
+//   sent：你发了（或规矩发了）→ 记成答了；dropped / redo：不发了、让它重写了 → 撤掉（重写好了主会话会挂到新稿上再问）。
+//   undo：发送撤回了 → 因为发了才关掉的问题重新打开。
+export function settleReplyAsks(replyId: number, how: "sent" | "dropped" | "redo" | "undo"): void {
+  const at = new Date().toISOString();
+  updateThings((t) => {
+    const touched = new Set<number>();
+    for (const a of t.asks) {
+      if (a.reply !== replyId) continue;
+      if (how === "undo") {
+        if (a.status !== "answered" || a.answer !== msg().askReplySent) continue;
+        a.status = "open";
+        delete a.answer;
+        delete a.closedAt;
+        const x = t.things.find((y) => y.id === a.thing);
+        if (x && x.status !== "done" && x.status !== "dropped") x.status = "waiting_you";
+        continue;
+      }
+      if (a.status !== "open") continue;
+      if (how === "sent") {
+        a.status = "answered";
+        a.answer = msg().askReplySent;
+      } else {
+        a.status = "withdrawn";
+        a.reason = how === "dropped" ? msg().askReplyDropped : msg().askReplyRedo;
+      }
+      a.closedAt = at;
+      touched.add(a.thing);
+    }
+    for (const id of touched) settle(t, id);
+  });
+}
+
+// approve 发出去了：只为这次 approve 记的事情（没有会话、没有开着的问题）就办完了，不挂在进度里。
+export function approveDone(thingId: number, ref: string): void {
+  const at = new Date().toISOString();
+  updateThings((t) => {
+    const x = t.things.find((y) => y.id === thingId);
+    if (!x || x.session || x.status === "done" || x.status === "dropped") return;
+    if (t.asks.some((a) => a.thing === x.id && a.status === "open")) return;
+    const result = msg().approveDone(ref);
+    x.status = "done";
+    x.results = [...(x.results ?? []), result].slice(-20);
+    x.log = [...x.log, { at, text: result }].slice(-MAX_LOG);
+    x.updatedAt = at;
+  });
+}
+
 export async function ask(args: string[]): Promise<void> {
   const sub = args.shift();
   if (sub === "list") {

@@ -12,6 +12,7 @@ import { parsePermalink } from "../slack/people";
 import { SOURCES } from "../sources/registry";
 import { loadPolicy, loadReplies, paths, readEvents, scenarioOf, updateReplies, type RepliesFile, type Reply } from "../store";
 import { eventById } from "./events";
+import { approveDone, settleReplyAsks } from "./things";
 import { keyMatches } from "./key";
 
 export const MAX_REPLY = 20_000;
@@ -51,6 +52,7 @@ export const undoMs = () => loadConfig().config.undoSeconds * 1000;
 export function queueReply(id: number, now: Date, mark: (r: Reply) => void): void {
   // 锁外先读好（锁里不能 fail）。
   const testEvents = new Set(readEvents().filter((e) => e.test).map((e) => e.id));
+  let queued: Reply | null = null;
   updateReplies((all) => {
     const r = all.items.find((x) => x.id === id);
     if (!r) throw new Error(`没有回复 ${id}`);
@@ -63,7 +65,12 @@ export function queueReply(id: number, now: Date, mark: (r: Reply) => void): voi
     r.sendAt = new Date(now.getTime() + undoMs()).toISOString();
     delete r.error;
     mark(r);
+    queued = r;
   });
+  if (!queued) return;
+  const done: Reply = queued;
+  settleReplyAsks(done.id, "sent");
+  if (done.kind === "approve" && done.thing !== undefined) approveDone(done.thing, done.target.ref ?? "PR");
 }
 
 export async function reply(args: string[]): Promise<void> {
@@ -258,6 +265,7 @@ export async function reply(args: string[]): Promise<void> {
       delete r.sendAt;
       delete r.by;
     });
+    settleReplyAsks(id, "undo");
     return;
   }
   if (sub === "drop") {
@@ -266,6 +274,7 @@ export async function reply(args: string[]): Promise<void> {
       if (r.status === "sending" || r.status === "sent") throw new Error("已经发出去了");
       r.status = "dropped";
     });
+    settleReplyAsks(id, "dropped");
     return;
   }
   if (sub === "redo") {
@@ -276,6 +285,7 @@ export async function reply(args: string[]): Promise<void> {
       r.status = "redo";
       if (feedback) r.feedback = feedback;
     });
+    settleReplyAsks(id, "redo");
     return;
   }
   fail("chief reply add|approve|new|list|edit|edit-yours|queue|undo|drop|redo");

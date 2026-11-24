@@ -33,6 +33,11 @@ const zh = {
   // 事情办完、不做了时，它还开着的问题自动撤掉，面板上灰字写这句。
   askThingDone: "这件事办完了",
   askThingDropped: "这件事不做了",
+  // 问题挂着的回复你发了 / 不发了 / 让它重写了：问题跟着关掉。
+  askReplySent: "回复发了",
+  askReplyDropped: "回复不发了",
+  askReplyRedo: "回复让它重写了",
+  approveDone: (ref: string) => `approve 了 ${ref}`,
 };
 
 export type Messages = typeof zh;
@@ -65,6 +70,10 @@ const en: Messages = {
   undoDrop: (title: string) => `Dropped: ${title}`,
   askThingDone: "This is done",
   askThingDropped: "This was dropped",
+  askReplySent: "Reply sent",
+  askReplyDropped: "Reply dropped",
+  askReplyRedo: "Reply sent back for a rewrite",
+  approveDone: (ref: string) => `Approved ${ref}`,
 };
 
 export const MESSAGES: Readonly<Record<Locale, Messages>> = { zh, en };

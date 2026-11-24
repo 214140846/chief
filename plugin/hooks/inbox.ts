@@ -77,10 +77,17 @@ export function inboxOf(s: Snapshot, now = Date.now()): Inbox {
       c.since = s.activity[t.session!]?.at ?? ''
     }
   }
+  // 问题挂着的回复已经发了 / 不发了 / 在重写：问题不用再答（引擎现在会跟着关掉，这里兜住以前留下的）。
+  const replyGone = (a: AskRow) => {
+    if (a.reply === undefined) return false
+    const r = s.replies.find(x => x.id === a.reply)
+    return r !== undefined && r.status !== 'pending' && r.status !== 'failed'
+  }
   for (const a of s.asks) {
     const t = thingOf(a.thing)
     // 稍后再说的事情：它的问题也先收起。
     if (t && snoozed(t)) continue
+    if (a.status === 'open' && replyGone(a)) continue
     const key = t ? `t${t.id}` : `a${a.id}`
     const closedAt = a.closedAt === undefined ? NaN : Date.parse(a.closedAt)
     if (a.status === 'open') card(key, t ?? null).asks.push(a)
