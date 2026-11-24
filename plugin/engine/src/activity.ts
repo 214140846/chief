@@ -100,7 +100,7 @@ const NEEDS_ALLOW = new Set(["mcp__ccd_session__start_session"]);
 
 // 本来就会跑很久的工具（子代理、工作流）：停着不说明在等你。
 const LONG_RUNNING = new Set(["Agent", "Task", "Workflow", "TaskOutput"]);
-// 有工具一直没结果、对话记录这么久没动：多半弹了要你点同意的框（不管是哪种框）。
+// 有工具一直没结果、对话记录这么久没动：多半弹了要你点同意的框（不管是哪种框）。只看不是 bypass 的会话。
 export const STALL_MS = 5 * 60_000;
 
 // 最后一个还没结果的工具：给人看的名字（有说明就带上说明，不带命令原文）。
@@ -118,6 +118,14 @@ export function stuckTool(lines: Line[]): string | null {
     if (lines[i]!.type === "user" && !parts(lines[i]!).some((c) => c.type === "tool_result")) break;
   }
   return null;
+}
+
+// 工具没结果、记录多久没动，算不算在等你点同意。
+// 跳过权限（bypass）的会话不会为普通工具弹框：工具没结果只是还在跑（截图、起服务），不算等你。
+// 它真要你点的（开新会话、问你问题）waitingQuestion 已经认出来了。
+export function stalled(stuck: string | null, mtime: number, mode: string | null, now = Date.now()): string | null {
+  if (!stuck || mtime <= 0 || mode === "bypassPermissions" || now - mtime < STALL_MS) return null;
+  return stallText(stuck);
 }
 
 export function stallText(stuck: string): string {
@@ -224,7 +232,7 @@ export function syncActivity(): SessionUpdate[] {
     const asked = lines ? waitingQuestion(lines) : old?.waiting && old.waiting !== stallText(old.stuck ?? "") ? old.waiting : null;
     const stuck = lines ? stuckTool(lines) : old?.stuck ?? null;
     // 认得的框（问你、开新会话）直接算；别的工具停着不动够久了，也算在等你。
-    const waiting = asked ?? (stuck && mtime > 0 && Date.now() - mtime >= STALL_MS ? stallText(stuck) : null);
+    const waiting = asked ?? stalled(stuck, mtime, rec.permissionMode ?? null);
     next[id] = {
       at, size, saidAt: said.at, waiting, stuck, title: rec.title ?? "", permissionMode: rec.permissionMode ?? null, archived: rec.isArchived === true,
       last: said.text,

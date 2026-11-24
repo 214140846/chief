@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { stuckTool, waitingQuestion } from "../src/activity";
+import { STALL_MS, stalled, stuckTool, waitingQuestion } from "../src/activity";
 
 describe("会话在等你回答", () => {
   const ask = { type: "assistant", message: { content: [{ type: "tool_use", name: "AskUserQuestion", id: "t1", input: { questions: [{ question: "确认发布吗？" }] } }] } };
@@ -41,5 +41,16 @@ describe("会话停在某个工具上", () => {
   });
   it("子代理本来就跑得久：不算", () => {
     expect(stuckTool([{ type: "user" }, use("a1", "Agent", { description: "查代码" })])).toBeNull();
+  });
+});
+
+describe("工具一直没结果", () => {
+  it("过了 5 分钟才算可能在等你点；跳过权限的会话不弹框，工具没结果只是还在跑", () => {
+    const now = Date.parse("2026-11-24T10:00:00Z");
+    const old = now - STALL_MS - 1000;
+    expect(stalled("Bash：截图", old, "default", now)).toContain("可能在等你点同意");
+    expect(stalled("Bash：截图", now - 60_000, "default", now)).toBeNull();
+    expect(stalled("Bash：截图", old, "bypassPermissions", now)).toBeNull();
+    expect(stalled(null, old, "default", now)).toBeNull();
   });
 });
