@@ -6,7 +6,7 @@
   "plugins": [
     {
       "name": "chief",
-      "description": "私人助理：找你的消息派给对应的 Claude 会话去办",
+      "description": "Personal assistant for the Claude App: hands what needs you to Claude sessions",
       "source": {
         "source": "git-subdir",
         "url": "https://github.com/jinjin99/chief.git",
