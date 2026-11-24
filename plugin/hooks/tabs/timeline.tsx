@@ -64,9 +64,11 @@ export function timeline($: Engine, ui: Els, s: Snapshot, opened: string[]) {
               <Button key={`ok-${d.event}`} onPress={() => markRight($, d.event)}>{w.right}</Button>
             </Box>
             {'Input' in ui && (
-              <ui.Input key={`wr-${d.event}`} placeholder={w.wrongPlaceholder} submitLabel={w.wrong} onSubmit={(v: string) => {
-                if (v.trim()) void markWrong($, d.event, v.trim())
-              }} />
+              <Box width="100%">
+                <ui.Input key={`wr-${d.event}`} rows={2} placeholder={w.wrongPlaceholder} submitLabel={w.wrong} onSubmit={(v: string) => {
+                  if (v.trim()) void markWrong($, d.event, v.trim())
+                }} />
+              </Box>
             )}
           </Box>
         )}

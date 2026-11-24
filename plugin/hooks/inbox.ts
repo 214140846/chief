@@ -31,7 +31,7 @@ export type Card = {
   sending: ReplyRow[]
   // 越小越急：0 会话等你点、1 过期或今天截止、2 有回复没发出去、3 两天内截止、4 其余。
   rank: number
-  // 最早一条等你的什么时候来的（同样急的，先来的在前）。
+  // 最近一条等你的什么时候来的（同样急的，新的在前）。
   since: string
 }
 
@@ -103,15 +103,18 @@ export function inboxOf(s: Snapshot, now = Date.now()): Inbox {
   const cards = [...byKey.values()].filter(c => c.waiting || c.asks.length > 0 || c.closed.length > 0 || c.replies.length > 0 || c.sending.length > 0)
   const shown = new Set(cards.map(c => c.thing?.id))
   for (const c of cards) {
-    c.asks.sort((a, b) => a.at.localeCompare(b.at))
+    // 新问的在前。
+    c.asks.sort((a, b) => b.at.localeCompare(a.at))
     // 今天撤掉的问题：卡还在的就跟在卡上（灰字说为什么）。
     if (c.thing) c.closed.push(...s.asks.filter(a => a.thing === c.thing!.id && a.status === 'withdrawn' && a.closedAt !== undefined && Date.parse(a.closedAt) >= dayStart))
-    const firsts = [c.waiting ? c.since : '', ...c.asks.map(a => a.at), ...c.replies.map(r => r.at), ...c.sending.map(r => r.at), ...c.closed.map(a => a.at)].filter(Boolean).sort()
-    c.since = firsts[0] ?? ''
+    // 还在等你的里面最新的一条；只剩刚定的、撤掉的，就看那些。
+    const waitingOn = [c.waiting ? c.since : '', ...c.asks.map(a => a.at), ...c.replies.map(r => r.at), ...c.sending.map(r => r.at)].filter(Boolean).sort()
+    const done = c.closed.map(a => a.closedAt ?? a.at).sort()
+    c.since = waitingOn.at(-1) ?? done.at(-1) ?? ''
     const left = c.thing?.due === undefined ? null : daysLeft(c.thing.due)
     c.rank = c.waiting ? 0 : left !== null && left <= 0 ? 1 : c.replies.some(r => r.status === 'failed') ? 2 : left !== null && left <= 2 ? 3 : 4
   }
-  cards.sort((a, b) => a.rank - b.rank || a.since.localeCompare(b.since))
+  cards.sort((a, b) => a.rank - b.rank || b.since.localeCompare(a.since))
   // 整件事没有别的等你的、只剩今天撤掉的问题：放在最底下一行行列出来，让你知道它为什么没了。
   const withdrawn = s.asks.filter(a => a.status === 'withdrawn' && a.closedAt !== undefined && Date.parse(a.closedAt) >= dayStart && !shown.has(a.thing))
 

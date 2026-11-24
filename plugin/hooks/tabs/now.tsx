@@ -69,10 +69,13 @@ export function nowTab($: Engine, ui: Els, s: Snapshot, opened: string[] = [], e
           <Button key={`no${q.id}`} plain onPress={() => toggle($, `dis${q.id}`)}>{w.disagreeShort}</Button>
           <Button key={`dm${q.id}`} plain onPress={() => dismissAsk($, q.id, w.dismiss)}>{w.dismiss}</Button>
         </Box>
+        {/* 三行高、占满一行：写得长也看得全。回车发送，换行和输入框一样。 */}
         {typing && 'Input' in ui && (
-          <ui.Input key={`in${q.id}`} autoFocus placeholder={w.disagree} submitLabel={w.send} onSubmit={(v: string) => {
-            if (v.trim()) void answerAsk($, q.id, v.trim(), w.yourCall, `chief：问题 #${q.id} 的回答：${v.trim()}`)
-          }} />
+          <Box width="100%">
+            <ui.Input key={`in${q.id}`} autoFocus rows={3} placeholder={w.disagree} submitLabel={w.send} onSubmit={(v: string) => {
+              if (v.trim()) void answerAsk($, q.id, v.trim(), w.yourCall, `chief：问题 #${q.id} 的回答：${v.trim()}`)
+            }} />
+          </Box>
         )}
       </Box>
     )
@@ -121,7 +124,7 @@ export function nowTab($: Engine, ui: Els, s: Snapshot, opened: string[] = [], e
             <Box flexDirection="row"><Button key={`go-${c.key}`} variant="primary" onPress={() => openSession($, c.session ?? '', title)}>{w.goPoint}</Button></Box>
           </Box>
         )}
-        {c.asks.map(q => askCard(q, c.asks.length > 1 && Date.parse(q.at) - Date.parse(c.asks[0].at) > 60_000))}
+        {c.asks.map(q => askCard(q, c.asks.length > 1 && Date.parse(q.at) - Math.min(...c.asks.map(a => Date.parse(a.at))) > 60_000))}
         {c.replies.map(r => (
           <Box key={`rc${r.id}`} flexDirection="column" borderStyle="round" borderColor={r.status === 'failed' ? 'error' : 'inactive'} borderDimColor paddingX="md" paddingY="sm">
             {replyCard($, ui, s, edit, opened, r)}

@@ -438,7 +438,7 @@ test('要你定按事情合成一张卡：每个问题各自回，刚定的能�
   expect(await ui.find({ key: 'all-t2' })).toBeFalsy()
   await ui.press({ key: 'all-t1' })
   expect(runs.filter(r => r.argv === 'ask answer 11' || r.argv === 'ask answer 12').every(r => r.stdin === '照建议办')).toBe(true)
-  expect(prompts.at(-1)).toBe('chief：问题 #11、#12 都照建议办')
+  expect(prompts.at(-1)).toBe('chief：问题 #12、#11 都照建议办')
   await ui.unmount()
 })
 
@@ -835,12 +835,13 @@ test('「要你」：一件事一张卡，会话等你点最前、截止近的�
     asks: [ask(1, 1), ask(2, 2), ask(3, 3), ask(4, 4), ask(5, 5, { status: 'answered', closedAt: at(1) }), ask(6, 1, { status: 'answered', closedAt: at(3) })],
   } as unknown as Parameters<typeof inboxOf>[0]
   const box = inboxOf(s, t0)
-  expect(box.cards.map(c => c.thing?.id)).toEqual([6, 3, 1, 2, 5])
+  // 同样急的：最近有动静的在前（5 只剩刚定的，看定的时间）。
+  expect(box.cards.map(c => c.thing?.id)).toEqual([6, 3, 5, 2, 1])
   expect(box.cards[0].waiting).toBe('要开新会话，等你点 Allow')
   expect(box.cards.find(c => c.thing?.id === 1)?.closed).toEqual([])
   // 等你的：会话等你点 1 + 开着的问题 4（稍后再说的那件不算）。
   expect(box.count).toBe(4)
-  expect(inboxOf(s, t0 + 120_000).cards.map(c => c.thing?.id)).toEqual([6, 3, 1, 2])
+  expect(inboxOf(s, t0 + 120_000).cards.map(c => c.thing?.id)).toEqual([6, 3, 2, 1])
   // 问题挂着的回复已经发了：问题不用再答（以前留下的、引擎还没关掉的也不算）。
   const sent = { ...s, replies: [{ id: 9, status: 'sent', at: at(1) }], asks: [...s.asks, ask(7, 2, { reply: 9 })] } as unknown as typeof s
   expect(inboxOf(sent, t0).count).toBe(4)
