@@ -414,6 +414,11 @@ test('要你定按事情合成一张卡：每个问题各自回，刚定的能�
   await want(ui, { key: 'card2' })
   await has(/2 个待定/)
   await has(/新/)
+  // 好几个问题：先是一张清单，每行问什么、一句建议、照办；不同意、不用问了收着，点 ▸ 才摊开那一个。
+  await want(ui, { key: 'ok11' })
+  expect(await ui.find({ key: 'dm11' })).toBeFalsy()
+  await ui.press({ key: 'ex11' })
+  await want(ui, { key: 'dm11' })
   // 背景收着，点「背景」才出来；设置页签写字，不是图标。
   expect(await ui.find({ type: 'Text', text: /^方案出来了。$/ })).toBeFalsy()
   await ui.press({ key: 'cx11' })
@@ -430,6 +435,7 @@ test('要你定按事情合成一张卡：每个问题各自回，刚定的能�
   await ui.press({ key: 're13' })
   expect(runs.some(r => r.argv === 'ask reopen 13')).toBe(true)
   expect(prompts.at(-1)).toBe('chief：问题 #13 的回答撤回了')
+  await ui.press({ key: 'ex12' })
   await ui.press({ key: 'dm12' })
   expect(runs.some(r => r.argv === 'ask dismiss 12')).toBe(true)
   expect(prompts.at(-1)).toBe('chief：问题 #12 不用问了')

@@ -12,9 +12,6 @@ import { sourceName, t } from '../i18n'
 import { RELOAD_SKILL, ago, dueLabel, listify, replyGist, short, splitAsk, startOfToday, whatOf, type Els } from '../ui'
 import { replyCard, sendingRow } from './outbox'
 
-// 一件事的问题先摆几个：多了一张卡太长，后面的收起来。
-const SHOW_ASKS = 3
-
 export function nowTab($: Engine, ui: Els, s: Snapshot, opened: string[] = [], edit: Record<string, string> = {}) {
   const { Box, Text, Button } = ui
   const w = t().now
@@ -54,44 +51,71 @@ export function nowTab($: Engine, ui: Els, s: Snapshot, opened: string[] = [], e
     }
   }
 
-  // ── 一个问题：先问什么（加粗），再一行建议，再按钮；背景收着，点「背景」才看 ──
-  // 照办是主按钮，不同意、不用问了、背景是轻的文字按钮：一个问题一眼看完，几个问题之间留出空。
-  const askRow = (q: AskRow, fresh: boolean, first: boolean) => {
+  // ── 一个问题 ──
+  // 一件事只有一个问题：直接摊开（问什么、建议、按钮，背景点了才看）。
+  // 一件事好几个问题：先是一张清单，每个问题一行——问什么、一句建议、右边「照办」和 ▸；
+  // 点 ▸ 才在一个框里摊开那一个（完整建议、背景、不同意、不用问了），一眼看得出哪几个问题、现在看的是哪个。
+  const askBody = (q: AskRow) => {
     const linked = q.reply === undefined ? undefined : s.replies.find(r => r.id === q.reply)
-    const { context, ask } = splitAsk(q.question)
+    const { context } = splitAsk(q.question)
     const ctxOpen = opened.includes(`ctx${q.id}`)
     const typing = opened.includes(`dis${q.id}`)
-    return (
-      <Box key={`q${q.id}`} flexDirection="column" gap="xs" marginTop={first ? 'xs' : 'lg'}>
-        {fresh && <Text size="caption" color="warning">{w.fresh}</Text>}
-        {/* 旧的问题里可能还列着好几问：照原样分行。 */}
-        <Text weight="semibold" wrap="wrap">{listify(ask).replace(/\n\n/g, '\n')}</Text>
-        {q.suggest !== '' && <Text size="footnote" wrap="wrap"><Text dimColor>{w.suggest}{t().gap}</Text>{listify(q.suggest).replace(/\n\n/g, '\n')}</Text>}
-        {linked && <Text size="footnote" dimColor wrap="wrap">{w.linked(replyGist(linked))}</Text>}
-        {ctxOpen && context !== '' && <Text size="footnote" dimColor wrap="wrap">{context}</Text>}
-        <Box flexDirection="row" gap="sm" alignItems="center" flexWrap="wrap">
-          {q.suggest !== '' && (
-            <Button key={`ok${q.id}`} variant="primary" onPress={() => answerAsk($, q.id, '照建议办', w.ok, `chief：问题 #${q.id} 照建议办`)}>{w.ok}</Button>
-          )}
-          <Button key={`no${q.id}`} plain onPress={() => toggle($, `dis${q.id}`)}>{w.disagreeShort}</Button>
-          <Button key={`dm${q.id}`} plain onPress={() => dismissAsk($, q.id, w.dismiss)}>{w.dismiss}</Button>
-          {context !== '' && <Button key={`cx${q.id}`} plain onPress={() => toggle($, `ctx${q.id}`)}>{ctxOpen ? w.hideContext : w.context}</Button>}
-        </Box>
-        {typing && 'Input' in ui && (
-          <ui.Input key={`in${q.id}`} autoFocus placeholder={w.disagree} submitLabel={w.send} onSubmit={(v: string) => {
-            if (v.trim()) void answerAsk($, q.id, v.trim(), w.yourCall, `chief：问题 #${q.id} 的回答：${v.trim()}`)
-          }} />
+    return [
+      q.suggest !== '' && <Text key={`sg${q.id}`} size="footnote" wrap="wrap"><Text dimColor>{w.suggest}{t().gap}</Text>{listify(q.suggest).replace(/\n\n/g, '\n')}</Text>,
+      linked && <Text key={`lk${q.id}`} size="footnote" dimColor wrap="wrap">{w.linked(replyGist(linked))}</Text>,
+      ctxOpen && context !== '' && <Text key={`ct${q.id}`} size="footnote" dimColor wrap="wrap">{context}</Text>,
+      <Box key={`bt${q.id}`} flexDirection="row" gap="sm" alignItems="center" flexWrap="wrap">
+        {q.suggest !== '' && (
+          <Button key={`ok${q.id}`} variant="primary" onPress={() => answerAsk($, q.id, '照建议办', w.ok, `chief：问题 #${q.id} 照建议办`)}>{w.ok}</Button>
         )}
+        <Button key={`no${q.id}`} plain onPress={() => toggle($, `dis${q.id}`)}>{w.disagreeShort}</Button>
+        <Button key={`dm${q.id}`} plain onPress={() => dismissAsk($, q.id, w.dismiss)}>{w.dismiss}</Button>
+        {context !== '' && <Button key={`cx${q.id}`} plain onPress={() => toggle($, `ctx${q.id}`)}>{ctxOpen ? w.hideContext : w.context}</Button>}
+      </Box>,
+      typing && 'Input' in ui && (
+        <ui.Input key={`in${q.id}`} autoFocus placeholder={w.disagree} submitLabel={w.send} onSubmit={(v: string) => {
+          if (v.trim()) void answerAsk($, q.id, v.trim(), w.yourCall, `chief：问题 #${q.id} 的回答：${v.trim()}`)
+        }} />
+      ),
+    ]
+  }
+  const question = (q: AskRow, fresh: boolean) => (
+    <Text weight="semibold" wrap="wrap">{fresh && <Text size="caption" color="warning">{w.fresh}{t().gap}</Text>}{listify(splitAsk(q.question).ask).replace(/\n\n/g, '\n')}</Text>
+  )
+  // 只有一个问题：摊开。
+  const askOpen = (q: AskRow, fresh: boolean) => (
+    <Box key={`q${q.id}`} flexDirection="column" gap="xs" marginTop="xs">
+      {question(q, fresh)}
+      {askBody(q)}
+    </Box>
+  )
+  // 好几个问题里的一行：收着是一行半，点 ▸ 在框里摊开。
+  const askLine = (q: AskRow, fresh: boolean) => {
+    const isOpen = opened.includes(`q-${q.id}`)
+    const head = (
+      <Box flexDirection="row" gap="sm" alignItems="flex-start">
+        <Box flexDirection="column" flexGrow={1} flexShrink={1} gap="xs">
+          {question(q, fresh)}
+          {!isOpen && q.suggest !== '' && <Text size="footnote" wrap="wrap"><Text dimColor>{w.suggest}{t().gap}</Text>{short(q.suggest, 40)}</Text>}
+        </Box>
+        <Box flexDirection="row" gap="xs" alignItems="center">
+          {!isOpen && q.suggest !== '' && <Button key={`ok${q.id}`} variant="primary" onPress={() => answerAsk($, q.id, '照建议办', w.ok, `chief：问题 #${q.id} 照建议办`)}>{w.ok}</Button>}
+          <Button key={`ex${q.id}`} plain onPress={() => toggle($, `q-${q.id}`)}>{isOpen ? '▾' : '▸'}</Button>
+        </Box>
       </Box>
     )
+    return isOpen
+      ? <Box key={`q${q.id}`} flexDirection="column" gap="xs" borderStyle="round" borderColor="suggestion" paddingX="sm" paddingY="xs" marginTop="sm">{head}{askBody(q)}</Box>
+      : <Box key={`q${q.id}`} flexDirection="column" marginTop="sm">{head}</Box>
   }
 
   // 定过的、撤掉的：缩成一行。你刚定的两分钟内能撤回。
   const closedRow = (q: AskRow) => (
     <Box key={`c${q.id}`} flexDirection="row" gap="sm" alignItems="center" marginTop="xs">
+      {/* 不用 truncate：在横排里截断的一行会冲出卡片，按字数截短再换行。 */}
       <Box flexShrink={1}>
-        <Text size="footnote" dimColor wrap="truncate-end">
-          {q.status === 'withdrawn' ? `${short(splitAsk(q.question).ask, 30)} · ${w.withdrawn(q.reason ?? '')}` : `✓ ${short(splitAsk(q.question).ask, 30)} · ${q.status === 'dismissed' ? w.dismissed : w.decided(short(q.answer ?? '', 40))}`}
+        <Text size="footnote" dimColor wrap="wrap">
+          {q.status === 'withdrawn' ? `${short(splitAsk(q.question).ask, 24)} · ${w.withdrawn(short(q.reason ?? '', 40))}` : `✓ ${short(splitAsk(q.question).ask, 24)} · ${q.status === 'dismissed' ? w.dismissed : w.decided(short(q.answer ?? '', 30))}`}
         </Text>
       </Box>
       {q.status !== 'withdrawn' && <Button key={`re${q.id}`} plain onPress={() => reopenAsk($, q.id, w.reopen)}>{w.reopen}</Button>}
@@ -126,13 +150,9 @@ export function nowTab($: Engine, ui: Els, s: Snapshot, opened: string[] = [], e
             <Box flexDirection="row"><Button key={`go-${c.key}`} variant="primary" onPress={() => openSession($, c.session ?? '', title)}>{w.goPoint}</Button></Box>
           </Box>
         )}
-        {/* 一件事问得多：先摆最早的三个，其余收起来，点开再看。 */}
-        {(opened.includes(`all-asks-${c.key}`) ? c.asks : c.asks.slice(0, SHOW_ASKS)).map((q, i) => askRow(q, c.asks.length > 1 && Date.parse(q.at) - Date.parse(c.asks[0].at) > 60_000, i === 0 && !c.waiting))}
-        {c.asks.length > SHOW_ASKS && (
-          <Box flexDirection="row" marginTop="sm">
-            <Button key={`more-asks-${c.key}`} plain onPress={() => toggle($, `all-asks-${c.key}`)}>{opened.includes(`all-asks-${c.key}`) ? t().less : w.moreAsks(c.asks.length - SHOW_ASKS)}</Button>
-          </Box>
-        )}
+        {c.asks.length === 1
+          ? askOpen(c.asks[0], false)
+          : c.asks.map(q => askLine(q, Date.parse(q.at) - Date.parse(c.asks[0].at) > 60_000))}
         {c.replies.map(r => replyCard($, ui, s, edit, opened, r))}
         {c.sending.map(r => sendingRow($, ui, r))}
         {c.closed.map(closedRow)}

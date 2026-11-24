@@ -119,7 +119,6 @@ const zh = {
     goPoint: '去点',
     context: '背景',
     hideContext: '收起背景',
-    moreAsks: (n: number) => `还有 ${n} 个问题`,
   },
   outbox: {
     them: '对方',
@@ -589,7 +588,6 @@ const en: Dict = {
     goPoint: 'Go click',
     context: 'Context',
     hideContext: 'Hide context',
-    moreAsks: (n: number) => `${n} more question${n === 1 ? '' : 's'}`,
   },
   outbox: {
     them: 'them',
