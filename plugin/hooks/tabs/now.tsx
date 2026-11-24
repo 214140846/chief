@@ -2,7 +2,7 @@
 //   最上面是 chief 自己的事（钥匙被动过、引擎 / 主会话 / 来源出了问题、插件更新了要重读规则、它提议的规矩），每条带一个能直接解决的按钮。
 //   下面一件事一张卡，这件事等你的都在卡里：会话停在对话框上等你点、要你定的问题、等你确认的回复；最急的在前。
 //   空的时候说一句没事，最底下一行是今天替你办了多少。
-import type { EngineInterface as Engine } from 'claude-code'
+import type { EngineInterface as Engine, RenderChildren } from 'claude-code'
 
 import type { AskRow, DecisionRow, Snapshot } from '../../types'
 import { ackKeyAlerts, answerAll, answerAsk, decideProposal, dismissAsk, engineDo, openSession, reopenAsk, setTab, skipOld, tell, toggle } from '../actions'
@@ -11,6 +11,9 @@ import { inboxOf, type Card, type SysItem } from '../inbox'
 import { sourceName, t } from '../i18n'
 import { RELOAD_SKILL, ago, dueLabel, listify, replyGist, short, splitAsk, startOfToday, whatOf, type Els } from '../ui'
 import { replyCard, sendingRow } from './outbox'
+
+// 组里项和项之间的细线：比面板宽也不要紧，超出的部分被框裁掉。
+const RULE = '<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="9" viewBox="0 0 1200 9"><line x1="0" y1="4.5" x2="1200" y2="4.5" stroke="#8A8F98" stroke-opacity="0.3" stroke-width="1"/></svg>'
 
 export function nowTab($: Engine, ui: Els, s: Snapshot, opened: string[] = [], edit: Record<string, string> = {}) {
   const { Box, Text, Button } = ui
@@ -57,7 +60,7 @@ export function nowTab($: Engine, ui: Els, s: Snapshot, opened: string[] = [], e
     const { context, ask } = splitAsk(q.question)
     const typing = opened.includes(`dis${q.id}`)
     return (
-      <Box key={`q${q.id}`} flexDirection="column" gap="xs" backgroundColor="subtle" paddingX="md" paddingY="sm">
+      <Box key={`q${q.id}`} flexDirection="column" gap="xs">
         <Text weight="semibold" wrap="wrap">{fresh && <Text size="caption" color="warning">{w.fresh}{t().gap}</Text>}{listify(ask).replace(/\n\n/g, '\n')}</Text>
         {context !== '' && <Text size="footnote" dimColor wrap="wrap">{context}</Text>}
         {q.suggest !== '' && <Text size="footnote" wrap="wrap"><Text dimColor>{w.suggest}{t().gap}</Text>{listify(q.suggest).replace(/\n\n/g, '\n')}</Text>}
@@ -92,8 +95,12 @@ export function nowTab($: Engine, ui: Els, s: Snapshot, opened: string[] = [], e
   )
 
   // ── 一件事一张卡：标题、截止、去会话；会话在等你点的最前，然后问题、回复 ──
-  // ── 一件事一组，浅框框起来：小标题（事情、截止、等你的有几样、去会话），下面会话等你点（浅红底）、每个问题、每条回复（浅灰底）各一块 ──
-  // 过期、今天截止、会话在等你点的组，框是红的。
+  // ── 一件事一组，浅框框起来：小标题（事情、截止、等你的有几样、去会话），下面会话等你点、每个问题、每条回复一项一项排，
+  // 项和项之间一条细线（终端没有 Svg，就留空）。不用底色：主题的 subtle 底在 App 里是深灰。过期、今天截止、会话在等你点的组，框是红的。
+  const rule = (key: string) => ('Svg' in ui
+    ? <ui.Svg key={key} source={RULE} alt="" />
+    : <Box key={key} height={1} />)
+  const items = (...list: unknown[]) => (list.filter(Boolean) as RenderChildren[]).flatMap((x, i) => (i === 0 ? [x] : [rule(`hr${i}`), x]))
   const group = (c: Card) => {
     const th = c.thing
     const title = th ? th.title : c.replies[0] ? whatOf(c.replies[0]) : c.sending[0] ? whatOf(c.sending[0]) : w.ask
@@ -114,19 +121,20 @@ export function nowTab($: Engine, ui: Els, s: Snapshot, opened: string[] = [], e
           </Box>
           {c.session && <Button key={`oa-${c.key}`} plain onPress={() => openSession($, c.session ?? '', title)}>{w.goSession}</Button>}
         </Box>
-        {c.waiting && (
-          <Box flexDirection="column" gap="xs" backgroundColor="diffRemovedDimmed" paddingX="md" paddingY="sm">
+        {items(
+        c.waiting && (
+          <Box key={`wait-${c.key}`} flexDirection="column" gap="xs">
             <Text size="caption" weight="semibold" color="error">{w.waiting}</Text>
             <Text wrap="wrap">{c.waiting}</Text>
             <Box flexDirection="row"><Button key={`go-${c.key}`} variant="primary" onPress={() => openSession($, c.session ?? '', title)}>{w.goPoint}</Button></Box>
           </Box>
-        )}
-        {c.asks.map(q => askCard(q, c.asks.length > 1 && Date.parse(q.at) - Date.parse(c.asks[0].at) > 60_000))}
-        {c.replies.map(r => (
-          <Box key={`rc${r.id}`} flexDirection="column" backgroundColor={r.status === 'failed' ? 'diffRemovedDimmed' : 'subtle'} paddingX="md" paddingY="sm">
+        ),
+        ...c.asks.map(q => askCard(q, c.asks.length > 1 && Date.parse(q.at) - Date.parse(c.asks[0].at) > 60_000)),
+        ...c.replies.map(r => (
+          <Box key={`rc${r.id}`} flexDirection="column">
             {replyCard($, ui, s, edit, opened, r)}
           </Box>
-        ))}
+        )))}
         {c.sending.map(r => sendingRow($, ui, r))}
         {c.closed.map(closedRow)}
         {ready.length > 1 && (
