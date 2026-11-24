@@ -39,8 +39,11 @@ export function samplesTab($: Engine, ui: Els) {
             <Box key={`bc-${c}`} borderStyle="round" borderColor={c} paddingX="sm"><Text size="footnote">{c}</Text></Box>
           ))}
         </Box>,
+        <Text key="s2t" size="footnote" dimColor>下面一排都加了 borderDimColor（调淡）。现在「要你」里子问题的框是 inactive 这一个：</Text>,
         <Box key="s2d" flexDirection="row" flexWrap="wrap" gap="sm">
-          <Box borderStyle="round" borderColor="inactive" borderDimColor paddingX="sm"><Text size="footnote">inactive + borderDimColor</Text></Box>
+          {COLORS.map(c => (
+            <Box key={`bd-${c}`} borderStyle="round" borderColor={c} borderDimColor paddingX="sm"><Text size="footnote">{`淡 ${c}`}</Text></Box>
+          ))}
         </Box>)}
 
       {block('s3', 3, '边框样式（borderStyle）',
