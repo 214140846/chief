@@ -15,9 +15,7 @@ import { t } from './i18n'
 import { header } from './tabs/header'
 import { nowTab } from './tabs/now'
 import { policyTab } from './tabs/policy'
-import { samplesTab } from './tabs/samples'
 import { thingsTab } from './tabs/things'
-import { setTab } from './actions'
 import type { Els } from './ui'
 
 const snap = atom({ plugin: 'chief', key: 'snap' } as const, null)
@@ -118,8 +116,6 @@ export const register: Register = on => {
   })
 
   on('command.run', { command: 'chief' }, async ($, e) => {
-    // /chief samples：临时的样式样例页（tabs/samples.tsx），定完设计就删。
-    if (e.args.trim() === 'samples') await setTab($, 'samples')
     await openPane($)
     return { text: t().app.opened }
   })
@@ -156,7 +152,6 @@ async function draw($: Engine, ui: Els) {
     const body = current === 'things' ? thingsTab($, ui, s, opened, await read($, found))
       : current === 'policy' || current === 'eval' ? policyTab($, ui, s, opened)
       : current === 'setup' || (current as string) === 'control' ? setupTab($, ui, st, s, await read($, logs), opened)
-      : current === 'samples' ? samplesTab($, ui)
       : nowTab($, ui, s, opened, await read($, edits))
     return (
       <Box flexDirection="column" padding="sm">

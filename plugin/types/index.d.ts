@@ -175,7 +175,7 @@ export type HubUsage = {
   now?: { at: string; context: number | null; window: number; five: number | null; week: number | null; fiveReset?: string; weekReset?: string }
 }
 
-export type Tab = 'now' | 'outbox' | 'things' | 'policy' | 'eval' | 'setup' | 'samples'
+export type Tab = 'now' | 'outbox' | 'things' | 'policy' | 'eval' | 'setup'
 
 // 一个来源连没连好：browser / secret 的看 ready；cli 的看 tool（命令装没装）、ok（试登录过没过）、detail（没过的原因）。
 export type DoctorSource = { enabled: boolean; ready?: boolean; tool?: boolean; ok?: boolean; detail?: string }
