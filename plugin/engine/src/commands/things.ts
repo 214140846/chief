@@ -1,6 +1,7 @@
 // 事情和要你定的：chief thing / ask / board。
 import { MAX_TEXT, SESSION, fail, flag, num, oneLine, oops, plainOnly, stdinText, title } from "../args";
 import { KEY } from "../keys";
+import { msg } from "../messages";
 import { serviceState } from "../launchd";
 import { loadDispatch, loadReplies, loadThings, paths, readEvents, updateJson, type Ask, type Thing, type ThingsFile } from "../store";
 import { parseUntil } from "../snooze";
@@ -123,7 +124,16 @@ export async function thing(args: string[]): Promise<void> {
       // 标成不做了：记下原来的状态，能撤回（chief undo）。
       const was = status === "dropped" && x.status !== "dropped" ? x.status : null;
       if (status) x.status = status;
-      if (status === "done" || status === "dropped") delete x.snooze;
+      if (status === "done" || status === "dropped") {
+        delete x.snooze;
+        // 事情办完、不做了：它还开着的问题不用再问了，撤掉（撤回「不做了」时这些会一起回来）。
+        for (const a of t.asks) {
+          if (a.thing !== x.id || a.status !== "open") continue;
+          a.status = "withdrawn";
+          a.reason = status === "done" ? msg().askThingDone : msg().askThingDropped;
+          a.closedAt = at;
+        }
+      }
       if (session) x.session = session;
       if (titleText) x.title = titleText;
       if (event !== null && !x.events.includes(event)) x.events.push(event);
@@ -155,10 +165,28 @@ export async function thing(args: string[]): Promise<void> {
   fail("chief thing add|update|list|find|snooze|wake");
 }
 
+// 问题里列了好几问（「1. … 2. …」）：一个问题只问一件事，面板上每件各有自己的按钮。
+// 编号后面要跟标点、标点后面不是数字（「1.0 还是 2.0」不算）。
+export function manyQuestions(text: string): boolean {
+  if ((text.match(/(^|\n)\s*\d+[.)、]\s/g) ?? []).length >= 2) return true;
+  let next = 1;
+  for (const m of text.matchAll(/(^|[\s：:；;？?。，,])([1-9])(?!\d)[.、．)）](?!\d)/g)) if (Number(m[2]) === next) next++;
+  return next > 2;
+}
+
+// 关掉一个问题之后：事情没有别的开着的问题了，就不再是「等你定」。
+function settle(t: ThingsFile, thingId: number): Thing | undefined {
+  const x = t.things.find((y) => y.id === thingId);
+  if (x && x.status === "waiting_you" && !t.asks.some((y) => y.thing === x.id && y.status === "open")) x.status = "doing";
+  return x;
+}
+
 export async function ask(args: string[]): Promise<void> {
   const sub = args.shift();
   if (sub === "list") {
-    process.stdout.write(`${JSON.stringify(loadThings().asks.filter((a) => a.status === "open"), null, 2)}\n`);
+    const thingFlag = flag(args, "--thing");
+    const only = thingFlag === null ? null : num(thingFlag, "--thing ");
+    process.stdout.write(`${JSON.stringify(loadThings().asks.filter((a) => a.status === "open" && (only === null || a.thing === only)), null, 2)}\n`);
     return;
   }
   if (sub === "add") {
@@ -176,6 +204,7 @@ export async function ask(args: string[]): Promise<void> {
     const suggest = typeof body.suggest === "string" ? body.suggest.trim().slice(0, MAX_TEXT) : "";
     // 要提待发出里的哪条回复：用 --reply 挂上，面板在卡片上显示那条的摘要，不用在问题里写回复号。
     const hint = "要提待发出里的某条回复，用 --reply R 把它挂在这个问题上，面板会在卡片上显示那条的摘要。";
+    if (manyQuestions(question)) fail("一个问题只问一件事：几件要定的分几次 chief ask add，每次一问一个建议（面板上每个问题各有照办、不同意、不用问了）。背景相同就各写一句，不用重复整段。");
     plainOnly(question, "问题（question）", {}, hint);
     plainOnly(suggest, "建议（suggest）", {}, hint);
     if (replyId !== null && !loadReplies().items.some((r) => r.id === replyId)) fail(`没有回复 ${replyId}`);
@@ -208,14 +237,54 @@ export async function ask(args: string[]): Promise<void> {
       if (a.status !== "open") oops(`问题 ${id} 已经答过了`);
       a.status = "answered";
       a.answer = answer;
-      const x = t.things.find((y) => y.id === a.thing);
-      if (x && x.status === "waiting_you" && !t.asks.some((y) => y.thing === x.id && y.status === "open")) x.status = "doing";
+      a.closedAt = new Date().toISOString();
+      const x = settle(t, a.thing);
       return { ask: a.id, thing: a.thing, session: x?.session ?? null, reply: a.reply ?? null };
     });
     process.stdout.write(`${JSON.stringify(out)}\n`);
     return;
   }
-  fail("chief ask add|list|show|answer");
+  // chief ask dismiss Q：你在面板上点了「不用问了」：这件不做，也不再问。
+  // chief ask withdraw Q（标准输入：为什么）：主会话发现问题不成立了（分支已经合了、对方已经回了），撤掉，面板上当天留一行灰字。
+  if (sub === "dismiss" || sub === "withdraw") {
+    const id = num(args.shift(), "问题号");
+    const reason = sub === "withdraw" ? await stdinText() : "";
+    if (sub === "withdraw") {
+      if (!reason) fail("标准输入写为什么撤掉（一句话，面板上会显示）");
+      plainOnly(reason, "撤掉的原因");
+    }
+    const out = updateThings((t) => {
+      const a = t.asks.find((y) => y.id === id) ?? oops(`没有问题 ${id}`);
+      if (a.status !== "open") oops(`问题 ${id} 已经${a.status === "answered" ? "答过了" : "关了"}`);
+      a.status = sub === "dismiss" ? "dismissed" : "withdrawn";
+      a.closedAt = new Date().toISOString();
+      if (reason) a.reason = reason.slice(0, 200);
+      const x = settle(t, a.thing);
+      return { ask: a.id, thing: a.thing, session: x?.session ?? null };
+    });
+    process.stdout.write(`${JSON.stringify(out)}\n`);
+    return;
+  }
+  // chief ask reopen Q：撤回你的回答（或「不用问了」），问题回到等你定。
+  if (sub === "reopen") {
+    const id = num(args.shift(), "问题号");
+    const out = updateThings((t) => {
+      const a = t.asks.find((y) => y.id === id) ?? oops(`没有问题 ${id}`);
+      if (a.status !== "answered" && a.status !== "dismissed") oops(`问题 ${id} 现在不是你答过的，不用撤回`);
+      const x = t.things.find((y) => y.id === a.thing);
+      if (!x || x.status === "done" || x.status === "dropped") oops(`问题 ${id} 那件事已经${x?.status === "done" ? "办完了" : "不做了"}，撤不回`);
+      const was = a.answer ?? null;
+      a.status = "open";
+      delete a.answer;
+      delete a.closedAt;
+      x.status = "waiting_you";
+      x.updatedAt = new Date().toISOString();
+      return { ask: a.id, thing: a.thing, session: x.session ?? null, was };
+    });
+    process.stdout.write(`${JSON.stringify(out)}\n`);
+    return;
+  }
+  fail("chief ask add|list|show|answer|dismiss|withdraw|reopen");
 }
 
 // 面板也直接读文件；这个给消息中心和终端看一眼用。

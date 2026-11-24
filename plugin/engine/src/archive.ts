@@ -68,7 +68,7 @@ export function archiveOld(now = Date.now(), days = keepDays()): Record<"events"
   updateJson<ThingsFile, void>(paths().things, { nextThing: 1, nextAsk: 1, things: [], asks: [] }, (t) => {
     const gone = t.things.filter((x) => (x.status === "done" || x.status === "dropped") && old(x.updatedAt));
     const ids = new Set(gone.map((x) => x.id));
-    const asks = t.asks.filter((a) => ids.has(a.thing) || (a.status === "answered" && old(a.at)));
+    const asks = t.asks.filter((a) => ids.has(a.thing) || (a.status !== "open" && old(a.closedAt ?? a.at)));
     put("things", gone.map((x) => ({ month: monthOf(x.updatedAt), row: x })));
     put("asks", asks.map((a) => ({ month: monthOf(a.at), row: a })));
     const askIds = new Set(asks.map((a) => a.id));

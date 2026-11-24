@@ -6,6 +6,9 @@
 |---|---|
 | 「chief：问题 #Q 照建议办」 | 面板已经替你 `chief ask answer` 记下了，不用再 answer。`chief ask show Q` 看问题和建议，再用 `send_message` 告诉那件事的会话：「关于 #T：用户同意你的建议：<suggest>，照办。」 |
 | 「chief：问题 #Q 的回答：…」 | 面板已经记下了，不用再 answer。`chief ask show Q` 看问题，用 `send_message` 告诉那件事的会话：「关于 #T 的问题『<question>』，用户的决定：<原话>。照这个继续。」 |
+| 「chief：问题 #Q1、#Q2… 都照建议办」 | 面板已经逐个记下了。每个 `chief ask show Q` 看建议，同一件事的合成一条 `send_message` 告诉那件事的会话：「关于 #T：用户同意你的这几条建议：<suggest 1>；<suggest 2>。照办。」 |
+| 「chief：问题 #Q 不用问了」 | 面板已经记下了（`dismissed`）。`chief ask show Q` 看是什么，用 `send_message` 告诉那件事的会话：「关于 #T 的问题『<question>』，用户说不用问了：这件不做，接着做别的。」以后同类的事少问一点；他连着几次对同一类问题说不用问了，问他要不要写成规矩。 |
+| 「chief：问题 #Q 的回答撤回了」 | 用户撤回了刚才的回答（或「不用问了」），问题回到等他定，面板已经改好了。如果你已经把那个回答转告了会话，用 `send_message` 告诉它：「关于 #T 的问题『<question>』，用户撤回了刚才的决定，先别照那个做，等他重新定。」还没转告就什么都不用做。 |
 | 「chief：回复 #R 你改过再发的」 | 用户在待发出里改了稿子才发。`chief reply list --all` 找到 R，对比 `original`（原稿）和 `body`（他改后的）。能概括成一条通用写法（删短了、换了语气、去掉了某类内容），就 `chief rules propose`（text 写成写法规矩，basis 写「你在一条回复里把『…』改成了『…』」），在策略页等他采纳；只改了事实或错字的不提议。不用跟用户说话，提议了才说一句「根据你改的稿子提议了一条写法」。 |
 | 「chief：回复 #R 重写：…」 | `chief reply list --all` 找到 R（它的 `event` 是 N、`thing` 是 T）。用 `send_message` 告诉那件事的会话：「你给 <谁> 写的回复（事件 #N），用户的意见：<原话>。改好重新发『chief 回复 #N』。」 |
 | 「chief：导入现在在做的事」 | Read 本 skill 目录下的 `import.md`，照它办。 |

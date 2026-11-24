@@ -197,6 +197,45 @@ describe("事情和要你定的", () => {
     expect(chiefFails(h, "thing", "update", "1", "--status", "bogus")).toContain("--status");
   });
 
+  it("要你定一问一件；不用问了、撤掉、撤回回答；事情办完开着的问题自动撤掉", () => {
+    const h = home();
+    chiefIn(h, "", "thing", "add", "--title", "运费卡片", "--session", "local_x");
+    const failsIn = (input: string, ...args: string[]) => {
+      try {
+        chiefIn(h, input, ...args);
+      } catch (e) {
+        return String((e as { stderr?: string }).stderr);
+      }
+      throw new Error("该失败没失败");
+    };
+    // 一个问题里列了几问：挡回去，要分开问。「1.0 还是 2.0」不算列了几问。
+    expect(failsIn(JSON.stringify({ question: "三件事要你定：1. SDK 谁来写？2. 1.0 要不要一起改？", suggest: "" }), "ask", "add", "--thing", "1")).toMatch(/一个问题只问一件事/);
+    expect(chiefIn(h, JSON.stringify({ question: "先改 1.0 还是 2.0？", suggest: "先改 2.0" }), "ask", "add", "--thing", "1").trim()).toBe("1");
+    chiefIn(h, JSON.stringify({ question: "SDK 谁来写？", suggest: "我们写" }), "ask", "add", "--thing", "1");
+    chiefIn(h, JSON.stringify({ question: "要不要问设计稿？", suggest: "顺口问一句" }), "ask", "add", "--thing", "1");
+    expect(JSON.parse(chief(h, "ask", "list", "--thing", "1"))).toHaveLength(3);
+    // 你说不用问了；主会话撤掉一个不成立的（要写为什么）。
+    expect(JSON.parse(chief(h, "ask", "dismiss", "2"))).toMatchObject({ ask: 2, thing: 1 });
+    expect(failsIn("", "ask", "withdraw", "3")).toMatch(/为什么撤掉/);
+    chiefIn(h, "对方已经回了", "ask", "withdraw", "3");
+    expect(failsIn("", "ask", "dismiss", "3")).toMatch(/已经关了/);
+    let asks = JSON.parse(readFileSync(join(h, "things.json"), "utf8")).asks;
+    expect(asks[1]).toMatchObject({ status: "dismissed" });
+    expect(asks[2]).toMatchObject({ status: "withdrawn", reason: "对方已经回了" });
+    expect(asks[2].closedAt).toBeTruthy();
+    // 答了最后一个开着的：事情回到在做；撤回回答：又回到等你定。
+    chiefIn(h, "照建议办", "ask", "answer", "1");
+    expect(JSON.parse(chief(h, "thing", "list"))[0].status).toBe("doing");
+    expect(JSON.parse(chief(h, "ask", "reopen", "1"))).toMatchObject({ ask: 1, was: "照建议办" });
+    expect(JSON.parse(chief(h, "thing", "list"))[0].status).toBe("waiting_you");
+    expect(failsIn("", "ask", "reopen", "3")).toMatch(/不是你答过的/);
+    // 事情办完：还开着的问题撤掉，写上原因。
+    chiefIn(h, "做完了", "thing", "update", "1", "--status", "done");
+    asks = JSON.parse(readFileSync(join(h, "things.json"), "utf8")).asks;
+    expect(asks[0]).toMatchObject({ status: "withdrawn", reason: "这件事办完了" });
+    expect(failsIn("", "ask", "reopen", "2")).toMatch(/办完了/);
+  });
+
   it("规矩：场景表加自由规矩，能改", () => {
     const h = home();
     expect(chief(h, "rules")).toContain("Slack 私信（slack_dm）：派人去办；回复先给我确认");

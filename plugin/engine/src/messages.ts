@@ -30,6 +30,9 @@ const zh = {
   undoFrom: (title: string, from: string) => `${title}（${from}）`,
   undoSkip: (n: number) => `跳过积下的 ${n} 条旧消息`,
   undoDrop: (title: string) => `不做了：${title}`,
+  // 事情办完、不做了时，它还开着的问题自动撤掉，面板上灰字写这句。
+  askThingDone: "这件事办完了",
+  askThingDropped: "这件事不做了",
 };
 
 export type Messages = typeof zh;
@@ -60,6 +63,8 @@ const en: Messages = {
   undoFrom: (title: string, from: string) => `${title} (${from})`,
   undoSkip: (n: number) => `Skipped ${n} backlog messages`,
   undoDrop: (title: string) => `Dropped: ${title}`,
+  askThingDone: "This is done",
+  askThingDropped: "This was dropped",
 };
 
 export const MESSAGES: Readonly<Record<Locale, Messages>> = { zh, en };

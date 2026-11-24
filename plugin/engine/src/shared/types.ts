@@ -139,8 +139,13 @@ export interface Ask {
   suggest: string;
   // 关联的回复（建议的做法就是发这条回复时）。
   reply?: number;
-  status: "open" | "answered";
+  // open：等你定；answered：你定了（或主会话替你关了）；dismissed：你说不用问了；withdrawn：主会话撤掉了（问题不成立了，reason 写为什么）。
+  status: "open" | "answered" | "dismissed" | "withdrawn";
   answer?: string;
+  // 撤掉的原因（withdrawn）。
+  reason?: string;
+  // 什么时候答的、不问了、撤掉的：面板两分钟内能撤回你的回答，撤掉的当天留一行灰字。
+  closedAt?: string;
   at: string;
 }
 

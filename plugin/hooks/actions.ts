@@ -100,6 +100,25 @@ export async function answerAsk($: Engine, id: number, answer: string, label: st
   await tell($, text, label, true)
 }
 
+// 「不用问了」：这件不做，也不再问；交给主会话告诉那件事的会话。
+export async function dismissAsk($: Engine, id: number, label: string) {
+  if (!(await act($, label, ['ask', 'dismiss', String(id)]))) return
+  await tell($, `chief：问题 #${id} 不用问了`, label, true)
+}
+
+// 撤回刚才的回答（或「不用问了」）：问题回到等你定；主会话要是已经转告了会话，让它先别照那个做。
+export async function reopenAsk($: Engine, id: number, label: string) {
+  if (!(await act($, label, ['ask', 'reopen', String(id)]))) return
+  await tell($, `chief：问题 #${id} 的回答撤回了`, label, true)
+}
+
+// 一张卡上剩下的都照建议办：逐个记下，再一起告诉主会话。
+export async function answerAll($: Engine, ids: number[], label: string) {
+  const done: number[] = []
+  for (const id of ids) if (await act($, label, ['ask', 'answer', String(id)], '照建议办')) done.push(id)
+  if (done.length > 0) await tell($, `chief：问题 ${done.map(id => `#${id}`).join('、')} 都照建议办`, label, true)
+}
+
 export async function setTab($: Engine, to: Tab) {
   await update($, tab, () => to)
 }

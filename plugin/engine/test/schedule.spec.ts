@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { setConfig } from "../src/config";
 import { digestMaterial } from "../src/commands/digest";
 import { checkTarget, exportList, exportTo, purgePlan, runPurge } from "../src/commands/export";
@@ -63,6 +63,10 @@ describe("免打扰时段", () => {
   });
 
   it("免打扰时引擎的通知不弹、记下；要紧的照弹；过了合成一条弹出来", () => {
+    // say() 看的是现在几点：钉在晚上 11 点，白天跑也在免打扰里。
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(local(23, 23));
+    onTestFinished(() => void vi.useRealTimers());
     setConfig("quietHours", '{"start":"22:00","end":"08:00"}');
     const shown: string[] = [];
     const show = (t: string) => void shown.push(t);

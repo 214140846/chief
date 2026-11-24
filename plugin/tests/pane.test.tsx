@@ -2,6 +2,7 @@ import { expect, test } from 'claude-code/testing'
 
 import { askedAfter } from '../hooks/confirm'
 import { listify, splitAsk } from '../hooks/ui'
+import { askCards } from '../hooks/tabs/now'
 import { addCall, dayOf, isHubMonitor } from '../hooks/usage'
 import { engineBehind } from '../hooks/setup'
 import type { ReplyRow } from '../types'
@@ -119,13 +120,16 @@ test('面板：主会话状态、要你定、待发出；按钮各做各的', as
   // 问题挂着的回复：显示回谁、说什么，不显示回复号。
   expect(await ui.find({ type: 'Text', text: /相关的待发出：回 Bob Chen「处理了，报告在 thread 里」/ })).toBeTruthy()
   expect(await ui.find({ type: 'Text', text: /#5/ })).toBeFalsy()
-  // 要你定的卡片只有三条路：照建议办、看细节、写你的决定发送；没有批注。
+  // 要你定的问题：照办、不同意（点开才有输入框）、不用问了；没有批注。
   expect(await ui.find({ key: 'ok3' })).toBeTruthy()
+  expect(await ui.find({ key: 'dm3' })).toBeTruthy()
   expect(await ui.find({ key: 'an-a3' })).toBeFalsy()
+  expect(await ui.find({ key: 'in3' })).toBeFalsy()
   // 拍板先在 chief 里记下（卡片马上收起），再交给主会话转告。
   await ui.press({ key: 'ok3' })
   expect(runs.some(r => r.argv.slice(1).join(' ') === 'ask answer 3' && r.stdin === '照建议办')).toBe(true)
   expect(prompts.at(-1)).toBe('chief：问题 #3 照建议办')
+  await ui.press({ key: 'no3' })
   await ui.input({ key: 'in3', text: '下周三，我来回' })
   expect(runs.some(r => r.argv.slice(1).join(' ') === 'ask answer 3' && r.stdin === '下周三，我来回')).toBe(true)
   expect(prompts.at(-1)).toBe('chief：问题 #3 的回答：下周三，我来回')
@@ -330,6 +334,81 @@ test('数据文件坏了：顶上说坏了、带上原因，不说成连不上',
   expect(await ui.find({ type: 'Text', text: /^Slack 连不上 · 数据文件坏了$/ })).toBeTruthy()
   expect(await ui.find({ type: 'Text', text: /数据文件坏了：things\.json 坏了（没覆盖/ })).toBeTruthy()
   expect(await ui.find({ type: 'Text', text: /数据文件 连不上/ })).toBeFalsy()
+  await ui.unmount()
+})
+
+test('要你定按事情合成一张卡：每个问题各自回，刚定的能撤回，撤掉的留灰字', async ($, on) => {
+  const runs: { argv: string; stdin?: string }[] = []
+  const prompts: string[] = []
+  on('command.register', () => ({ value: { command: 'chief' } }))
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  memStore(on)
+  on('clock.every', () => ({ value: { cancel: () => {} } }))
+  const ago = (ms: number) => new Date(Date.now() - ms).toISOString()
+  const files: Record<string, string> = {
+    ...FILES,
+    '/Users/me/chief/data/things.json': JSON.stringify({
+      things: [
+        { id: 1, title: '运费卡片', session: 'local_abc', status: 'waiting_you', progress: '方案出来了', events: [], updatedAt: now, log: [] },
+        { id: 2, title: '导出工具', status: 'waiting_you', progress: '', events: [], updatedAt: now, log: [], due: new Date().toISOString().slice(0, 10) },
+        { id: 3, title: '引擎拦编号', status: 'doing', progress: '', events: [], updatedAt: now, log: [] },
+      ],
+      asks: [
+        { id: 11, thing: 1, question: '方案出来了。SDK 谁来写？', suggest: '我们写', status: 'open', at: ago(3_600_000) },
+        { id: 12, thing: 1, question: '1.0 要不要一起改？', suggest: '一起改', status: 'open', at: ago(600_000) },
+        { id: 13, thing: 1, question: '要不要问设计稿？', suggest: '顺口问一句', status: 'answered', answer: '照建议办', at: ago(3_600_000), closedAt: ago(30_000) },
+        { id: 14, thing: 1, question: '要不要拉设计？', suggest: '', status: 'withdrawn', reason: '对方已经拉了', at: ago(3_600_000), closedAt: ago(60_000) },
+        { id: 15, thing: 2, question: 'tab 高亮要改吗？', suggest: '改', status: 'open', at: ago(60_000) },
+        // 答了很久的不出卡；整件事只剩撤掉的：放到底下「今天撤掉的问题」。
+        { id: 16, thing: 2, question: '老问题？', suggest: '', status: 'answered', answer: '好', at: ago(86_400_000), closedAt: ago(3_600_000) },
+        { id: 17, thing: 3, question: '要合进 main 吗？', suggest: '合', status: 'withdrawn', reason: '分支已经合了', at: ago(3_600_000), closedAt: ago(60_000) },
+      ],
+    }),
+  }
+  on('fs.read', (_, e) => {
+    if (e.path === '/Users/me/chief/data/bin/chief') return { value: '#!/bin/sh' }
+    const text = files[e.path]
+    if (text === undefined) throw new Error('missing')
+    return { value: text }
+  })
+  on('process.run', (_, e) => {
+    runs.push({ argv: e.argv.slice(1).join(' '), ...(e.init?.stdin !== undefined ? { stdin: e.init.stdin } : {}) })
+    if (e.argv[0] === '/usr/bin/env') return { value: { exitCode: 0, stdout: 'HOME=/Users/me\nPATH=/usr/bin\n', stderr: '' } }
+    return { value: { exitCode: 0, stdout: '', stderr: '' } }
+  })
+  on('prompt.submit', (_, e) => {
+    prompts.push(e.text)
+    return { text: e.text }
+  })
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+  await $.command.run({ command: 'chief', args: '' })
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  const has = async (text: RegExp) => expect(await ui.find({ type: 'Text', text })).toBeTruthy()
+
+  // 一件事一张卡，标题旁写几个待定；后来加的标「新」。
+  expect(await ui.find({ key: 'card1' })).toBeTruthy()
+  expect(await ui.find({ key: 'card2' })).toBeTruthy()
+  await has(/2 个待定/)
+  await has(/新/)
+  // 刚定的缩成一行，能撤回；撤掉的灰字说为什么；答了很久的不显示。
+  await has(/✓ 要不要问设计稿？ · 已定 → 照建议办/)
+  await has(/已撤：对方已经拉了/)
+  expect(await ui.find({ type: 'Text', text: /老问题/ })).toBeFalsy()
+  await has(/今天撤掉的问题/)
+  await has(/引擎拦编号 · 要合进 main 吗？ · 已撤：分支已经合了/)
+
+  await ui.press({ key: 're13' })
+  expect(runs.some(r => r.argv === 'ask reopen 13')).toBe(true)
+  expect(prompts.at(-1)).toBe('chief：问题 #13 的回答撤回了')
+  await ui.press({ key: 'dm12' })
+  expect(runs.some(r => r.argv === 'ask dismiss 12')).toBe(true)
+  expect(prompts.at(-1)).toBe('chief：问题 #12 不用问了')
+  // 剩下的全部照建议办：逐个记下，一起告诉主会话。只有一个问题的卡没有这个按钮。
+  expect(await ui.find({ key: 'all2' })).toBeFalsy()
+  await ui.press({ key: 'all1' })
+  expect(runs.filter(r => r.argv === 'ask answer 11' || r.argv === 'ask answer 12').every(r => r.stdin === '照建议办')).toBe(true)
+  expect(prompts.at(-1)).toBe('chief：问题 #11、#12 都照建议办')
   await ui.unmount()
 })
 
@@ -667,7 +746,7 @@ test('英文界面：locale 是 en 时页签、卡片、设置页都是英文；
   await must('Waiting for your OK to send · 2')
   await must(/Joe 问能不能本周上线/)
   // 「照建议办」记进 chief 的回答照旧是中文（hub 认它），按钮上的字是英文。
-  await must('Go with the suggestion', ['Button'])
+  await must('OK', ['Button'])
   await ui.press({ key: 'ok3' })
   expect(runs).toContain('/Users/me/chief/data/bin/chief ask answer 3')
 
@@ -714,6 +793,21 @@ test('会话里确认：只放行你说完话以后提的请求；还能发的�
   expect(askedAfter(items, said, said.at + 60_000)).toEqual([2])
   expect(askedAfter(items, said, said.at + 16 * 60_000)).toEqual([])
   expect(askedAfter(items, null, said.at)).toEqual([])
+})
+
+test('要你定的卡：有截止日的在前、越近越前；稍后再说的事情不出卡；刚定的两分钟后收起', () => {
+  const t0 = Date.parse('2026-11-24T10:00:00Z')
+  const at = (min: number) => new Date(t0 - min * 60_000).toISOString()
+  const thing = (id: number, extra = {}) => ({ id, title: `T${id}`, status: 'waiting_you' as const, progress: '', events: [], updatedAt: at(0), log: [], ...extra })
+  const ask = (id: number, thingId: number, extra = {}) => ({ id, thing: thingId, question: 'Q？', suggest: '', status: 'open' as const, at: at(100 - id), ...extra })
+  const s = {
+    things: [thing(1), thing(2, { due: '2026-11-30' }), thing(3, { due: '2026-11-25' }), thing(4, { snooze: { until: '2099-01-01T00:00:00Z', at: at(0) } }), thing(5)],
+    asks: [ask(1, 1), ask(2, 2), ask(3, 3), ask(4, 4), ask(5, 5, { status: 'answered', closedAt: at(1) }), ask(6, 1, { status: 'answered', closedAt: at(3) })],
+  } as unknown as Parameters<typeof askCards>[0]
+  const cards = askCards(s, t0)
+  expect(cards.map(c => c.thing)).toEqual([3, 2, 1, 5])
+  expect(cards.find(c => c.thing === 1)?.closed).toEqual([])
+  expect(askCards(s, t0 + 120_000).map(c => c.thing)).toEqual([3, 2, 1])
 })
 
 test('挤在一段里的几个问题拆成编号列表，日期和「第 9 层」不算编号', () => {

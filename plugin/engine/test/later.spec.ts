@@ -141,6 +141,22 @@ describe("稍后再说", () => {
 });
 
 describe("撤回", () => {
+  it("撤回不做了：一起撤掉的问题回来接着等你定，之前就关了的不动", () => {
+    const h = home();
+    chief(h, "", "thing", "add", "--title", "运费卡片");
+    chief(h, JSON.stringify({ question: "SDK 谁来写？", suggest: "我们写" }), "ask", "add", "--thing", "1");
+    chief(h, JSON.stringify({ question: "要不要问设计稿？", suggest: "问" }), "ask", "add", "--thing", "1");
+    chief(h, "对方回了", "ask", "withdraw", "2");
+    chief(h, "", "thing", "update", "1", "--status", "dropped");
+    expect(json(h, "things.json").asks.map((a: { status: string }) => a.status)).toEqual(["withdrawn", "withdrawn"]);
+    chief(h, null, "undo");
+    const t = json(h, "things.json");
+    expect(t.things[0].status).toBe("waiting_you");
+    expect(t.asks[0]).toMatchObject({ status: "open" });
+    expect(t.asks[0].reason).toBeUndefined();
+    expect(t.asks[1]).toMatchObject({ status: "withdrawn", reason: "对方回了" });
+  });
+
   it("不做了：撤回回到原来的状态，告诉主会话让会话接着做；撤过的不能再撤；后来又动过的撤不回", () => {
     const h = home();
     chief(h, "在压测", "thing", "add", "--title", "PROJ-123 压测", "--session", "local_abc", "--status", "waiting_others");

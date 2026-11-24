@@ -78,6 +78,13 @@ function undoDrop(entry: UndoEntry, at: string): string {
     if (x.status !== "dropped") throw new Error("这件事现在不是「不做了」，不用撤");
     x.status = want.status;
     x.updatedAt = at;
+    // 标成不做了时一起撤掉的问题（closedAt 就是那一下）：拿回来接着等你定。
+    for (const a of all.asks) {
+      if (a.thing !== x.id || a.status !== "withdrawn" || a.closedAt !== entry.at) continue;
+      a.status = "open";
+      delete a.reason;
+      delete a.closedAt;
+    }
     x.log = [...x.log, { at, text: "你撤回了「不做了」，接着做" }].slice(-30);
     return { ...x };
   });

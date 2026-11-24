@@ -56,8 +56,10 @@ export type AskRow = {
   thing: number
   question: string
   suggest: string
-  status: 'open' | 'answered'
+  status: 'open' | 'answered' | 'dismissed' | 'withdrawn'
   answer?: string
+  reason?: string
+  closedAt?: string
   // 这个问题挂着的待发出回复（chief ask add --reply R）：卡片上显示那条的摘要。
   reply?: number
   at: string
