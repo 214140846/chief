@@ -2,7 +2,7 @@ import { expect, test } from 'claude-code/testing'
 
 import { askedAfter } from '../hooks/confirm'
 import { listify, splitAsk } from '../hooks/ui'
-import { askCards } from '../hooks/tabs/now'
+import { inboxOf } from '../hooks/inbox'
 import { addCall, dayOf, isHubMonitor } from '../hooks/usage'
 import { engineBehind } from '../hooks/setup'
 import type { ReplyRow } from '../types'
@@ -22,6 +22,11 @@ function memStore(on: Parameters<Parameters<typeof test>[1]>[1]) {
     kv.set(e.key, e.value)
     return { value: undefined }
   })
+}
+
+// 找不到时说清在找什么（比 expected truthy 好查）。
+async function want(ui: { find: (q: never) => Promise<unknown> }, q: { type?: string; key?: string; text?: string | RegExp }) {
+  if (!(await ui.find(q as never))) throw new Error(`没画出来：${q.key ?? String(q.text)}`)
 }
 
 const now = new Date().toISOString()
@@ -101,28 +106,36 @@ test('面板：主会话状态、要你定、待发出；按钮各做各的', as
 
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await $.ui.mount({ ...PANE, surface })
-    expect(await ui.find({ type: 'Text', text: /主会话在听/ })).toBeTruthy()
-    expect(await ui.find({ type: 'Text', text: /2 条等判断/ })).toBeTruthy()
-    expect(await ui.find({ type: 'Text', text: /判断了 3 条 · 派人去办 1 · 只记下 1 · 忽略 1 · 替你发出 1/ })).toBeTruthy()
-    expect(await ui.find({ type: 'Text', text: /今天截止/ })).toBeTruthy()
-    expect(await ui.find({ type: 'Text', text: /Joe 问能不能本周上线/ })).toBeTruthy()
-    // 等你确认的回复直接在「现在要你」里。
-    expect(await ui.find({ type: 'Text', text: /等你确认再发 · 2/ })).toBeTruthy()
+    // 都正常：顶上只有一个绿点，不说「在听」「在跑」。
+    await want(ui, { type: 'Text', text: /^●$/ })
+    expect(await ui.find({ type: 'Text', text: /主会话没在听|引擎没在跑/ })).toBeFalsy()
+    // 「要你」的数字：钥匙被动过、它提议的规矩、一个问题、两条等你确认的回复。
+    await want(ui, { type: 'Text', text: /^要你 5$/ })
+    await want(ui, { type: 'Text', text: /判断了 3 条 · 派人去办 1 · 只记下 1 · 忽略 1 · 替你发出 1/ })
+    await want(ui, { type: 'Text', text: /今天截止/ })
+    await want(ui, { type: 'Text', text: /Joe 问能不能本周上线/ })
+    // 等你确认的回复在那件事的卡里；不挂在事情上的 approve 自己一张。
+    await want(ui, { text: /^处理了，报告在 thread 里$/ })
+    await want(ui, { type: 'Text', text: /approve PR o\/r#44/ })
     await ui.unmount()
   }
 
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
-  // 钥匙被清过：一直挂着红框，点了知道了才收起；第一次配的不提醒。
-  expect(await ui.find({ type: 'Text', text: /钥匙被动过/ })).toBeTruthy()
-  expect(await ui.find({ type: 'Text', text: /钥匙被清掉了/ })).toBeTruthy()
+  // 钥匙被清过：「要你」最上面一直挂着，点了知道了才收起；第一次配的不提醒。
+  await want(ui, { type: 'Text', text: /钥匙被动过/ })
+  await want(ui, { type: 'Text', text: /钥匙被清掉了/ })
   await ui.press({ key: 'ack-key' })
   expect(await ui.find({ type: 'Text', text: /钥匙被动过/ })).toBeFalsy()
+  // 它提议的规矩也在「要你」里等你采纳。
+  await want(ui, { type: 'Text', text: /它提议的规矩：Alice 在项目频道问进度时派活/ })
+  await ui.press({ key: 'pa1' })
+  expect(runs.at(-1)?.argv.slice(1).join(' ')).toBe('rules --yours accept 1')
   // 问题挂着的回复：显示回谁、说什么，不显示回复号。
-  expect(await ui.find({ type: 'Text', text: /相关的待发出：回 Bob Chen「处理了，报告在 thread 里」/ })).toBeTruthy()
+  await want(ui, { type: 'Text', text: /相关的回复：回 Bob Chen「处理了，报告在 thread 里」/ })
   expect(await ui.find({ type: 'Text', text: /#5/ })).toBeFalsy()
   // 要你定的问题：照办、不同意（点开才有输入框）、不用问了；没有批注。
-  expect(await ui.find({ key: 'ok3' })).toBeTruthy()
-  expect(await ui.find({ key: 'dm3' })).toBeTruthy()
+  await want(ui, { key: 'ok3' })
+  await want(ui, { key: 'dm3' })
   expect(await ui.find({ key: 'an-a3' })).toBeFalsy()
   expect(await ui.find({ key: 'in3' })).toBeFalsy()
   // 拍板先在 chief 里记下（卡片马上收起），再交给主会话转告。
@@ -134,9 +147,7 @@ test('面板：主会话状态、要你定、待发出；按钮各做各的', as
   expect(runs.some(r => r.argv.slice(1).join(' ') === 'ask answer 3' && r.stdin === '下周三，我来回')).toBe(true)
   expect(prompts.at(-1)).toBe('chief：问题 #3 的回答：下周三，我来回')
 
-  await ui.press({ key: 'tab-outbox' })
-  expect(await ui.find({ type: 'Text', text: /压测那个你处理了吗/ })).toBeTruthy()
-  expect(await ui.find({ type: 'Text', text: /你点的发送 · 回 o\/r#3 修 bug：LGTM/ })).toBeTruthy()
+  await want(ui, { type: 'Text', text: /压测那个你处理了吗/ })
 
   // 稿子按发出去的样子显示，点「改稿」才变成输入框；改了再发：先存改后的稿子（标准输入），再排队。
   await ui.press({ key: 'ed5' })
@@ -155,98 +166,60 @@ test('面板：主会话状态、要你定、待发出；按钮各做各的', as
   // 改过稿子才发：告诉主会话，让它从你的改动里学写法。
   expect(prompts.at(-1)).toBe('chief：回复 #5 你改过再发的')
 
-  // 让它重写：点了才出输入框。
+  // 让它重写、不发：收在 ⋯ 里；让它重写点了才出输入框。
+  expect(await ui.find({ key: 'rw5' })).toBeFalsy()
+  await ui.press({ key: 'mr5' })
   await ui.press({ key: 'rw5' })
   await ui.input({ key: 'rd5', text: '语气太硬，客气点' })
   expect(runs.some(r => r.argv.slice(1).join(' ') === 'reply redo 5' && r.stdin === '语气太硬，客气点')).toBe(true)
   expect(prompts.at(-1)).toBe('chief：回复 #5 重写：语气太硬，客气点')
 
-  // 待发出也没有批注：要改就「改稿」或「让它重写」。
+  // 回复上没有批注：要改就「改稿」或「让它重写」。
   expect(await ui.find({ key: 'an-r5' })).toBeFalsy()
   await ui.press({ key: 'dp5' })
   expect(runs.at(-1)?.argv.slice(1).join(' ')).toBe('reply drop 5')
 
-  // approve 也在待发出里，按钮写 approve。
-  expect(await ui.find({ type: 'Text', text: /approve PR o\/r#44/ })).toBeTruthy()
+  // approve 的按钮写 approve。
+  await want(ui, { type: 'Text', text: /approve PR o\/r#44/ })
   await ui.press({ key: 'sd7' })
   expect(runs.at(-1)?.argv.slice(1).join(' ')).toBe('reply confirm 7')
 
-  // 进度：最上面一句重点；要关注的单独成卡，写清原因、还差什么，能直接动手。
+  // 进度：每件事一行，状态标签在前；要你留意的（今天截止、卡住）带颜色、直接有按钮；点开看下一步。
   await ui.press({ key: 'tab-things' })
-  expect(await ui.find({ type: 'Text', text: /最要紧：PROJ-479 接口改造 今天截止，卡在等后端接口/ })).toBeTruthy()
-  expect(await ui.find({ type: 'Text', text: /还差/ })).toBeTruthy()
-  expect(await ui.find({ type: 'Text', text: /等你定了就提测/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /最要紧/ })).toBeFalsy()
+  await want(ui, { type: 'Text', text: /^1 件在做 · 1 件要你留意 · 最近 7 天办完 1 件$/ })
+  await want(ui, { type: 'Text', text: /卡在：等后端接口/ })
+  expect(await ui.find({ type: 'Text', text: /等你定了就提测/ })).toBeFalsy()
+  await ui.press({ key: 'tg1' })
+  await want(ui, { type: 'Text', text: /等你定了就提测/ })
   // 你在子会话里推进的，面板也看得到；跳过权限模式的会话会提醒。
-  expect(await ui.find({ type: 'Text', text: /接口联调完了，在等后端发版/ })).toBeTruthy()
-  expect(await ui.find({ type: 'Text', text: /权限模式不一样/ })).toBeTruthy()
-  expect(await ui.find({ type: 'Text', text: /1 件在做 · 1 件要关注 · 最近 7 天办完 1 件/ })).toBeTruthy()
-  await ui.press({ key: 'import' })
-  expect(prompts.at(-1)).toBe('chief：导入现在在做的事')
+  await want(ui, { text: /接口联调完了，在等后端发版/ })
+  await want(ui, { type: 'Text', text: /权限模式不一样/ })
+  // 常用的两个在外面，问进展、稍后再说、批注、不做了在 ⋯ 里。
+  expect(await ui.find({ key: 'an-t1' })).toBeFalsy()
+  await ui.press({ key: 'mo1' })
   // 进度页：卡片上批一句，先攒着不发，攒好了一起发给主会话。
   const before = prompts.length
   await ui.press({ key: 'an-t1' })
   await ui.input({ key: 'ai-t1', text: '今天下班前改完报告' })
   expect(prompts.length).toBe(before)
-  expect(await ui.find({ type: 'Text', text: /要发给主会话的批注 · 1/ })).toBeTruthy()
+  await want(ui, { type: 'Text', text: /要发给主会话的批注 · 1/ })
   // 篮子里显示批在哪件事，不显示事情号；发给主会话的那句照旧带着编号，主会话靠它找到是哪件。
-  expect(await ui.find({ type: 'Text', text: /【事情 PROJ-479 接口改造】/ })).toBeTruthy()
+  await want(ui, { type: 'Text', text: /【事情 PROJ-479 接口改造】/ })
   expect(await ui.find({ type: 'Text', text: /事情 #1/ })).toBeFalsy()
   await ui.press({ key: 'send-basket' })
   expect(prompts.at(-1)).toBe('chief：批注（1 条）\n1. 关于【事情 #1 PROJ-479 接口改造】：今天下班前改完报告')
   expect(await ui.find({ type: 'Text', text: /要发给主会话的批注/ })).toBeFalsy()
-  await ui.press({ key: 'ago1' })
+  await ui.press({ key: 'ot1' })
   expect(runs.at(-1)?.argv).toEqual(['/usr/bin/open', 'claude://code/continue?session=local_abc'])
   await ui.press({ key: 'aask1' })
   expect(prompts.at(-1)).toMatch(/^chief：转告事情 #1：现在进展怎么样/)
-  await ui.press({ key: 'adn1' })
+  await ui.press({ key: 'dn1' })
   expect(runs.some(r => r.argv.slice(1).join(' ') === 'thing update 1 --status done')).toBe(true)
   await ui.press({ key: 'done-list' })
-  expect(await ui.find({ type: 'Text', text: /1 件在做 · 1 件要关注/ })).toBeTruthy()
-  expect(await ui.find({ type: 'Text', text: /✓ o\/r#3 review/ })).toBeTruthy()
-
-  // 策略：改场景、加情况、加规矩、采纳提议。
-  await ui.press({ key: 'tab-policy' })
-  await ui.select({ key: 'h-custom:1', value: 'dispatch' })
-  expect(runs.at(-1)?.argv.slice(1).join(' ')).toBe('rules --yours set custom:1 handle=dispatch')
-  // 改规矩带插件的钥匙：放宽发送的才能直接生效。
-  expect(JSON.parse(runs.at(-1)?.stdin ?? '{}').key).toMatch(/^[0-9a-f]{64}$/)
-  await ui.input({ key: 'add-custom', text: 'Jira 上 QA 提的 bug 指给我' })
-  expect(runs.some(r => r.argv.slice(1).join(' ') === 'rules custom add' && r.stdin === 'Jira 上 QA 提的 bug 指给我')).toBe(true)
-  await ui.press({ key: 'rmc-custom:1' })
-  expect(runs.at(-1)?.argv.slice(1).join(' ')).toBe('rules custom remove 1')
-  expect(await ui.find({ type: 'Text', text: /Alice 在项目频道问进度时派活/ })).toBeTruthy()
-  await ui.select({ key: 'm-slack_dm', value: 'auto' })
-  expect(runs.at(-1)?.argv.slice(1).join(' ')).toBe('rules --yours set slack_dm reply=auto')
-  await ui.press({ key: 'eb-slack_dm' })
-  await ui.input({ key: 'bf-slack_dm', text: '先查清楚再回，回复用中文' })
-  expect(runs.some(r => r.argv.slice(1).join(' ') === 'rules brief slack_dm' && r.stdin === '先查清楚再回，回复用中文')).toBe(true)
-  await ui.input({ key: 'add-rule', text: 'Bob 问进度可以直接回' })
-  expect(runs.some(r => r.argv.slice(1).join(' ') === 'rules add' && r.stdin === 'Bob 问进度可以直接回')).toBe(true)
-  await ui.press({ key: 'pa1' })
-  expect(runs.at(-1)?.argv.slice(1).join(' ')).toBe('rules --yours accept 1')
-  // 白名单、「一定问我」名单都画出来；移出「一定问我」带钥匙。
-  expect(await ui.find({ type: 'Text', text: 'U0BOB1234' })).toBeTruthy()
-  expect(await ui.find({ type: 'Text', text: 'C0BOSS123' })).toBeTruthy()
-  await ui.press({ key: 'raa0' })
-  expect(runs.at(-1)?.argv.slice(1).join(' ')).toBe('rules --yours always remove')
-  expect(JSON.parse(runs.at(-1)?.stdin ?? '{}')).toMatchObject({ text: 'C0BOSS123', key: expect.stringMatching(/^[0-9a-f]{64}$/) })
-  await ui.input({ key: 'add-always', text: 'U0EVE9999' })
-  expect(runs.some(r => r.argv.slice(1).join(' ') === 'rules --yours always add' && JSON.parse(r.stdin ?? '{}').text === 'U0EVE9999')).toBe(true)
-  await ui.press({ key: 'rm0' })
-  expect(runs.some(r => r.argv.slice(1).join(' ') === 'rules remove' && r.stdin === '涉及排期的都要问我')).toBe(true)
-
-  // 测评：数字、判断记录、标对错。
-  await ui.press({ key: 'tab-eval' })
-  expect(await ui.find({ type: 'Text', text: /替你做了/ })).toBeTruthy()
-  expect(await ui.find({ type: 'Text', text: /没打扰你就处理掉 2 条 · 派人去办 1 件/ })).toBeTruthy()
-  expect(await ui.find({ type: 'Text', text: /判断 3 条：派人去办 1 · 只记下 1 · 忽略 1/ })).toBeTruthy()
-  expect(await ui.find({ type: 'Text', text: /判断准确率：100%（标了 1 条，错 0）/ })).toBeTruthy()
-  expect(await ui.find({ type: 'Text', text: /你确认原样发 1/ })).toBeTruthy()
-  // 主会话用掉的额度：按天、整个账号现在、上下文太长就提醒。
-  expect(await ui.find({ type: 'Text', text: /今天：5 小时额度约 12\.3 个点 · 每周额度约 2\.5 个点 · 调了 120 次模型/ })).toBeTruthy()
-  expect(await ui.find({ type: 'Text', text: new RegExp(`${dayOf(Date.now() - 86_400_000).slice(5)}：5 小时额度约 3\\.2 个点`) })).toBeTruthy()
-  expect(await ui.find({ type: 'Text', text: /5 小时已用 61\.5%.*每周已用 33%/ })).toBeTruthy()
-  expect(await ui.find({ type: 'Text', text: /主会话上下文 60 万 token：太长了/ })).toBeTruthy()
+  await want(ui, { type: 'Text', text: /✓ o\/r#3 review/ })
+  // 最近 7 天它做了什么：发出的回复、每条判断；判断点开标对错、存成演练例子。
+  await want(ui, { type: 'Text', text: /你点的发送 · 回 o\/r#3 修 bug：LGTM/ })
   await ui.press({ key: 'dt1' })
   await ui.press({ key: 'ok-1' })
   expect(runs.at(-1)?.argv.slice(1).join(' ')).toBe('review 1 ok')
@@ -257,21 +230,64 @@ test('面板：主会话状态、要你定、待发出；按钮各做各的', as
   expect(runs.some(r => r.argv.slice(1).join(' ') === 'review 2 wrong' && r.stdin === 'Alice 在问我负责的部分，要派活')).toBe(true)
   expect(prompts.at(-1)).toBe('chief：判断 #2 错了：Alice 在问我负责的部分，要派活')
 
-  // 设置（原来的控制页也在这）：脚本都变成按钮。
+  // 规矩：改场景、加情况、加交代；人；它做得怎么样。
+  await ui.press({ key: 'tab-policy' })
+  await ui.select({ key: 'h-custom:1', value: 'dispatch' })
+  expect(runs.at(-1)?.argv.slice(1).join(' ')).toBe('rules --yours set custom:1 handle=dispatch')
+  // 改规矩带插件的钥匙：放宽发送的才能直接生效。
+  expect(JSON.parse(runs.at(-1)?.stdin ?? '{}').key).toMatch(/^[0-9a-f]{64}$/)
+  await ui.input({ key: 'add-custom', text: 'Jira 上 QA 提的 bug 指给我' })
+  expect(runs.some(r => r.argv.slice(1).join(' ') === 'rules custom add' && r.stdin === 'Jira 上 QA 提的 bug 指给我')).toBe(true)
+  await ui.press({ key: 'rmc-custom:1' })
+  expect(runs.at(-1)?.argv.slice(1).join(' ')).toBe('rules custom remove 1')
+  await ui.select({ key: 'm-slack_dm', value: 'auto' })
+  expect(runs.at(-1)?.argv.slice(1).join(' ')).toBe('rules --yours set slack_dm reply=auto')
+  await ui.press({ key: 'eb-slack_dm' })
+  await ui.input({ key: 'bf-slack_dm', text: '先查清楚再回，回复用中文' })
+  expect(runs.some(r => r.argv.slice(1).join(' ') === 'rules brief slack_dm' && r.stdin === '先查清楚再回，回复用中文')).toBe(true)
+  await ui.input({ key: 'add-rule', text: 'Bob 问进度可以直接回' })
+  expect(runs.some(r => r.argv.slice(1).join(' ') === 'rules add' && r.stdin === 'Bob 问进度可以直接回')).toBe(true)
+  // 白名单、「一定问我」名单都画出来；移出「一定问我」带钥匙。
+  await want(ui, { type: 'Text', text: 'U0BOB1234' })
+  await want(ui, { type: 'Text', text: 'C0BOSS123' })
+  await ui.press({ key: 'raa0' })
+  expect(runs.at(-1)?.argv.slice(1).join(' ')).toBe('rules --yours always remove')
+  expect(JSON.parse(runs.at(-1)?.stdin ?? '{}')).toMatchObject({ text: 'C0BOSS123', key: expect.stringMatching(/^[0-9a-f]{64}$/) })
+  await ui.input({ key: 'add-always', text: 'U0EVE9999' })
+  expect(runs.some(r => r.argv.slice(1).join(' ') === 'rules --yours always add' && JSON.parse(r.stdin ?? '{}').text === 'U0EVE9999')).toBe(true)
+  await ui.press({ key: 'rnt0' })
+  expect(runs.some(r => r.argv.slice(1).join(' ') === 'rules remove' && r.stdin === '涉及排期的都要问我')).toBe(true)
+  // 它做得怎么样：判断、准确率、回复，省下的时间缩成一行。
+  await want(ui, { type: 'Text', text: /判断 3 条：派人去办 1 · 只记下 1 · 忽略 1/ })
+  await want(ui, { type: 'Text', text: /判断准确率：100%（标了 1 条，错 0）/ })
+  await want(ui, { type: 'Text', text: /你确认原样发 1/ })
+  await want(ui, { type: 'Text', text: /最近 7 天替你省下约/ })
+
+  // 设置（⚙）：脚本都变成按钮；少用的收在 ⋯ 里。
   await ui.press({ key: 'tab-setup' })
   // 来源连不上：标红，写出为什么。
-  expect(await ui.find({ type: 'Text', text: /连不上（连着 1 次）/ })).toBeTruthy()
-  expect(await ui.find({ type: 'Text', text: /check your internet connection/ })).toBeTruthy()
+  await want(ui, { type: 'Text', text: /连不上（连着 1 次）/ })
+  await want(ui, { type: 'Text', text: /check your internet connection/ })
+  expect(await ui.find({ key: 'eng-restart' })).toBeFalsy()
+  await ui.press({ key: 'more-engine' })
   await ui.press({ key: 'eng-restart' })
   expect(runs.at(-1)?.argv.slice(1).join(' ')).toBe('engine restart')
   await ui.press({ key: 'hub-reload' })
   expect(prompts.at(-1)).toMatch(/^chief：重读规则。.*重新调用 chief:hub.*不用重新开张/)
+  await ui.press({ key: 'more-hub' })
   await ui.press({ key: 'hub-stop' })
   expect(runs.at(-1)?.argv.slice(1).join(' ')).toBe('hub stop')
   await ui.input({ key: 'test-msg', text: 'PROJ-123 的报告今天能给吗' })
   expect(runs.some(r => r.argv.slice(1).join(' ') === 'test --from 测试同事' && r.stdin === 'PROJ-123 的报告今天能给吗')).toBe(true)
   await ui.press({ key: 'cn-jira' })
   expect(runs.some(r => r.argv.slice(1).join(' ') === 'connect jira')).toBe(true)
+  // 导入挪到了设置；主会话用掉的额度也在这。
+  await ui.press({ key: 'import' })
+  expect(prompts.at(-1)).toBe('chief：导入现在在做的事')
+  await want(ui, { type: 'Text', text: /今天：5 小时额度约 12\.3 个点 · 每周额度约 2\.5 个点 · 调了 120 次模型/ })
+  await want(ui, { type: 'Text', text: new RegExp(`${dayOf(Date.now() - 86_400_000).slice(5)}：5 小时额度约 3\\.2 个点`) })
+  await want(ui, { type: 'Text', text: /5 小时已用 61\.5%.*每周已用 33%/ })
+  await want(ui, { type: 'Text', text: /主会话上下文 60 万 token：太长了/ })
   await ui.unmount()
 })
 
@@ -297,9 +313,10 @@ test('主会话没在听：说清楚怎么办，积多了能一键跳过', async
   await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
   await $.command.run({ command: 'chief', args: '' })
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
-  expect(await ui.find({ type: 'Text', text: /主会话没在听/ })).toBeTruthy()
-  expect(await ui.find({ type: 'Text', text: /引擎没在跑/ })).toBeTruthy()
-  expect(await ui.find({ type: 'Text', text: /新消息现在没人判断/ })).toBeTruthy()
+  await want(ui, { type: 'Text', text: /主会话没在听/ })
+  await want(ui, { type: 'Text', text: /引擎没在跑/ })
+  await want(ui, { type: 'Text', text: /87 条消息没人判断/ })
+  await want(ui, { type: 'Text', text: /发 \/chief:hub/ })
   await ui.press({ key: 'skip-old' })
   expect(runs).toContain('/Users/me/chief/data/bin/chief mark --upto 87 ignored')
   expect(runs).toContain('/Users/me/chief/data/bin/chief cursor 87')
@@ -331,8 +348,8 @@ test('数据文件坏了：顶上说坏了、带上原因，不说成连不上',
   await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
   await $.command.run({ command: 'chief', args: '' })
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
-  expect(await ui.find({ type: 'Text', text: /^Slack 连不上 · 数据文件坏了$/ })).toBeTruthy()
-  expect(await ui.find({ type: 'Text', text: /数据文件坏了：things\.json 坏了（没覆盖/ })).toBeTruthy()
+  await want(ui, { type: 'Text', text: /^● Slack 连不上 · 数据文件坏了$/ })
+  await want(ui, { type: 'Text', text: /数据文件坏了：things\.json 坏了（没覆盖/ })
   expect(await ui.find({ type: 'Text', text: /数据文件 连不上/ })).toBeFalsy()
   await ui.unmount()
 })
@@ -365,6 +382,8 @@ test('要你定按事情合成一张卡：每个问题各自回，刚定的能�
         { id: 17, thing: 3, question: '要合进 main 吗？', suggest: '合', status: 'withdrawn', reason: '分支已经合了', at: ago(3_600_000), closedAt: ago(60_000) },
       ],
     }),
+    // 运费卡片的会话停在对话框上等你点 Allow。
+    '/Users/me/chief/data/activity.json': JSON.stringify({ local_abc: { at: now, waiting: '要开新会话「迁移向导」，在等你点 Allow', title: 'x', last: '', permissionMode: null, archived: false } }),
   }
   on('fs.read', (_, e) => {
     if (e.path === '/Users/me/chief/data/bin/chief') return { value: '#!/bin/sh' }
@@ -384,11 +403,15 @@ test('要你定按事情合成一张卡：每个问题各自回，刚定的能�
   await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
   await $.command.run({ command: 'chief', args: '' })
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
-  const has = async (text: RegExp) => expect(await ui.find({ type: 'Text', text })).toBeTruthy()
+  const has = async (text: RegExp) => await want(ui, { type: 'Text', text })
 
+  // 会话在等你点：在那件事的卡里最前面，一个按钮直接跳过去。
+  await want(ui, { type: 'Text', text: /要开新会话「迁移向导」，在等你点 Allow/ })
+  await ui.press({ key: 'go-t1' })
+  expect(runs.some(r => r.argv === 'claude://code/continue?session=local_abc')).toBe(true)
   // 一件事一张卡，标题旁写几个待定；后来加的标「新」。
-  expect(await ui.find({ key: 'card1' })).toBeTruthy()
-  expect(await ui.find({ key: 'card2' })).toBeTruthy()
+  await want(ui, { key: 'card1' })
+  await want(ui, { key: 'card2' })
   await has(/2 个待定/)
   await has(/新/)
   // 刚定的缩成一行，能撤回；撤掉的灰字说为什么；答了很久的不显示。
@@ -405,8 +428,8 @@ test('要你定按事情合成一张卡：每个问题各自回，刚定的能�
   expect(runs.some(r => r.argv === 'ask dismiss 12')).toBe(true)
   expect(prompts.at(-1)).toBe('chief：问题 #12 不用问了')
   // 剩下的全部照建议办：逐个记下，一起告诉主会话。只有一个问题的卡没有这个按钮。
-  expect(await ui.find({ key: 'all2' })).toBeFalsy()
-  await ui.press({ key: 'all1' })
+  expect(await ui.find({ key: 'all-t2' })).toBeFalsy()
+  await ui.press({ key: 'all-t1' })
   expect(runs.filter(r => r.argv === 'ask answer 11' || r.argv === 'ask answer 12').every(r => r.stdin === '照建议办')).toBe(true)
   expect(prompts.at(-1)).toBe('chief：问题 #11、#12 都照建议办')
   await ui.unmount()
@@ -463,52 +486,50 @@ test('稍后再说、撤回、搜以前的事', async ($, on) => {
   await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
   await $.command.run({ command: 'chief', args: '' })
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
-  // 稍后再说的事情：它的问题也先收起，不算在「现在要你」里。
+  // 稍后再说的事情：它的问题也先收起，不算在「要你」里。
   expect(await ui.find({ type: 'Text', text: /压测报告发给谁/ })).toBeFalsy()
   // 刚在面板上点的「不做了」：顶上留一个撤回；主会话自己判断的（只记下）不在顶上。
-  expect(await ui.find({ type: 'Text', text: /不做了：o\/r#3 review/ })).toBeTruthy()
+  await want(ui, { type: 'Text', text: /不做了：o\/r#3 review/ })
   expect(await ui.find({ type: 'Text', text: /只记下：#proj/ })).toBeFalsy()
   await ui.press({ key: 'undo-fresh' })
   expect(runs.at(-1)).toBe('undo 3')
 
   await ui.press({ key: 'tab-things' })
-  expect(await ui.find({ type: 'Text', text: /2 件在做/ })).toBeTruthy()
-  expect(await ui.find({ type: 'Text', text: /o\/r#9 review/ })).toBeTruthy()
+  await want(ui, { type: 'Text', text: /2 件在做/ })
+  await want(ui, { type: 'Text', text: /o\/r#9 review/ })
   // 稍后再说的收在下面，点开看什么时候拿出来，能提前拿出来。
   expect(await ui.find({ type: 'Text', text: /PROJ-123 压测报告/ })).toBeFalsy()
   await ui.press({ key: 'later-list' })
-  expect(await ui.find({ type: 'Text', text: /PROJ-123 压测报告/ })).toBeTruthy()
-  expect(await ui.find({ type: 'Text', text: new RegExp(`${later.getMonth() + 1}/${later.getDate()} 09:00 拿出来`) })).toBeTruthy()
+  await want(ui, { type: 'Text', text: /PROJ-123 压测报告/ })
+  await want(ui, { type: 'Text', text: new RegExp(`${later.getMonth() + 1}/${later.getDate()} 09:00 拿出来`) })
   await ui.press({ key: 'wk4' })
   expect(runs.at(-1)).toBe('thing wake 4')
 
-  // 事情卡上：稍后再说 → 三个快捷选项。
+  // 事情卡上：⋯ → 稍后再说 → 三个快捷选项。
   await ui.press({ key: 'tg1' })
   expect(await ui.find({ key: 'sntm-1' })).toBeFalsy()
-  await ui.press({ key: 'sn1' })
+  await ui.press({ key: 'mo1' })
+  await ui.press({ key: 'sl1' })
   await ui.press({ key: 'sntm-1' })
   expect(runs.at(-1)).toBe('thing snooze 1 --until tomorrow 09:00')
-  await ui.press({ key: 'sn1' })
+  await ui.press({ key: 'sl1' })
   await ui.press({ key: 'snmon-1' })
   expect(runs.at(-1)).toBe('thing snooze 1 --until next monday 09:00')
-  await ui.press({ key: 'sn1' })
+  await ui.press({ key: 'sl1' })
   await ui.press({ key: 'sn2h-1' })
   expect(runs.at(-1)).toBe('thing snooze 1 --until 2h')
 
-  // 最近做的：更早的也能撤；撤过的写已撤回。
-  await ui.press({ key: 'undo-list' })
-  expect(await ui.find({ text: /最近做的 · 3/ })).toBeTruthy()
-  expect(await ui.find({ type: 'Text', text: '已撤回' })).toBeTruthy()
-  expect(await ui.find({ key: 'un1' })).toBeFalsy()
-  await ui.press({ key: 'un2' })
-  expect(runs.at(-1)).toBe('undo 2')
+  // 最近：不做了这类的一行能撤；只记下 / 忽略的撤回挂在那条判断上（这里判断记录里没有 4 号消息，就不显示）。
+  await want(ui, { type: 'Text', text: /最近 7 天它做了什么/ })
+  await ui.press({ key: 'un3' })
+  expect(runs.at(-1)).toBe('undo 3')
 
   // 搜以前的事：要找的字放在 -- 后面；结果带链接（只认普通网址）、能跳到会话。
   await ui.input({ key: 'search', text: '支付' })
   expect(runs.at(-1)).toBe('search --limit 20 -- 支付')
-  expect(await ui.find({ type: 'Text', text: /搜「支付」· 2 条/ })).toBeTruthy()
-  expect(await ui.find({ type: 'Text', text: /事情 · 2026-10-01 · 归档 · 旧的支付迁移/ })).toBeTruthy()
-  expect(await ui.find({ type: 'Text', text: '支付回调又超时了' })).toBeTruthy()
+  await want(ui, { type: 'Text', text: /搜「支付」· 2 条/ })
+  await want(ui, { type: 'Text', text: /事情 · 2026-10-01 · 归档 · 旧的支付迁移/ })
+  await want(ui, { type: 'Text', text: '支付回调又超时了' })
   expect(await ui.find({ text: /javascript:/ })).toBeFalsy()
   await ui.press({ key: 'shs0' })
   expect(runs.at(-1)).toBe('claude://code/continue?session=local_old')
@@ -545,7 +566,7 @@ test('引擎还没装：只有设置页，按钮跑插件里的 setup.sh', async
   await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
   await $.command.run({ command: 'chief', args: '' })
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
-  expect(await ui.find({ type: 'Text', text: /设置 chief/ })).toBeTruthy()
+  await want(ui, { type: 'Text', text: /设置 chief/ })
   expect(await ui.find({ type: 'Text', text: /现在要你/ })).toBeFalsy()
   await ui.press({ key: 'setup-engine' })
   expect(runs.some(r => r.startsWith('/bin/sh ') && r.endsWith('/setup.sh'))).toBe(true)
@@ -676,15 +697,14 @@ test('设置页：免打扰和每天汇总写进 config.json', async ($, on) => 
   await $.command.run({ command: 'chief', args: '' })
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
   await ui.press({ key: 'tab-setup' })
-  expect(await ui.find({ key: 'quiet-off' })).toBeFalsy()
-  await ui.input({ key: 'quiet-hours', text: '22:00-8:00' })
+  // 选了就生效：免打扰时段、早晚汇总都是下拉；选「不设 / 不发」就清掉。
+  await ui.select({ key: 'time-quiet', value: '22:00-08:00' })
   expect(runs).toContain('/Users/me/chief/data/bin/chief config set quietHours {"start":"22:00","end":"08:00"}')
-  const before = toasts
-  await ui.input({ key: 'quiet-hours', text: '晚上十点' })
-  expect(toasts).toBe(before + 1)
-  await ui.input({ key: 'digest-morning', text: '8:30' })
+  await ui.select({ key: 'time-quiet', value: '' })
+  expect(runs).toContain('/Users/me/chief/data/bin/chief config set quietHours null')
+  await ui.select({ key: 'time-morning', value: '08:30' })
   expect(runs).toContain('/Users/me/chief/data/bin/chief config set digest.morning 08:30')
-  await ui.input({ key: 'digest-evening', text: '' })
+  await ui.select({ key: 'time-evening', value: '' })
   expect(runs).toContain('/Users/me/chief/data/bin/chief config set digest.evening null')
   await ui.unmount()
 })
@@ -734,45 +754,41 @@ test('英文界面：locale 是 en 时页签、卡片、设置页都是英文；
     throw new Error(`没找到：${String(text)}`)
   }
 
-  // 页签（当前页是字，别的是按钮）和顶上一行。
-  await must('For you 1')
-  for (const label of ['Outbox 2', 'Progress', 'Policy 1', 'Eval', 'Setup']) await must(label, ['Button', 'Text'])
-  await must('● Hub is listening')
-  await must('2 waiting to be judged')
-  // 「现在要你」：今天的一行、要你定的卡片、等你确认的回复。问题原文是数据，照原样。
+  // 页签（当前页是字，别的是按钮）和顶上一行：都正常就一个绿点。
+  await must('For you 5')
+  for (const label of ['Progress', 'Rules']) await must(label, ['Button', 'Text'])
+  await must('●')
+  // 「要你」：要你定的问题、等你确认的回复、它提议的规矩、今天的一行。问题原文是数据，照原样。
   await must('Today: judged 3 · handed off 1 · noted 1 · ignored 1 · sent for you 1')
-  await must('Suggestion')
-  await must(/^Related outbox item: reply to Bob Chen "处理了，报告在 thread 里"$/)
-  await must('Waiting for your OK to send · 2')
+  await must(/^Suggestion/)
+  await must(/^Related reply: reply to Bob Chen "处理了，报告在 thread 里"$/)
+  await must(/^Proposed rule: Alice 在项目频道问进度时派活$/)
   await must(/Joe 问能不能本周上线/)
   // 「照建议办」记进 chief 的回答照旧是中文（hub 认它），按钮上的字是英文。
-  await must('OK', ['Button'])
+  for (const b of ['OK', 'Disagree…', 'Skip it']) await must(b, ['Button'])
   await ui.press({ key: 'ok3' })
   expect(runs).toContain('/Users/me/chief/data/bin/chief ask answer 3')
-
-  await ui.press({ key: 'tab-outbox' })
   await must('reply to Bob Chen')
-  await must(/^You clicked send · reply to o\/r#3 修 bug: LGTM$/)
-  await must(/^Slack · Bob Chen 的私信 · Thing: PROJ-479 接口改造 · inline in the conversation$/)
+  await must(/Slack · Bob Chen 的私信 · inline in the conversation$/)
+  await ui.press({ key: 'mr5' })
   for (const b of ['Send', 'Edit', 'Rewrite', "Don't send"]) await must(b, ['Button'])
 
   await ui.press({ key: 'tab-things' })
-  await must(/^Most urgent: PROJ-479 接口改造 — /)
-  await must('1 in progress · 1 need attention · 1 done in the last 7 days')
-  await must('Import', ['Button'])
+  await must('1 in progress · 1 need your eye · 1 done in the last 7 days')
+  await must('What it did in the last 7 days')
+  await must(/You clicked send · reply to o\/r#3 修 bug: LGTM/)
 
   await ui.press({ key: 'tab-policy' })
   await must('Slack DMs')
   await must('Messages I send myself on Slack')
   await must('Trusted: send replies to these people directly')
-
-  await ui.press({ key: 'tab-eval' })
   await must('Accuracy: 100% (1 reviewed, 0 wrong)')
 
   // 设置页：标题都是英文；语言下拉换回中文，马上重画成中文。
   await ui.press({ key: 'tab-setup' })
   for (const title of ['Background engine (receives messages, sends replies)', 'Sources', 'Hub', 'Quiet hours and daily digest']) await must(new RegExp(title.replace(/[()]/g, '\\$&')))
   await must(/Language · 语言/)
+  await must('Import', ['Button'])
   await ui.select({ key: 'language', value: 'zh' })
   expect(runs).toContain('/Users/me/chief/data/bin/chief config set locale zh')
   await must(/^设置$/)
@@ -795,19 +811,35 @@ test('会话里确认：只放行你说完话以后提的请求；还能发的�
   expect(askedAfter(items, null, said.at)).toEqual([])
 })
 
-test('要你定的卡：有截止日的在前、越近越前；稍后再说的事情不出卡；刚定的两分钟后收起', () => {
+test('「要你」：一件事一张卡，会话等你点最前、截止近的其次；稍后再说的问题收起；刚定的两分钟后收起；系统的事也算进数字', () => {
   const t0 = Date.parse('2026-11-24T10:00:00Z')
   const at = (min: number) => new Date(t0 - min * 60_000).toISOString()
+  const today = new Date().toISOString().slice(0, 10)
   const thing = (id: number, extra = {}) => ({ id, title: `T${id}`, status: 'waiting_you' as const, progress: '', events: [], updatedAt: at(0), log: [], ...extra })
   const ask = (id: number, thingId: number, extra = {}) => ({ id, thing: thingId, question: 'Q？', suggest: '', status: 'open' as const, at: at(100 - id), ...extra })
+  const base = {
+    hub: { listening: true, lastAt: at(0) }, engineAt: at(0), health: {}, sources: {}, unhandled: 0, maxEvent: 0, keyAlerts: [], reread: false,
+    policy: { scenarios: {}, custom: [], notes: [], proposals: [] }, decisions: [], replies: [],
+    activity: { local_w: { at: at(5), waiting: '要开新会话，等你点 Allow', title: 'x', last: '', permissionMode: null, archived: false } },
+  }
   const s = {
-    things: [thing(1), thing(2, { due: '2026-11-30' }), thing(3, { due: '2026-11-25' }), thing(4, { snooze: { until: '2099-01-01T00:00:00Z', at: at(0) } }), thing(5)],
+    ...base,
+    things: [thing(1), thing(2, { due: '2099-11-30' }), thing(3, { due: today }), thing(4, { snooze: { until: '2099-01-01T00:00:00Z', at: at(0) } }), thing(5), thing(6, { session: 'local_w', status: 'doing' })],
     asks: [ask(1, 1), ask(2, 2), ask(3, 3), ask(4, 4), ask(5, 5, { status: 'answered', closedAt: at(1) }), ask(6, 1, { status: 'answered', closedAt: at(3) })],
-  } as unknown as Parameters<typeof askCards>[0]
-  const cards = askCards(s, t0)
-  expect(cards.map(c => c.thing)).toEqual([3, 2, 1, 5])
-  expect(cards.find(c => c.thing === 1)?.closed).toEqual([])
-  expect(askCards(s, t0 + 120_000).map(c => c.thing)).toEqual([3, 2, 1])
+  } as unknown as Parameters<typeof inboxOf>[0]
+  const box = inboxOf(s, t0)
+  expect(box.cards.map(c => c.thing?.id)).toEqual([6, 3, 1, 2, 5])
+  expect(box.cards[0].waiting).toBe('要开新会话，等你点 Allow')
+  expect(box.cards.find(c => c.thing?.id === 1)?.closed).toEqual([])
+  // 等你的：会话等你点 1 + 开着的问题 4（稍后再说的那件不算）。
+  expect(box.count).toBe(4)
+  expect(inboxOf(s, t0 + 120_000).cards.map(c => c.thing?.id)).toEqual([6, 3, 1, 2])
+  // chief 自己出的问题、插件更新了要重读、它提议的规矩：都进「要你」，也算进数字。
+  const bad = { ...s, engineAt: null, reread: true, keyAlerts: [{ at: at(1), what: 'reset' }], policy: { ...base.policy, proposals: [{ id: 1, text: 'x', basis: '', at: at(1) }] } } as typeof s
+  expect(inboxOf(bad, t0).system.map(x => x.kind)).toEqual(['key', 'engine', 'reread', 'proposal'])
+  expect(inboxOf(bad, t0).count).toBe(8)
+  // 主会话没在听：不提重读（开张时读的就是新的），提主会话没在听。
+  expect(inboxOf({ ...bad, hub: { listening: false, lastAt: null } } as typeof s, t0).system.map(x => x.kind)).toEqual(['key', 'engine', 'hub', 'proposal'])
 })
 
 test('挤在一段里的几个问题拆成编号列表，日期和「第 9 层」不算编号', () => {

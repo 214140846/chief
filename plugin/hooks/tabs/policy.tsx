@@ -1,11 +1,13 @@
-// 「策略」页：每种消息怎么办、回复要不要你确认、白名单、「一定问我」、固定回复、写法、署名、你的规矩、它提议的规矩。
+// 「规矩」页：按你想事情的顺序——每种消息怎么办、你的规矩（引擎执行的情况 + 给主会话参考的交代）、人（白名单、一定问我）、
+// 回复（写法、固定回复、放哪、署名）、它做得怎么样（准确率、演练）。它提议的规矩在「要你」页等你采纳。
 import type { EngineInterface as Engine, RenderChildren } from 'claude-code'
 
 import { DEFAULT_PLACEMENT, DEFAULT_SIGNATURE } from '../../engine/src/shared/rules'
 import type { Handle, ReplyMode, Rule, Snapshot } from '../../types'
-import { addCustom, addQuick, addRule, addStyle, askAlways, decideProposal, removeCustom, removeQuick, removeRule, removeStyle, setBrief, setPlacement, setScenario, setSignature, toggle, trust } from '../actions'
+import { addCustom, addQuick, addRule, addStyle, askAlways, removeCustom, removeQuick, removeRule, removeStyle, setBrief, setPlacement, setScenario, setSignature, toggle, trust } from '../actions'
 import { L, t } from '../i18n'
 import { scenarioName, select, type Els } from '../ui'
+import { howItDoes } from './eval'
 
 // 下拉里的做法、回复要不要确认：名字和 chief 命令行同一份（engine/src/shared/rules.ts）。
 const handles = () => Object.entries(L().handle).map(([value, label]) => ({ value: value as Handle, label }))
@@ -65,24 +67,32 @@ export function policyTab($: Engine, ui: Els, s: Snapshot, opened: string[]) {
     </Box>
   )
 
+  // 一块里的小标题：粗一点的名字，下面一行灰字说明。
+  const sub = (key: string, text: string, help: string) => (
+    <Box key={key} flexDirection="column" marginTop="sm">
+      <Text size="footnote" weight="semibold">{text}</Text>
+      <Text size="caption" dimColor wrap="wrap">{help}</Text>
+    </Box>
+  )
+  // 名单里的一个人 / 对话：认得名字就写名字，编号放后面。
+  const who = (x: string) => (s.people?.[x] ? `${s.people[x]}${t().paren(x)}` : x)
+  const list = (key: string, items: string[], show: (x: string) => string, remove: (x: string) => void, label: string) => [
+    items.length === 0 && <Text key={`${key}-none`} size="footnote" dimColor>{w.none}</Text>,
+    ...items.map((x, i) => (
+      <Box key={`${key}${i}`} flexDirection="row" justifyContent="space-between" alignItems="flex-start" gap="sm" paddingY="xs">
+        <Box flexGrow={1} flexShrink={1}><Text wrap="wrap">{show(x)}</Text></Box>
+        <Button key={`r${key}${i}`} plain onPress={() => remove(x)}>{label}</Button>
+      </Box>
+    )),
+  ]
+  const input = (key: string, placeholder: string, onAdd: (v: string) => void) => 'Input' in ui && (
+    <Box key={`${key}-add`} width="100%"><ui.Input key={key} placeholder={placeholder} submitLabel={w.add} onSubmit={(v: string) => {
+      if (v.trim()) onAdd(v.trim())
+    }} /></Box>
+  )
+
   return (
     <Box flexDirection="column" marginTop="sm">
-      {p.proposals.length > 0 && (
-        <Box flexDirection="column" borderStyle="round" borderColor="suggestion" paddingX="md" paddingY="sm" gap="sm">
-          <Text weight="semibold">{w.proposals(p.proposals.length)}</Text>
-          {p.proposals.map(x => (
-            <Box key={`pp${x.id}`} flexDirection="column" gap="xs">
-              <Text wrap="wrap">{x.text}</Text>
-              {x.basis !== '' && <Text size="caption" dimColor wrap="wrap">{w.basis(x.basis)}</Text>}
-              <Box flexDirection="row" gap="sm">
-                <Button key={`pa${x.id}`} variant="primary" onPress={() => decideProposal($, x.id, true)}>{w.accept}</Button>
-                <Button key={`pr${x.id}`} onPress={() => decideProposal($, x.id, false)}>{w.reject}</Button>
-              </Box>
-            </Box>
-          ))}
-        </Box>
-      )}
-
       <Box flexDirection="row" justifyContent="space-between" alignItems="center">
         <Text size="caption" dimColor>{w.live}</Text>
         <Button key="policy-help" plain onPress={() => toggle($, 'policy-help')}>{helpOpen ? w.hideHelp : w.showHelp}</Button>
@@ -93,99 +103,46 @@ export function policyTab($: Engine, ui: Els, s: Snapshot, opened: string[]) {
         </Box>
       )}
 
-      {section('sec-trusted', w.trustedTitle, w.trustedSub,
-        (p.trusted ?? []).length === 0 && <Text key="tr-none" size="footnote" dimColor>{w.none}</Text>,
-        (p.trusted ?? []).map((x, i) => (
-          <Box key={`tr${i}`} flexDirection="row" justifyContent="space-between" alignItems="center" paddingY="xs">
-            <Text>{x}</Text>
-            <Button key={`rtr${i}`} plain onPress={() => trust($, x, false)}>{w.removeFrom}</Button>
-          </Box>
-        )),
-        'Input' in ui && (
-          <Box key="tr-add" width="100%"><ui.Input key="add-trusted" placeholder={w.trustedPlaceholder} submitLabel={w.add} onSubmit={(v: string) => {
-            if (v.trim()) void trust($, v.trim(), true)
-          }} /></Box>
-        ))}
-
-      {section('sec-always', w.alwaysTitle, w.alwaysSub,
-        (p.askAlways ?? []).length === 0 && <Text key="aa-none" size="footnote" dimColor>{w.none}</Text>,
-        (p.askAlways ?? []).map((x, i) => (
-          <Box key={`aa${i}`} flexDirection="row" justifyContent="space-between" alignItems="center" paddingY="xs">
-            <Text>{x}</Text>
-            <Button key={`raa${i}`} plain onPress={() => askAlways($, x, false)}>{w.removeFrom}</Button>
-          </Box>
-        )),
-        'Input' in ui && (
-          <Box key="aa-add" width="100%"><ui.Input key="add-always" placeholder={w.alwaysPlaceholder} submitLabel={w.add} onSubmit={(v: string) => {
-            if (v.trim()) void askAlways($, v.trim(), true)
-          }} /></Box>
-        ))}
-
-      {section('sec-custom', w.customTitle, w.customSub,
-        p.custom.length === 0 && <Text key="cu-none" size="footnote" dimColor>{w.none}</Text>,
-        p.custom.map(c => ruleRow(`custom:${c.id}`, c.when, c, () => void removeCustom($, c.id))),
-        'Input' in ui && (
-          <Box key="cu-add" width="100%"><ui.Input key="add-custom" placeholder={w.customPlaceholder} submitLabel={w.add} onSubmit={(v: string) => {
-            if (v.trim()) void addCustom($, v.trim())
-          }} /></Box>
-        ))}
-
       {section('sec-scenarios', w.scenariosTitle, w.scenariosSub,
         Object.entries(p.scenarios).map(([k, v]) => ruleRow(k, scenarioName(k), v)))}
 
-      {section('sec-quick', w.quickTitle, w.quickSub,
-        (p.quick ?? []).length === 0 && <Text key="qk-none" size="footnote" dimColor>{w.none}</Text>,
-        (p.quick ?? []).map((x, i) => (
-          <Box key={`qk${i}`} flexDirection="row" gap="sm" alignItems="flex-start" paddingY="xs">
-            <Box flexGrow={1} flexShrink={1}><Text wrap="wrap">{x}</Text></Box>
-            <Button key={`rqk${i}`} plain onPress={() => removeQuick($, x)}>{w.remove}</Button>
-          </Box>
-        )),
-        'Input' in ui && (
-          <Box key="qk-add" width="100%"><ui.Input key="add-quick" placeholder={w.quickPlaceholder} submitLabel={w.add} onSubmit={(v: string) => {
-            if (v.trim()) void addQuick($, v.trim())
-          }} /></Box>
-        ))}
+      {section('sec-yours', w.yoursTitle, w.yoursSub,
+        sub('yours-custom', w.customTitle, w.customSub),
+        p.custom.length === 0 && <Text key="cu-none" size="footnote" dimColor>{w.none}</Text>,
+        p.custom.map(c => ruleRow(`custom:${c.id}`, c.when, c, () => void removeCustom($, c.id))),
+        input('add-custom', w.customPlaceholder, v => void addCustom($, v)),
+        sub('yours-notes', w.notesTitle, w.notesSub),
+        ...list('nt', p.notes, x => x, x => void removeRule($, x), w.remove),
+        input('add-rule', w.notesPlaceholder, v => void addRule($, v)))}
 
-      {section('sec-style', w.styleTitle, w.styleSub,
-        (p.style ?? []).map((x, i) => (
-          <Box key={`st${i}`} flexDirection="row" gap="sm" alignItems="flex-start" paddingY="xs">
-            <Box flexGrow={1} flexShrink={1}><Text wrap="wrap">{x}</Text></Box>
-            <Button key={`rst${i}`} plain onPress={() => removeStyle($, x)}>{w.remove}</Button>
-          </Box>
-        )),
-        'Input' in ui && (
-          <Box key="st-add" width="100%"><ui.Input key="add-style" placeholder={w.stylePlaceholder} submitLabel={w.add} onSubmit={(v: string) => {
-            if (v.trim()) void addStyle($, v.trim())
-          }} /></Box>
-        ))}
+      {section('sec-people', w.peopleTitle, undefined,
+        sub('people-trusted', w.trustedTitle, w.trustedSub),
+        ...list('tr', p.trusted ?? [], who, x => void trust($, x, false), w.removeFrom),
+        input('add-trusted', w.trustedPlaceholder, v => void trust($, v, true)),
+        sub('people-always', w.alwaysTitle, w.alwaysSub),
+        ...list('aa', p.askAlways ?? [], who, x => void askAlways($, x, false), w.removeFrom),
+        input('add-always', w.alwaysPlaceholder, v => void askAlways($, v, true)))}
 
-      {section('sec-placement', w.placementTitle, w.placementSub,
+      {section('sec-reply', w.replyTitle, undefined,
+        sub('reply-style', w.styleTitle, w.styleSub),
+        ...list('st', p.style ?? [], x => x, x => void removeStyle($, x), w.remove),
+        input('add-style', w.stylePlaceholder, v => void addStyle($, v)),
+        sub('reply-quick', w.quickTitle, w.quickSub),
+        ...list('qk', p.quick ?? [], x => x, x => void removeQuick($, x), w.remove),
+        input('add-quick', w.quickPlaceholder, v => void addQuick($, v)),
+        sub('reply-placement', w.placementTitle, w.placementSub),
         (Object.entries(L().audience) as [keyof typeof DEFAULT_PLACEMENT, string][]).map(([k, label]) => (
           <Box key={`pl-${k}`} flexDirection="row" justifyContent="space-between" alignItems="center" gap="sm" paddingY="xs">
             <Text>{label}</Text>
             {select(ui, `pl-${k}`, (p.placement ?? DEFAULT_PLACEMENT)[k], [{ value: 'inline', label: w.inline }, { value: 'thread', label: w.thread }], v => void setPlacement($, k, v as 'inline' | 'thread'))}
           </Box>
-        )))}
-
-      {section('sec-signature', w.signatureTitle, w.signatureSub,
+        )),
+        sub('reply-signature', w.signatureTitle, w.signatureSub),
         'Input' in ui
           ? <ui.Input key="signature" value={p.signature ?? DEFAULT_SIGNATURE} submitLabel={w.save} onSubmit={(v: string) => void setSignature($, v.trim())} />
           : <Text key="sig">{p.signature ?? DEFAULT_SIGNATURE}</Text>)}
 
-      {section('sec-notes', w.notesTitle, w.notesSub,
-        p.notes.length === 0 && <Text key="nt-none" size="footnote" dimColor>{w.none}</Text>,
-        p.notes.map((n, i) => (
-          <Box key={`nt${i}`} flexDirection="row" gap="sm" alignItems="flex-start" paddingY="xs">
-            <Box flexGrow={1} flexShrink={1}><Text wrap="wrap">{n}</Text></Box>
-            <Button key={`rm${i}`} plain onPress={() => removeRule($, n)}>{w.remove}</Button>
-          </Box>
-        )),
-        'Input' in ui && (
-          <Box key="nt-add" width="100%"><ui.Input key="add-rule" placeholder={w.notesPlaceholder} submitLabel={w.add} onSubmit={(v: string) => {
-            if (v.trim()) void addRule($, v.trim())
-          }} /></Box>
-        ))}
+      {section('sec-how', w.howTitle, w.howSub, howItDoes($, ui, s))}
     </Box>
   )
 }

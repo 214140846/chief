@@ -106,7 +106,8 @@ export type PolicyFile = {
 export type Reviews = Record<string, { ok: boolean; note?: string; at: string }>
 
 // 能撤回的操作（undo.json）：不做了、只记下 / 忽略、跳过积下的。undone 是撤回的时间。
-export type UndoRow = { id: number; at: string; kind: 'drop' | 'mark' | 'skip'; label: string; undone?: string }
+// events：只记下 / 忽略的那几条消息（进度页的「最近」把撤回挂在那条判断上）。
+export type UndoRow = { id: number; at: string; kind: 'drop' | 'mark' | 'skip'; label: string; undone?: string; events?: { id: number }[] }
 
 // chief search 的一条结果。
 export type SearchHit = {
@@ -159,6 +160,8 @@ export type Snapshot = {
   keyAlerts: { at: string; what: 'reset' | 'set' }[]
   // 最近做的、能撤回的（新的在前）。
   undo: UndoRow[]
+  // 插件更新过、主会话还没重读规则（插件自己的存储里记着上次重读时的插件版本）。
+  reread: boolean
 }
 
 // 主会话一天用掉的额度（hooks/usage.ts 记）：five / week 是 5 小时、每周窗口涨了几个百分点（量到的加估的），

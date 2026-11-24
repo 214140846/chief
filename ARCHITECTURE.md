@@ -53,13 +53,28 @@ Notion ─────┤                                                       
 
 `plugin/hooks/`，Claude Code 插件的 hooks 模块（JSX），跑在插件运行时里（没有 Node，碰外面只能通过 `$`）。`data.ts` 读 `~/chief/data` 里的文件（有变化时 `chief watch` 通知，另外每分钟保底读一次）；`actions.ts` 是按钮背后的命令；`tabs/` 里一个页签一个文件，`setup.tsx` 是设置页，共用的小东西在 `ui.tsx`；`confirm.ts` 管确认钥匙：钥匙原文只在插件自己的存储里，面板点发送、或你在主会话说「发」时，插件带着钥匙调 `chief reply confirm`。
 
+页面按你会问的三个问题分，不按数据分：
+
+- **要你**（`tabs/now.tsx`）：所有要你动手的事。`inbox.ts` 是一个纯函数，从一份数据算出来：chief 自己的事（钥匙、引擎、主会话、来源、要重读规则、规矩提议），和一件事一张卡（会话等你点、要你定的、等你确认的回复），排好序。页签上的数字也按它算。
+- **进度**（`tabs/things.tsx`、`tabs/timeline.tsx`）：只看。每件事一行；最近 7 天它做了什么（判断、发出的回复、能撤回的），判断错了在这里说。
+- **规矩**（`tabs/policy.tsx`、`tabs/eval.tsx` 的「它做得怎么样」）：它怎么做事、做得怎么样。
+- **⚙ 设置**（`setup.tsx`）：出问题或第一次装时才来。
+
+加东西时守这几条：
+
+1. 一件事是一个单位：哪里提到它都显示成同一个样子，点了都去同一个地方。
+2. 只报不正常的：正常的不显示，或者一个小点。
+3. 要你动手的只在「要你」：别的页最多放一个跳过去的链接；新的要你做的事，加进 `inbox.ts`。
+4. 每条最多两个按钮，其余进 ⋯。
+5. 按窄栏（约 360px）排：背景默认一行，点开看全文。
+
 场景和来源的名字、做法的名字、回复放哪、文件路径，面板从 `engine/src/shared/` 直接 import，和引擎同一份。类型合同 `plugin/types/index.d.ts`（`$.state` 里存什么）按 `claude plugin validate` 的要求不能 import，数据文件的几个类型照抄了一份，`engine/test/contract.spec.ts` 在类型上检查它和 `shared/types.ts` 对得上。
 
 ## 数据文件（`~/chief`）
 
 | 文件 | 谁写 | 内容 |
 | --- | --- | --- |
-| `rules.json` | `chief rules`、面板策略页 | 每个场景怎么办、白名单、固定回复、「一定问我」、你写的规矩、提议 |
+| `rules.json` | `chief rules`、面板规矩页 | 每个场景怎么办、白名单、固定回复、「一定问我」、你写的规矩、提议 |
 | `config.json` | `chief config set` | 引擎设置 |
 | `data/events.jsonl` | 引擎 | 交给主会话的事件，一行一条 |
 | `data/decisions.jsonl` | `chief mark` | 主会话对每条事件的判断和理由 |

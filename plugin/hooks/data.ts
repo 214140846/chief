@@ -83,6 +83,9 @@ export async function refresh($: Engine) {
   const keyAck = await $.store.get('keyAck').catch(() => null)
   const keyAlerts = (await readLines<{ at: string; what: string }>($, f.keyLog))
     .filter((x): x is Snapshot['keyAlerts'][number] => (x.what === 'reset' || x.what === 'set') && (typeof keyAck !== 'string' || x.at > keyAck))
+  // 插件更新过、主会话还没重读规则：主会话手上还是旧的做事方式，「要你」里提醒一句。
+  const pv = await pluginVersion($)
+  const readAt = await $.store.get('skillVersion').catch(() => null)
   const maxEvent = (state.nextId ?? 1) - 1
   const since = Date.now() - EVAL_DAYS * 86_400_000
   const next: Snapshot = {
@@ -106,9 +109,30 @@ export async function refresh($: Engine) {
     keyAlerts,
     undo: [...(undo.items ?? [])].reverse(),
     locale,
+    reread: pv !== null && readAt !== pv,
     hubMode: ((activity as Record<string, unknown>)._hub as { permissionMode?: string | null } | undefined)?.permissionMode ?? null,
   }
   await update($, snap, () => next)
+}
+
+let version: string | null | undefined
+
+async function pluginVersion($: Engine): Promise<string | null> {
+  if (version === undefined) {
+    try {
+      version = (JSON.parse(await $.fs.read(`${$.plugin.root}/.claude-plugin/plugin.json`)) as { version?: string }).version ?? null
+    } catch {
+      version = null
+    }
+  }
+  return version
+}
+
+// 主会话重读过规则（点了「重读规则」、或刚开张）：记下这时的插件版本，提醒收起。
+export async function markReread($: Engine) {
+  const v = await pluginVersion($)
+  if (v !== null) await $.store.set('skillVersion', v)
+  await refresh($)
 }
 
 // rules.json 还没写过时，场景表在 chief 里有默认值：问 chief 要一份完整的。

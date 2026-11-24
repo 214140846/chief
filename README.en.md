@@ -13,7 +13,7 @@ Slack (push) / GitHub, Jira, Notion (polled every 5 min)
   → chief engine (launchd, ~/chief/data/app): writes only "someone needs you" items to ~/chief/data/events.jsonl
   → the hub session follows them with Monitor and decides by your rules: hand off / note / ask you
   → work sessions do the work and report back: progress / needs your decision / draft reply
-  → drafts wait in the Outbox; you confirm in the panel (or a rule allows sending directly); the engine sends as you, undoable for 5 s
+  → drafts wait for you on the panel's For you page; you confirm there (or a rule allows sending directly); the engine sends as you, undoable for 5 s
 ```
 
 See also: [Architecture](ARCHITECTURE.md) (Chinese) · [Security](SECURITY.md) · [Contributing](CONTRIBUTING.md) · [Changelog](CHANGELOG.md)
@@ -39,16 +39,17 @@ Until the engine is installed the Setup tab is in Chinese, so the button names a
 
 ## The panel
 
-- **For you** — whether the hub is listening, what it did today, decisions it needs from you (go with its suggestion, open the session, or write your own decision), and replies waiting for your OK.
-- **Outbox** — drafted replies, approvals and messages: send, edit then send, don't send, or ask for a rewrite. Everything sent can be undone for 5 seconds.
-- **Progress** — every thing in flight: what needs attention and why, next step, blockers, results, due dates. From here you can:
-  - **Later** — snooze a thing for 2 hours, until tomorrow morning or next Monday (`chief thing snooze T --until 2h` / `tomorrow 09:00` / `next monday 09:00`; `chief thing wake T` brings it back early). Snoozed things and their questions are tucked away; when the time comes the engine brings them back, notifies you and hands them to the hub.
-  - **Undo** — dropping a thing, the hub's "just note it" / "ignore" decisions and skipping a backlog can all be undone: right after the action at the top of the panel, or later under "Recent actions" (`chief undo --list`, `chief undo <id>`). Undone messages go back to the hub to be judged again.
-  - **Search** past things, questions, replies, messages and decisions, including the archive (`chief search <text>`).
-  - **Notes** — jot remarks on several cards and send them to the hub together.
-- **Policy** — how each kind of message is handled, whether replies need your OK, trusted people, the "always ask me" list, canned replies, writing style, signature, your own rules, and rules the hub proposes.
-- **Eval** — what chief did for you in the last 7 days and the time saved, the hub's usage, a drill that replays saved cases against your rules, and the decision log where you mark calls right or wrong.
-- **Setup** — engine, sources, hub, keep-awake, quiet hours and daily digest, language, and a test message.
+Three pages for the three questions you ask, plus ⚙ for setup. When everything is fine the top shows a single green dot; it only spells things out when something is wrong.
+
+- **For you** — everything that needs you, one card per thing, most urgent first:
+  - A session stuck on a dialog (Allow, a choice): **Go click** jumps straight to it.
+  - Questions for you: each one has **OK / Disagree… / Skip it**; **Go with all remaining suggestions** when you agree with all of them. A decision can be undone for two minutes.
+  - Replies waiting for your OK: send, edit, and under ⋯ rewrite or don't send. Sends can be undone for 5 seconds.
+  - chief's own issues: the send key was changed, the engine, hub or a source is down, the plugin was updated and the hub should **Reload rules**, rules the hub proposes. Each comes with a button that fixes it.
+  - At the bottom, one line on what chief did today.
+- **Progress** — one row per thing with a status tag first (session waiting, overdue, blocked are coloured); open a row for the next step and results; ⋯ has ask for progress, **Later** (snooze: `chief thing snooze T --until 2h` / `tomorrow 09:00` / `next monday 09:00`), note and drop. Search past things at the top (`chief search <text>`). Below: snoozed, done, and **What it did in the last 7 days**: mark each judgment right or wrong (wrong becomes a rule proposal), save it as a drill case, undo "just note" / "ignore" calls; sent replies are listed there too (`chief undo --list`).
+- **Rules** — how each kind of message is handled; your rules (cases the engine enforces through the dropdowns, plus guidance for the hub); people (trusted, always ask me); replies (style, canned replies, placement, signature); how it is doing (accuracy, drills). Changes take effect immediately.
+- **⚙ Setup** — engine, sources, hub (reload rules), keep-awake, quiet hours and daily digest, language, import what you are working on, a test message, and the hub's usage. Rarely used actions (stop engine, reinstall, disconnect) are under ⋯.
 
 ## Update
 
@@ -70,7 +71,7 @@ Everything is in `~/chief`, and the hub runs there:
 | Path | What |
 | --- | --- |
 | `CLAUDE.md` | Your long-term instructions to the assistant: who you are, usual repos, how you write, what not to touch |
-| `rules.json` | Rules: how each kind of message is handled, whether replies need your OK (Policy tab, or tell the hub) |
+| `rules.json` | Rules: how each kind of message is handled, whether replies need your OK (Rules page, or tell the hub) |
 | `config.json` | Engine settings, see Settings below |
 | `notes/` | What the assistant noted: who is who (`people.md`), which work happens in which folder (`projects.md`) |
 | `.claude/skills/` | Skills only the hub uses |
@@ -92,9 +93,9 @@ Outside `~/chief` there are only system-defined locations:
 
 ## Settings
 
-Engine settings live in `~/chief/config.json`. `chief config` lists every setting and its current value; `chief config set <key> <value>` changes one. Rules (`rules.json`) are changed on the Policy tab or by telling the hub, not here.
+Engine settings live in `~/chief/config.json`. `chief config` lists every setting and its current value; `chief config set <key> <value>` changes one. Rules (`rules.json`) are changed on the Rules page or by telling the hub, not here.
 
-These are also on the Setup tab and take effect immediately:
+These are also on the Setup page (⚙) and take effect immediately:
 
 - **Language** (`locale`, `"zh"` or `"en"`, default `"zh"`): `chief config set locale en`. Panel, engine notifications and how the hub talks to you.
 - **Quiet hours** (`quietHours`, e.g. `{"start":"22:00","end":"08:00"}`, may cross midnight): the engine holds its notifications and the hub holds its pushes; they go into the next digest, and when quiet hours end the held engine notifications pop up as one. A broken data file or a changed confirm key still notifies; things you marked urgent or due during quiet hours still get pushed. Replies the rules allow to send directly still go out (quiet hours are about not disturbing you, not about ignoring others). `chief quiet` shows whether it is quiet now.
