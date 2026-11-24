@@ -42,7 +42,7 @@ export function replyCard($: Engine, ui: Els, s: Snapshot, edit: Record<string, 
         )
         : (
           // 按发出去的样子显示：正文上方的署名小字、分行、列表都和 Slack 上一样。
-          <Box flexDirection="column" borderStyle="round" borderColor="inactive" paddingX="md" paddingY="xs">
+          <Box flexDirection="column" borderStyle="round" borderColor="inactive" borderDimColor paddingX="md" paddingY="xs">
             {sign !== '' && r.source === 'slack' && <Text size="caption" dimColor>{w.confirmedBy(sign)}</Text>}
             {md(ui, body.replace(/<@([UW][A-Z0-9]+)>/g, (_, id: string) => `**@${s.people?.[id] ?? id}**`))}
           </Box>

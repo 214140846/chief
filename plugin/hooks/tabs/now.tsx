@@ -57,7 +57,7 @@ export function nowTab($: Engine, ui: Els, s: Snapshot, opened: string[] = [], e
     const { context, ask } = splitAsk(q.question)
     const typing = opened.includes(`dis${q.id}`)
     return (
-      <Box key={`q${q.id}`} flexDirection="column" gap="xs" borderStyle="round" borderColor="inactive" paddingX="md" paddingY="sm">
+      <Box key={`q${q.id}`} flexDirection="column" gap="xs" backgroundColor="subtle" paddingX="md" paddingY="sm">
         <Text weight="semibold" wrap="wrap">{fresh && <Text size="caption" color="warning">{w.fresh}{t().gap}</Text>}{listify(ask).replace(/\n\n/g, '\n')}</Text>
         {context !== '' && <Text size="footnote" dimColor wrap="wrap">{context}</Text>}
         {q.suggest !== '' && <Text size="footnote" wrap="wrap"><Text dimColor>{w.suggest}{t().gap}</Text>{listify(q.suggest).replace(/\n\n/g, '\n')}</Text>}
@@ -92,7 +92,8 @@ export function nowTab($: Engine, ui: Els, s: Snapshot, opened: string[] = [], e
   )
 
   // ── 一件事一张卡：标题、截止、去会话；会话在等你点的最前，然后问题、回复 ──
-  // ── 一件事一组：小标题（事情、截止、等你的有几样、去会话），下面会话等你点、每个问题、每条回复各一张卡 ──
+  // ── 一件事一组，浅框框起来：小标题（事情、截止、等你的有几样、去会话），下面会话等你点（浅红底）、每个问题、每条回复（浅灰底）各一块 ──
+  // 过期、今天截止、会话在等你点的组，框是红的。
   const group = (c: Card) => {
     const th = c.thing
     const title = th ? th.title : c.replies[0] ? whatOf(c.replies[0]) : c.sending[0] ? whatOf(c.sending[0]) : w.ask
@@ -101,7 +102,7 @@ export function nowTab($: Engine, ui: Els, s: Snapshot, opened: string[] = [], e
     const counts = [c.waiting ? w.nWaiting : '', c.asks.length > 0 ? w.nAsks(c.asks.length) : '', c.replies.length > 0 ? w.nReplies(c.replies.length) : ''].filter(Boolean).join(' · ')
     const id = th ? `card${th.id}` : `card-${c.key}`
     return (
-      <Box key={id} flexDirection="column" gap="sm" marginTop="lg">
+      <Box key={id} flexDirection="column" gap="sm" marginTop="md" borderStyle="round" borderColor={c.rank <= 1 ? 'error' : 'inactive'} borderDimColor paddingX="md" paddingY="sm">
         <Box flexDirection="row" justifyContent="space-between" alignItems="flex-start" gap="sm">
           <Box flexDirection="column" flexShrink={1}>
             <Text weight="semibold" wrap="wrap">{title}</Text>
@@ -114,7 +115,7 @@ export function nowTab($: Engine, ui: Els, s: Snapshot, opened: string[] = [], e
           {c.session && <Button key={`oa-${c.key}`} plain onPress={() => openSession($, c.session ?? '', title)}>{w.goSession}</Button>}
         </Box>
         {c.waiting && (
-          <Box flexDirection="column" gap="xs" borderStyle="round" borderColor="error" paddingX="md" paddingY="sm">
+          <Box flexDirection="column" gap="xs" backgroundColor="diffRemovedDimmed" paddingX="md" paddingY="sm">
             <Text size="caption" weight="semibold" color="error">{w.waiting}</Text>
             <Text wrap="wrap">{c.waiting}</Text>
             <Box flexDirection="row"><Button key={`go-${c.key}`} variant="primary" onPress={() => openSession($, c.session ?? '', title)}>{w.goPoint}</Button></Box>
@@ -122,7 +123,7 @@ export function nowTab($: Engine, ui: Els, s: Snapshot, opened: string[] = [], e
         )}
         {c.asks.map(q => askCard(q, c.asks.length > 1 && Date.parse(q.at) - Date.parse(c.asks[0].at) > 60_000))}
         {c.replies.map(r => (
-          <Box key={`rc${r.id}`} flexDirection="column" borderStyle="round" borderColor={r.status === 'failed' ? 'error' : 'inactive'} paddingX="md" paddingY="sm">
+          <Box key={`rc${r.id}`} flexDirection="column" backgroundColor={r.status === 'failed' ? 'diffRemovedDimmed' : 'subtle'} paddingX="md" paddingY="sm">
             {replyCard($, ui, s, edit, opened, r)}
           </Box>
         ))}
