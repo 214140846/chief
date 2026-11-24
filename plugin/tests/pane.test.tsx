@@ -409,20 +409,16 @@ test('要你定按事情合成一张卡：每个问题各自回，刚定的能�
   await want(ui, { type: 'Text', text: /要开新会话「迁移向导」，在等你点 Allow/ })
   await ui.press({ key: 'go-t1' })
   expect(runs.some(r => r.argv === 'claude://code/continue?session=local_abc')).toBe(true)
-  // 一件事一张卡，标题旁写几个待定；后来加的标「新」。
+  // 一件事一组：小标题写截止、等你的有几样；会话等你点、每个问题各一张卡，后来加的标「新」。
   await want(ui, { key: 'card1' })
   await want(ui, { key: 'card2' })
-  await has(/2 个待定/)
+  await has(/1 个会话等你点 · 2 个问题/)
   await has(/新/)
-  // 好几个问题：先是一张清单，每行问什么、一句建议、照办；不同意、不用问了收着，点 ▸ 才摊开那一个。
-  await want(ui, { key: 'ok11' })
-  expect(await ui.find({ key: 'dm11' })).toBeFalsy()
-  await ui.press({ key: 'ex11' })
-  await want(ui, { key: 'dm11' })
-  // 背景收着，点「背景」才出来；设置页签写字，不是图标。
-  expect(await ui.find({ type: 'Text', text: /^方案出来了。$/ })).toBeFalsy()
-  await ui.press({ key: 'cx11' })
+  // 每个问题都摊开：背景全文、建议、照办 / 不同意… / 不用问了，不用再点开。
   await has(/^方案出来了。$/)
+  await want(ui, { key: 'ok11' })
+  await want(ui, { key: 'dm11' })
+  // 设置页签写字，不是图标。
   await want(ui, { key: 'tab-setup' })
   expect(await ui.find({ text: /⚙/ })).toBeFalsy()
   // 刚定的缩成一行，能撤回；撤掉的灰字说为什么；答了很久的不显示。
@@ -435,7 +431,6 @@ test('要你定按事情合成一张卡：每个问题各自回，刚定的能�
   await ui.press({ key: 're13' })
   expect(runs.some(r => r.argv === 'ask reopen 13')).toBe(true)
   expect(prompts.at(-1)).toBe('chief：问题 #13 的回答撤回了')
-  await ui.press({ key: 'ex12' })
   await ui.press({ key: 'dm12' })
   expect(runs.some(r => r.argv === 'ask dismiss 12')).toBe(true)
   expect(prompts.at(-1)).toBe('chief：问题 #12 不用问了')

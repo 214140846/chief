@@ -51,62 +51,31 @@ export function nowTab($: Engine, ui: Els, s: Snapshot, opened: string[] = [], e
     }
   }
 
-  // ── 一个问题 ──
-  // 一件事只有一个问题：直接摊开（问什么、建议、按钮，背景点了才看）。
-  // 一件事好几个问题：先是一张清单，每个问题一行——问什么、一句建议、右边「照办」和 ▸；
-  // 点 ▸ 才在一个框里摊开那一个（完整建议、背景、不同意、不用问了），一眼看得出哪几个问题、现在看的是哪个。
-  const askBody = (q: AskRow) => {
+  // ── 一个问题一张卡：问什么（加粗）→ 背景（灰字，全文）→ 建议 → 照办 / 不同意… / 不用问了 ──
+  const askCard = (q: AskRow, fresh: boolean) => {
     const linked = q.reply === undefined ? undefined : s.replies.find(r => r.id === q.reply)
-    const { context } = splitAsk(q.question)
-    const ctxOpen = opened.includes(`ctx${q.id}`)
+    const { context, ask } = splitAsk(q.question)
     const typing = opened.includes(`dis${q.id}`)
-    return [
-      q.suggest !== '' && <Text key={`sg${q.id}`} size="footnote" wrap="wrap"><Text dimColor>{w.suggest}{t().gap}</Text>{listify(q.suggest).replace(/\n\n/g, '\n')}</Text>,
-      linked && <Text key={`lk${q.id}`} size="footnote" dimColor wrap="wrap">{w.linked(replyGist(linked))}</Text>,
-      ctxOpen && context !== '' && <Text key={`ct${q.id}`} size="footnote" dimColor wrap="wrap">{context}</Text>,
-      <Box key={`bt${q.id}`} flexDirection="row" gap="sm" alignItems="center" flexWrap="wrap">
-        {q.suggest !== '' && (
-          <Button key={`ok${q.id}`} variant="primary" onPress={() => answerAsk($, q.id, '照建议办', w.ok, `chief：问题 #${q.id} 照建议办`)}>{w.ok}</Button>
+    return (
+      <Box key={`q${q.id}`} flexDirection="column" gap="xs" borderStyle="round" borderColor="inactive" paddingX="md" paddingY="sm">
+        <Text weight="semibold" wrap="wrap">{fresh && <Text size="caption" color="warning">{w.fresh}{t().gap}</Text>}{listify(ask).replace(/\n\n/g, '\n')}</Text>
+        {context !== '' && <Text size="footnote" dimColor wrap="wrap">{context}</Text>}
+        {q.suggest !== '' && <Text size="footnote" wrap="wrap"><Text dimColor>{w.suggest}{t().gap}</Text>{listify(q.suggest).replace(/\n\n/g, '\n')}</Text>}
+        {linked && <Text size="footnote" dimColor wrap="wrap">{w.linked(replyGist(linked))}</Text>}
+        <Box flexDirection="row" gap="sm" alignItems="center" flexWrap="wrap">
+          {q.suggest !== '' && (
+            <Button key={`ok${q.id}`} variant="primary" onPress={() => answerAsk($, q.id, '照建议办', w.ok, `chief：问题 #${q.id} 照建议办`)}>{w.ok}</Button>
+          )}
+          <Button key={`no${q.id}`} plain onPress={() => toggle($, `dis${q.id}`)}>{w.disagreeShort}</Button>
+          <Button key={`dm${q.id}`} plain onPress={() => dismissAsk($, q.id, w.dismiss)}>{w.dismiss}</Button>
+        </Box>
+        {typing && 'Input' in ui && (
+          <ui.Input key={`in${q.id}`} autoFocus placeholder={w.disagree} submitLabel={w.send} onSubmit={(v: string) => {
+            if (v.trim()) void answerAsk($, q.id, v.trim(), w.yourCall, `chief：问题 #${q.id} 的回答：${v.trim()}`)
+          }} />
         )}
-        <Button key={`no${q.id}`} plain onPress={() => toggle($, `dis${q.id}`)}>{w.disagreeShort}</Button>
-        <Button key={`dm${q.id}`} plain onPress={() => dismissAsk($, q.id, w.dismiss)}>{w.dismiss}</Button>
-        {context !== '' && <Button key={`cx${q.id}`} plain onPress={() => toggle($, `ctx${q.id}`)}>{ctxOpen ? w.hideContext : w.context}</Button>}
-      </Box>,
-      typing && 'Input' in ui && (
-        <ui.Input key={`in${q.id}`} autoFocus placeholder={w.disagree} submitLabel={w.send} onSubmit={(v: string) => {
-          if (v.trim()) void answerAsk($, q.id, v.trim(), w.yourCall, `chief：问题 #${q.id} 的回答：${v.trim()}`)
-        }} />
-      ),
-    ]
-  }
-  const question = (q: AskRow, fresh: boolean) => (
-    <Text weight="semibold" wrap="wrap">{fresh && <Text size="caption" color="warning">{w.fresh}{t().gap}</Text>}{listify(splitAsk(q.question).ask).replace(/\n\n/g, '\n')}</Text>
-  )
-  // 只有一个问题：摊开。
-  const askOpen = (q: AskRow, fresh: boolean) => (
-    <Box key={`q${q.id}`} flexDirection="column" gap="xs" marginTop="xs">
-      {question(q, fresh)}
-      {askBody(q)}
-    </Box>
-  )
-  // 好几个问题里的一行：收着是一行半，点 ▸ 在框里摊开。
-  const askLine = (q: AskRow, fresh: boolean) => {
-    const isOpen = opened.includes(`q-${q.id}`)
-    const head = (
-      <Box flexDirection="row" gap="sm" alignItems="flex-start">
-        <Box flexDirection="column" flexGrow={1} flexShrink={1} gap="xs">
-          {question(q, fresh)}
-          {!isOpen && q.suggest !== '' && <Text size="footnote" wrap="wrap"><Text dimColor>{w.suggest}{t().gap}</Text>{short(q.suggest, 40)}</Text>}
-        </Box>
-        <Box flexDirection="row" gap="xs" alignItems="center">
-          {!isOpen && q.suggest !== '' && <Button key={`ok${q.id}`} variant="primary" onPress={() => answerAsk($, q.id, '照建议办', w.ok, `chief：问题 #${q.id} 照建议办`)}>{w.ok}</Button>}
-          <Button key={`ex${q.id}`} plain onPress={() => toggle($, `q-${q.id}`)}>{isOpen ? '▾' : '▸'}</Button>
-        </Box>
       </Box>
     )
-    return isOpen
-      ? <Box key={`q${q.id}`} flexDirection="column" gap="xs" borderStyle="round" borderColor="suggestion" paddingX="sm" paddingY="xs" marginTop="sm">{head}{askBody(q)}</Box>
-      : <Box key={`q${q.id}`} flexDirection="column" marginTop="sm">{head}</Box>
   }
 
   // 定过的、撤掉的：缩成一行。你刚定的两分钟内能撤回。
@@ -123,42 +92,45 @@ export function nowTab($: Engine, ui: Els, s: Snapshot, opened: string[] = [], e
   )
 
   // ── 一件事一张卡：标题、截止、去会话；会话在等你点的最前，然后问题、回复 ──
-  const card = (c: Card) => {
+  // ── 一件事一组：小标题（事情、截止、等你的有几样、去会话），下面会话等你点、每个问题、每条回复各一张卡 ──
+  const group = (c: Card) => {
     const th = c.thing
     const title = th ? th.title : c.replies[0] ? whatOf(c.replies[0]) : c.sending[0] ? whatOf(c.sending[0]) : w.ask
     const due = th?.due === undefined ? undefined : dueLabel(th.due)
     const ready = c.asks.filter(q => q.suggest !== '')
+    const counts = [c.waiting ? w.nWaiting : '', c.asks.length > 0 ? w.nAsks(c.asks.length) : '', c.replies.length > 0 ? w.nReplies(c.replies.length) : ''].filter(Boolean).join(' · ')
     const id = th ? `card${th.id}` : `card-${c.key}`
     return (
-      <Box key={id} flexDirection="column" borderStyle="round" borderColor={c.rank <= 1 ? 'error' : 'inactive'} paddingX="md" paddingY="sm" gap="xs" marginTop="sm">
+      <Box key={id} flexDirection="column" gap="sm" marginTop="lg">
         <Box flexDirection="row" justifyContent="space-between" alignItems="flex-start" gap="sm">
           <Box flexDirection="column" flexShrink={1}>
             <Text weight="semibold" wrap="wrap">{title}</Text>
-            {(due || c.asks.length > 1) && (
-              <Text size="caption" wrap="wrap">
-                {due && <Text color={due.color} dimColor={due.color === undefined}>{due.text}</Text>}
-                {due && c.asks.length > 1 ? ' · ' : ''}
-                {c.asks.length > 1 && <Text color="warning">{w.pending(c.asks.length)}</Text>}
-              </Text>
-            )}
+            <Text size="caption" wrap="wrap">
+              {due && <Text color={due.color} dimColor={due.color === undefined}>{due.text}</Text>}
+              {due && counts ? ' · ' : ''}
+              {counts && <Text color="warning">{counts}</Text>}
+            </Text>
           </Box>
-          {c.session && !c.waiting && <Button key={`oa-${c.key}`} plain onPress={() => openSession($, c.session ?? '', title)}>{w.goSession}</Button>}
+          {c.session && <Button key={`oa-${c.key}`} plain onPress={() => openSession($, c.session ?? '', title)}>{w.goSession}</Button>}
         </Box>
         {c.waiting && (
-          <Box flexDirection="column" gap="xs">
-            <Text wrap="wrap"><Text color="error" weight="semibold">{w.waiting}{t().colon}</Text>{c.waiting}</Text>
+          <Box flexDirection="column" gap="xs" borderStyle="round" borderColor="error" paddingX="md" paddingY="sm">
+            <Text size="caption" weight="semibold" color="error">{w.waiting}</Text>
+            <Text wrap="wrap">{c.waiting}</Text>
             <Box flexDirection="row"><Button key={`go-${c.key}`} variant="primary" onPress={() => openSession($, c.session ?? '', title)}>{w.goPoint}</Button></Box>
           </Box>
         )}
-        {c.asks.length === 1
-          ? askOpen(c.asks[0], false)
-          : c.asks.map(q => askLine(q, Date.parse(q.at) - Date.parse(c.asks[0].at) > 60_000))}
-        {c.replies.map(r => replyCard($, ui, s, edit, opened, r))}
+        {c.asks.map(q => askCard(q, c.asks.length > 1 && Date.parse(q.at) - Date.parse(c.asks[0].at) > 60_000))}
+        {c.replies.map(r => (
+          <Box key={`rc${r.id}`} flexDirection="column" borderStyle="round" borderColor={r.status === 'failed' ? 'error' : 'inactive'} paddingX="md" paddingY="sm">
+            {replyCard($, ui, s, edit, opened, r)}
+          </Box>
+        ))}
         {c.sending.map(r => sendingRow($, ui, r))}
         {c.closed.map(closedRow)}
         {ready.length > 1 && (
-          <Box flexDirection="row" marginTop="xs">
-            <Button key={`all-${c.key}`} onPress={() => answerAll($, ready.map(q => q.id), w.allOk)}>{w.allOk}</Button>
+          <Box flexDirection="row">
+            <Button key={`all-${c.key}`} onPress={() => answerAll($, ready.map(q => q.id), w.allOk)}>{w.allN(ready.length)}</Button>
           </Box>
         )}
       </Box>
@@ -174,7 +146,7 @@ export function nowTab($: Engine, ui: Els, s: Snapshot, opened: string[] = [], e
         </Box>
       )}
       {empty && <Box marginTop="sm"><Text color="success">{w.clear}</Text></Box>}
-      {box.cards.map(card)}
+      {box.cards.map(group)}
       {box.withdrawn.length > 0 && (
         <Box flexDirection="column" marginTop="sm">
           <Text size="caption" dimColor>{w.withdrawnToday}</Text>
