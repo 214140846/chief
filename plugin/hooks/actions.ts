@@ -336,7 +336,7 @@ export async function markRight($: Engine, event: number) {
   await act($, t().act.review(event), ['review', String(event), 'ok'])
 }
 
-// 标错：记下你说的应该怎样，再让主会话据此提议一条规矩（在策略页等你采纳）。
+// 标错：记下你说的应该怎样，再让主会话据此提议一条规矩（在「要你」页等你采纳）。
 export async function markWrong($: Engine, event: number, should: string) {
   if (!(await act($, t().act.review(event), ['review', String(event), 'wrong'], should))) return
   await tell($, `chief：判断 #${event} 错了：${should}`, t().act.correct)
