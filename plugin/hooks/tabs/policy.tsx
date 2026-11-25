@@ -4,7 +4,7 @@ import type { EngineInterface as Engine, RenderChildren } from 'claude-code'
 
 import { DEFAULT_PLACEMENT, DEFAULT_SIGNATURE } from '../../engine/src/shared/rules'
 import type { Handle, ReplyMode, Rule, Snapshot } from '../../types'
-import { addCustom, addQuick, addRule, addStyle, askAlways, removeCustom, removeQuick, removeRule, removeStyle, setBrief, setPlacement, setScenario, setSignature, toggle, trust } from '../actions'
+import { addCustom, addQuick, addRule, addStyle, askAlways, removeCustom, removeQuick, removeRule, removeStyle, setBrief, setMode, setPlacement, setScenario, setSignature, toggle, trust } from '../actions'
 import { L, t } from '../i18n'
 import { scenarioName, select, type Els } from '../ui'
 import { howItDoes } from './eval'
@@ -102,6 +102,13 @@ export function policyTab($: Engine, ui: Els, s: Snapshot, opened: string[]) {
           {w.help.map((x, i) => <Text key={`ph${i}`} size="footnote" dimColor wrap="wrap">{x}</Text>)}
         </Box>
       )}
+
+      {section('sec-mode', w.modeTitle, undefined,
+        <Box key="mode" flexDirection="row" justifyContent="flex-end">
+          {select(ui, 'mode', p.mode ?? 'normal', [{ value: 'normal', label: w.modeNormal }, { value: 'auto', label: w.modeAuto }, { value: 'yolo', label: w.modeYolo }], v => void setMode($, v as 'normal' | 'auto' | 'yolo'))}
+        </Box>,
+        p.mode === 'auto' && <Text key="mode-sub" size="caption" dimColor wrap="wrap">{w.modeAutoSub}</Text>,
+        p.mode === 'yolo' && <Text key="mode-sub" size="caption" dimColor wrap="wrap">{w.modeYoloSub}</Text>)}
 
       {section('sec-scenarios', w.scenariosTitle, w.scenariosSub,
         Object.entries(p.scenarios).map(([k, v]) => ruleRow(k, scenarioName(k), v)))}

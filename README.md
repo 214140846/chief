@@ -91,6 +91,18 @@ Outside `~/chief` there are only system-defined locations:
 - Login item: `~/Library/LaunchAgents/dev.chief.engine.plist`.
 - The plugin and its store (in Claude's plugin directory): the store holds the confirm key the panel uses to prove a send was yours; `~/chief/data` only has its fingerprint.
 
+## Modes: normal / auto / yolo
+
+How much the hub may decide for you. Set it at the top of the panel's Policy tab.
+
+- **normal**: today's behaviour; the rules decide what is sent directly and what asks you.
+- **auto**: fewer clicks. Replies and approvals coming from GitHub, Jira, Notion and sessions no longer ask you. Slack still follows the scenario rules and the trusted list.
+- **yolo**: the assistant decides everything. Slack replies, approvals and new messages it starts all go out without asking; only the "Always ask me" list can stop it.
+
+Switching up to auto or yolo loosens sending, so it must be clicked in the panel (it carries the confirm key); the hub cannot switch it itself and can only propose it. Switching back to normal needs no key.
+
+Yolo risk: replies and approvals go out directly. A sent reply can be undone within 5 seconds; a decision made for you on a "needs your call" question can be undone within two minutes. Before turning it on, add the people and conversations you do not trust it with to the "Always ask me" list.
+
 ## Settings
 
 Engine settings live in `~/chief/config.json`. `chief config` lists every setting and its current value; `chief config set <key> <value>` changes one. Rules (`rules.json`) are changed on the Rules page or by telling the hub, not here.
