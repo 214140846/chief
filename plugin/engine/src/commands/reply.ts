@@ -160,7 +160,7 @@ export async function reply(args: string[]): Promise<void> {
       all.items.push(x);
       return x;
     });
-    process.stdout.write(`${JSON.stringify({ id: r.id, kind: "message", to, ...(thread ? { thread_ts: thread } : {}) })}\n`);
+    process.stdout.write(`${JSON.stringify({ id: r.id, kind: "message", to, policy: autoReason(r, loadPolicy(), null) === null ? "ask" : "auto", ...(thread ? { thread_ts: thread } : {}) })}\n`);
     return;
   }
   if (sub === "list") {

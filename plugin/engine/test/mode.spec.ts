@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { autoReason } from "../src/gate";
 import type { Mode } from "../src/shared/types";
-import { defaultPolicy } from "../src/store";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { defaultPolicy, loadPolicy, paths } from "../src/store";
 
 const ev = (source: "slack" | "github", why?: string) => ({
   id: 1, at: "t", source, kind: "message.received", title: "x", url: null, from: "Bob Lee", fromId: "U0BOB1234", text: "x https://github.com/o/r/pull/4",
@@ -62,8 +65,11 @@ describe("做事方式 normal / auto / yolo 对发送的影响", () => {
     // 新消息按去处的编号对名单（目标是 target.to）。
     expect(autoReason(message as never, pol("yolo", ["C0NEWCHAN1"]), null)).toBeNull();
     const toUser = reply("slack", { to: "U0NEWUSER1" }, { kind: "message" });
-    expect(autoReason(toUser as never, pol("yolo", ["U0NEWUSER1"]), null)).toBeNull();
-    expect(autoReason(toUser as never, pol("yolo", ["U0OTHERUSER"]), null)).toBe("模式 yolo");
+    // 发给某个人、私信：名单对不上人（用户编号、私信编号、显示名各不相同），一律问。
+    expect(autoReason(toUser as never, pol("yolo"), null)).toBeNull();
+    expect(autoReason(toUser as never, pol("yolo", ["U0OTHERUSER"]), null)).toBeNull();
+    expect(autoReason(reply("slack", { to: "D0NEWDM001" }, { kind: "message" }) as never, pol("yolo"), null)).toBeNull();
+    expect(autoReason(reply("slack", { to: "bob@example.com" }, { kind: "message" }) as never, pol("yolo"), null)).toBeNull();
     // 去处不是 Slack 编号（认不出是谁）：宁可问。
     expect(autoReason(reply("slack", { to: "general" }, { kind: "message" }) as never, pol("yolo"), null)).toBeNull();
   });
@@ -72,5 +78,26 @@ describe("做事方式 normal / auto / yolo 对发送的影响", () => {
     expect(autoReason(reply("slack", { channel: "C0OTHER", ts: "9.9" }) as never, pol("yolo"), slack as never)).toBeNull();
     expect(autoReason(reply("github", { ref: "o/r#99" }, { kind: "approve", body: "" }) as never, pol("yolo"), gh as never)).toBeNull();
     expect(autoReason({ ...slackReply, event: 2 } as never, pol("yolo"), slack as never)).toBeNull();
+  });
+});
+
+describe("磁盘上的 mode", () => {
+  it("缺 mode 或写了不认识的值：回落 normal；只认 auto、yolo", () => {
+    const h = mkdtempSync(join(tmpdir(), "chief-mode-"));
+    const before = process.env.CHIEF_HOME;
+    process.env.CHIEF_HOME = h;
+    try {
+      for (const body of [{}, { mode: "wild" }, { mode: 1 }, { mode: "YOLO" }, { mode: null }]) {
+        writeFileSync(paths().policy, JSON.stringify(body));
+        expect(loadPolicy().mode).toBe("normal");
+      }
+      for (const mode of ["auto", "yolo"]) {
+        writeFileSync(paths().policy, JSON.stringify({ mode }));
+        expect(loadPolicy().mode).toBe(mode);
+      }
+    } finally {
+      if (before === undefined) delete process.env.CHIEF_HOME;
+      else process.env.CHIEF_HOME = before;
+    }
   });
 });

@@ -22,7 +22,7 @@ function sameTarget(r: Reply, event: ChiefEvent): boolean {
 }
 
 // 规矩允许直接发（--policy）：引擎自己按规矩再算一遍，算出来要问你的发不出去，主会话怎么理解都没用。
-// 返回放行的理由；null 是这条要你确认。只放行回答收到的消息、回到那条消息自己的地方；主动发的新消息（reply new）一律问你。
+// 返回放行的理由；null 是这条要你确认。只放行回答收到的消息、回到那条消息自己的地方；主动发的新消息（reply new）默认问你，yolo 下发到频道的除外（见下面）。
 // 模式放宽的是「哪些回复不用你点」。三道不放宽：「一定问我」名单、approve 只能是这条消息自己的 PR、回复只回到这条消息自己的地方。
 // auto 只放开两种：approve 别人的 PR（GitHub 上「PR 请我 review」的事件，PR 不是我的）；回自己 PR 上的话（别人评论、approve、要求修改）。
 // 回别人的话（Slack、GitHub、Jira、Notion 上的）、approve 原文里提到的 PR、主动发的新消息，仍按场景规矩和白名单。
@@ -38,10 +38,11 @@ function approveByMode(pol: Policy, event: ChiefEvent): string | null {
 }
 
 export function autoReason(r: Reply, pol: Policy, event: ChiefEvent | null): string | null {
-  // 主动发的新消息（reply new，目标是 target.to）：只有 yolo 放行。去处认不出是 Slack 编号的不放；在「一定问我」名单里的（按编号写）照样问。
+  // 主动发的新消息（reply new，目标是 target.to）：只有 yolo 放行，而且只放发到频道（C…、G…）的：
+  // 人（U…）、私信（D…）、邮箱的编号和名单里写的名字对不上（同一个人有用户编号、私信编号、显示名），名单拦不住，所以仍问你。在名单里的频道照样问。
   if (r.kind === "message") {
     const to = (r.target.to ?? "").trim();
-    if (pol.mode !== "yolo" || !isSlackId(to)) return null;
+    if (pol.mode !== "yolo" || !isSlackId(to) || !/^[CG]/.test(to)) return null;
     return mustAsk(pol.askAlways, { from: "", fromId: to, reply: { channel: to } }) ? null : "模式 yolo";
   }
   if (event === null || r.event !== event.id) return null;

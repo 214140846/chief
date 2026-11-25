@@ -1175,8 +1175,13 @@ describe("谁能让回复发出去：引擎把关，不靠主会话自觉", () =
     const s = add(1);
     expect(s.policy).toBe("auto");
     expect(chief(h, "reply", "queue", String(s.id), "--policy")).toContain("模式 yolo");
-    const fresh = JSON.parse(chief(h, "reply", "new", "--to", "C0NEWCHAN1", "--file", draft(h, "n1.md", "新话题"))) as { id: number };
+    const fresh = JSON.parse(chief(h, "reply", "new", "--to", "C0NEWCHAN1", "--file", draft(h, "n1.md", "新话题"))) as { id: number; policy: string };
+    expect(fresh.policy).toBe("auto");
     expect(chief(h, "reply", "queue", String(fresh.id), "--policy")).toContain("模式 yolo");
+    // 发给某个人：名单对不上人，仍问。
+    const toUser = JSON.parse(chief(h, "reply", "new", "--to", "U0SOMEONE99", "--file", draft(h, "n3.md", "私下说一句"))) as { id: number; policy: string };
+    expect(toUser.policy).toBe("ask");
+    expect(chiefFails(h, "reply", "queue", String(toUser.id), "--policy")).toContain("要你确认");
     withStdin(h, "C0BLOCKED1", "rules", "always", "add");
     const blocked = JSON.parse(chief(h, "reply", "new", "--to", "C0BLOCKED1", "--file", draft(h, "n2.md", "新话题 2"))) as { id: number };
     expect(chiefFails(h, "reply", "queue", String(blocked.id), "--policy")).toContain("要你确认");

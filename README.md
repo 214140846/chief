@@ -93,15 +93,15 @@ Outside `~/chief` there are only system-defined locations:
 
 ## Modes: normal / auto / yolo
 
-How much the hub may decide for you. Set it at the top of the panel's Policy tab.
+How much the hub may decide for you. Set it at the top of the panel's Rules tab.
 
 - **normal**: today's behaviour; the rules decide what is sent directly and what asks you.
-- **auto**: fewer clicks. Approving other people's PRs (a "review requested from me" event) and replying on your own PRs (comments, approvals, requested changes) no longer ask you. Replies to other people on Slack, GitHub, Jira and Notion, approvals of PRs mentioned elsewhere, and new messages still follow the scenario rules and the trusted list. Comments from bots are never reported, so there is nothing to answer.
-- **yolo**: the assistant decides everything. Slack replies, approvals and new messages it starts all go out without asking; only the "Always ask me" list can stop it (for a new message, list the Slack id of the person or conversation).
+- **auto**: fewer clicks. Approving other people's PRs (a "review requested from me" event) and replying on your own PRs (comments, approvals, requested changes) no longer ask you. Replies to other people on Slack, GitHub, Jira and Notion, approvals of PRs mentioned elsewhere, and new messages still follow the scenario rules and the trusted list. The approval case covers only the first notice of a review request. Comments from bots are never reported, so there is nothing to answer.
+- **yolo**: the assistant decides everything. Slack replies, approvals and new channel messages it starts all go out without asking, and neither the scenario rules nor your custom cases apply any more; only the "Always ask me" list can stop it. New messages to a person, a DM or an email address still ask you, because the list cannot reliably match them (one person has a user id, a DM id and a display name).
 
 Switching up to auto or yolo loosens sending, so it must be clicked in the panel (it carries the confirm key); the hub cannot switch it itself and can only propose it. Switching back to normal needs no key.
 
-Yolo risk: replies and approvals go out directly. A sent reply can be undone within 5 seconds; a decision made for you on a "needs your call" question can be undone within two minutes, but undoing only changes the answer: a reply already sent or an approval already given is not taken back. Before turning it on, add the people and conversations you do not trust it with to the "Always ask me" list.
+Yolo risk: replies and approvals go out directly. A sent reply can be undone within the undo window (5 seconds by default, `undoSeconds`); a decision made for you on a "needs your call" question can be undone within two minutes, but undoing only changes the answer: a reply already sent or an approval already given is not taken back. To make decisions, the hub reads your own typed messages in past Claude sessions (`~/.claude/projects/*/*.jsonl`) and your memory notes, and quotes only a one-line summary. Tool results and other people's words are not evidence. Before turning it on, add the people and conversations you do not trust it with to the "Always ask me" list.
 
 ## Settings
 

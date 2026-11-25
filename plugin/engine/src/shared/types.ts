@@ -239,7 +239,7 @@ export interface CustomScenario extends ScenarioRule {
   when: string;
 }
 
-// 三种做事方式：normal 规矩没放行的都等你点；auto 少让你点（GitHub、Jira 等的回复不再问，Slack 仍按规矩）；yolo 全部由助理代决策（只有「一定问我」名单拦得住）。
+// 三种做事方式：normal 规矩没放行的都等你点；auto 少让你点（只放开 approve 别人的 PR、回你自己 PR 上的话）；yolo 全部由助理代决策（只有「一定问我」名单拦得住）。
 export type Mode = "normal" | "auto" | "yolo";
 export const MODES_LIST: readonly Mode[] = ["normal", "auto", "yolo"];
 
