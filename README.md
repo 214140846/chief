@@ -96,12 +96,12 @@ Outside `~/chief` there are only system-defined locations:
 How much the hub may decide for you. Set it at the top of the panel's Policy tab.
 
 - **normal**: today's behaviour; the rules decide what is sent directly and what asks you.
-- **auto**: fewer clicks. Replies and approvals coming from GitHub, Jira, Notion and sessions no longer ask you. Slack still follows the scenario rules and the trusted list.
-- **yolo**: the assistant decides everything. Slack replies, approvals and new messages it starts all go out without asking; only the "Always ask me" list can stop it.
+- **auto**: fewer clicks. Approving other people's PRs (a "review requested from me" event) and replying on your own PRs (comments, approvals, requested changes) no longer ask you. Replies to other people on Slack, GitHub, Jira and Notion, approvals of PRs mentioned elsewhere, and new messages still follow the scenario rules and the trusted list. Comments from bots are never reported, so there is nothing to answer.
+- **yolo**: the assistant decides everything. Slack replies, approvals and new messages it starts all go out without asking; only the "Always ask me" list can stop it (for a new message, list the Slack id of the person or conversation).
 
 Switching up to auto or yolo loosens sending, so it must be clicked in the panel (it carries the confirm key); the hub cannot switch it itself and can only propose it. Switching back to normal needs no key.
 
-Yolo risk: replies and approvals go out directly. A sent reply can be undone within 5 seconds; a decision made for you on a "needs your call" question can be undone within two minutes. Before turning it on, add the people and conversations you do not trust it with to the "Always ask me" list.
+Yolo risk: replies and approvals go out directly. A sent reply can be undone within 5 seconds; a decision made for you on a "needs your call" question can be undone within two minutes, but undoing only changes the answer: a reply already sent or an approval already given is not taken back. Before turning it on, add the people and conversations you do not trust it with to the "Always ask me" list.
 
 ## Settings
 

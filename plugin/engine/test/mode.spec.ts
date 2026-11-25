@@ -3,9 +3,9 @@ import { autoReason } from "../src/gate";
 import type { Mode } from "../src/shared/types";
 import { defaultPolicy } from "../src/store";
 
-const ev = (source: "slack" | "github") => ({
+const ev = (source: "slack" | "github", why?: string) => ({
   id: 1, at: "t", source, kind: "message.received", title: "x", url: null, from: "Bob Lee", fromId: "U0BOB1234", text: "x https://github.com/o/r/pull/4",
-  why: source === "slack" ? ["dm"] : ["review_requested"], keys: ["github.com/o/r/pull/4"],
+  why: [why ?? (source === "slack" ? "dm" : "review")], keys: ["github.com/o/r/pull/4"],
   reply: source === "slack" ? { channel: "D0BOB1234", ts: "1.1" } : { ref: "o/r#4" },
 });
 const reply = (source: "slack" | "github", target: Record<string, string>, extra: Record<string, unknown> = {}) => ({
@@ -15,11 +15,12 @@ const pol = (mode: Mode, askAlways: string[] = []) => ({ ...defaultPolicy(), mod
 
 describe("做事方式 normal / auto / yolo 对发送的影响", () => {
   const slack = ev("slack");
-  const gh = ev("github");
+  const gh = ev("github"); // PR 请我 review：别人的 PR
+  const mine = ev("github", "comment"); // 别人评论了我的 PR
   const slackReply = reply("slack", { channel: "D0BOB1234", ts: "1.1" });
   const ghReply = reply("github", { ref: "o/r#4" });
   const approve = reply("github", { ref: "o/r#4" }, { kind: "approve", body: "" });
-  const message = reply("slack", { channel: "C0NEWCHAN1", user: "U0NEWUSER1" }, { kind: "message" });
+  const message = reply("slack", { to: "C0NEWCHAN1" }, { kind: "message" });
 
   it("缺 mode 的旧规矩等于 normal：和以前一样，回复都要确认", () => {
     expect(defaultPolicy().mode).toBe("normal");
@@ -28,9 +29,17 @@ describe("做事方式 normal / auto / yolo 对发送的影响", () => {
     expect(autoReason(message as never, pol("normal"), null)).toBeNull();
   });
 
-  it("auto：Slack 以外的回复直接发，Slack 仍按规矩；新消息、approve 仍不放", () => {
-    expect(autoReason(ghReply as never, pol("auto"), gh as never)).toBe("模式 auto");
-    expect(autoReason(approve as never, pol("auto"), gh as never)).toBe("模式 auto");
+  it("auto：approve 别人的 PR、回我自己 PR 上的话直接发；回别人的话、新消息仍按规矩", () => {
+    expect(autoReason(approve as never, pol("auto"), gh as never)).toBe("模式 auto（别人的 PR）");
+    expect(autoReason(ghReply as never, pol("auto"), mine as never)).toBe("模式 auto（我自己的 PR）");
+    // 回别人的话：GitHub 上（PR 请我 review、@我）、Slack 上都还要点。
+    expect(autoReason(ghReply as never, pol("auto"), gh as never)).toBeNull();
+    expect(autoReason(ghReply as never, pol("auto"), ev("github", "mention") as never)).toBeNull();
+    // 我的 PR 被 approve、被要求修改：是我自己的 PR，回复放。
+    expect(autoReason(ghReply as never, pol("auto"), ev("github", "approved") as never)).toBe("模式 auto（我自己的 PR）");
+    // approve 只放「PR 请我 review」的；别的事件里提到的 PR 不放。
+    expect(autoReason(approve as never, pol("auto"), mine as never)).toBeNull();
+    expect(autoReason(approve as never, pol("auto"), ev("github", "mention") as never)).toBeNull();
     expect(autoReason(slackReply as never, pol("auto"), slack as never)).toBeNull();
     expect(autoReason(message as never, pol("auto"), null)).toBeNull();
   });
@@ -50,8 +59,13 @@ describe("做事方式 normal / auto / yolo 对发送的影响", () => {
         if (entry !== "D0BOB1234") expect(autoReason(ghReply as never, pol(mode, [entry]), gh as never)).toBeNull();
       }
     }
-    expect(autoReason(message as never, pol("yolo", ["U0NEWUSER1"]), null)).toBeNull();
+    // 新消息按去处的编号对名单（目标是 target.to）。
     expect(autoReason(message as never, pol("yolo", ["C0NEWCHAN1"]), null)).toBeNull();
+    const toUser = reply("slack", { to: "U0NEWUSER1" }, { kind: "message" });
+    expect(autoReason(toUser as never, pol("yolo", ["U0NEWUSER1"]), null)).toBeNull();
+    expect(autoReason(toUser as never, pol("yolo", ["U0OTHERUSER"]), null)).toBe("模式 yolo");
+    // 去处不是 Slack 编号（认不出是谁）：宁可问。
+    expect(autoReason(reply("slack", { to: "general" }, { kind: "message" }) as never, pol("yolo"), null)).toBeNull();
   });
 
   it("模式不放宽去处：回复发到别的地方、approve 别的 PR，都不放", () => {

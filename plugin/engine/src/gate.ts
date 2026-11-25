@@ -1,6 +1,6 @@
 // 谁能让回复发出去。命令行（chief reply queue --policy）放行前算一遍，引擎发之前再算一遍（见 engine.ts 的 sendDue）。
 import { createHash } from "node:crypto";
-import { isTrusted, mustAsk, scenarioOf, SCENARIOS, type ChiefEvent, type Policy, type Reply } from "./store";
+import { isSlackId, isTrusted, mustAsk, scenarioOf, SCENARIOS, type ChiefEvent, type Policy, type Reply } from "./store";
 
 // 一条事件自己的 PR（owner/repo#号，小写）：GitHub 的事件就是它回到的那个 PR；
 // 别的（比如 Slack 里有人贴了 PR 链接）是引擎从原文里认出来的 PR 链接。
@@ -24,17 +24,25 @@ function sameTarget(r: Reply, event: ChiefEvent): boolean {
 // 规矩允许直接发（--policy）：引擎自己按规矩再算一遍，算出来要问你的发不出去，主会话怎么理解都没用。
 // 返回放行的理由；null 是这条要你确认。只放行回答收到的消息、回到那条消息自己的地方；主动发的新消息（reply new）一律问你。
 // 模式放宽的是「哪些回复不用你点」。三道不放宽：「一定问我」名单、approve 只能是这条消息自己的 PR、回复只回到这条消息自己的地方。
-// auto：Slack 以外的来源（GitHub、Jira、Notion、会话）不再问，Slack 仍按场景规矩和白名单；yolo：全部不问，包括主动发的新消息。
+// auto 只放开两种：approve 别人的 PR（GitHub 上「PR 请我 review」的事件，PR 不是我的）；回自己 PR 上的话（别人评论、approve、要求修改）。
+// 回别人的话（Slack、GitHub、Jira、Notion 上的）、approve 原文里提到的 PR、主动发的新消息，仍按场景规矩和白名单。
+// GitHub 上机器人的评论引擎本来就不报，没有要回的。yolo：全部不问，包括 approve 和主动发的新消息。
+const OWN_PR = new Set<string>(["github_comment", "github_approved", "github_changes"]);
 function byMode(pol: Policy, event: ChiefEvent): string | null {
   if (pol.mode === "yolo") return "模式 yolo";
-  return pol.mode === "auto" && event.source !== "slack" ? "模式 auto" : null;
+  return pol.mode === "auto" && OWN_PR.has(scenarioOf(event)) ? "模式 auto（我自己的 PR）" : null;
+}
+function approveByMode(pol: Policy, event: ChiefEvent): string | null {
+  if (pol.mode === "yolo") return "模式 yolo";
+  return pol.mode === "auto" && event.source === "github" && event.why[0] === "review" ? "模式 auto（别人的 PR）" : null;
 }
 
 export function autoReason(r: Reply, pol: Policy, event: ChiefEvent | null): string | null {
-  // 主动发的新消息（reply new）：只有 yolo 放行；目标在「一定问我」名单里的（对话编号、人的编号）照样问。
+  // 主动发的新消息（reply new，目标是 target.to）：只有 yolo 放行。去处认不出是 Slack 编号的不放；在「一定问我」名单里的（按编号写）照样问。
   if (r.kind === "message") {
-    const who = r.target.user ?? r.target.channel ?? null;
-    return pol.mode === "yolo" && !mustAsk(pol.askAlways, { from: "", fromId: who ?? "", reply: r.target }) ? "模式 yolo" : null;
+    const to = (r.target.to ?? "").trim();
+    if (pol.mode !== "yolo" || !isSlackId(to)) return null;
+    return mustAsk(pol.askAlways, { from: "", fromId: to, reply: { channel: to } }) ? null : "模式 yolo";
   }
   if (event === null || r.event !== event.id) return null;
   // 「一定问我」名单里的人和对话：什么规矩都不放行（模式也不行）。
@@ -42,8 +50,8 @@ export function autoReason(r: Reply, pol: Policy, event: ChiefEvent | null): str
   if (r.kind === "approve") {
     // approve 的只能是这条消息自己的 PR，而且要按「直接 approve」的规矩。
     if (!prsOf(event).includes((r.target.ref ?? "").toLowerCase())) return null;
-    const m = byMode(pol, event);
-    if (m !== null) return m;
+    const am = approveByMode(pol, event);
+    if (am !== null) return am;
     if (r.custom !== undefined) {
       const c = pol.custom.find((x) => x.id === r.custom);
       return c?.handle === "approve" && c.reply === "auto" ? `你加的情况 custom:${c.id}` : null;

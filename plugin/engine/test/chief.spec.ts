@@ -1150,6 +1150,41 @@ describe("谁能让回复发出去：引擎把关，不靠主会话自觉", () =
     expect(status(h, 1).status).toBe("pending");
   });
 
+  it("做事方式对排队的影响：normal 都问；auto 只放别人 PR 的 approve 和自己 PR 上的回复；yolo 连 Slack 回复、新消息也放，名单拦得住", () => {
+    const h = setup();
+    const gh = { id: 2, at: "t", source: "github", kind: "github.pr", title: "o/r#7", url: null, from: "Carol", fromId: null, text: "请你 review", why: ["review"], keys: ["github.com/o/r/pull/7"], reply: { ref: "o/r#7" } };
+    const own = { ...gh, id: 3, title: "o/r#8", text: "别人评论了我的 PR", why: ["comment"], keys: ["github.com/o/r/pull/8"], reply: { ref: "o/r#8" } };
+    writeFileSync(join(h, "events.jsonl"), `${readFileSync(join(h, "events.jsonl"), "utf8")}${JSON.stringify(gh)}\n${JSON.stringify(own)}\n`);
+    let n = 0;
+    const add = (event: number) => JSON.parse(chief(h, "reply", "add", "--event", String(event), "--file", draft(h, `m${n++}.md`, `下午给你 ${n}`))) as { id: number; policy: string };
+    // normal：都问。
+    expect(add(1).policy).toBe("ask");
+    expect(add(2).policy).toBe("ask");
+    // auto：approve 别人的 PR、回我自己 PR 上的话放；回别人的话（Slack、GitHub）还问。
+    yours(h, "", "mode", "auto");
+    expect(add(1).policy).toBe("ask");
+    expect(add(2).policy).toBe("ask");
+    const g = add(3);
+    expect(g.policy).toBe("auto");
+    expect(chief(h, "reply", "queue", String(g.id), "--policy")).toContain("模式 auto（我自己的 PR）");
+    const ap = JSON.parse(chief(h, "reply", "approve", "--event", "2", "--ref", "o/r#7")) as { id: number; policy: string };
+    expect(ap.policy).toBe("auto");
+    expect(chief(h, "reply", "queue", String(ap.id), "--policy")).toContain("模式 auto（别人的 PR）");
+    // yolo：Slack 回复也放；新消息放；名单里的去处照样问。
+    yours(h, "", "mode", "yolo");
+    const s = add(1);
+    expect(s.policy).toBe("auto");
+    expect(chief(h, "reply", "queue", String(s.id), "--policy")).toContain("模式 yolo");
+    const fresh = JSON.parse(chief(h, "reply", "new", "--to", "C0NEWCHAN1", "--file", draft(h, "n1.md", "新话题"))) as { id: number };
+    expect(chief(h, "reply", "queue", String(fresh.id), "--policy")).toContain("模式 yolo");
+    withStdin(h, "C0BLOCKED1", "rules", "always", "add");
+    const blocked = JSON.parse(chief(h, "reply", "new", "--to", "C0BLOCKED1", "--file", draft(h, "n2.md", "新话题 2"))) as { id: number };
+    expect(chiefFails(h, "reply", "queue", String(blocked.id), "--policy")).toContain("要你确认");
+    // 降回 normal：又都问了。
+    chief(h, "rules", "mode", "normal");
+    expect(add(2).policy).toBe("ask");
+  });
+
   it("approve 只能 approve 这条消息自己的 PR", () => {
     const h = home();
     writeFileSync(join(h, "events.jsonl"), [
@@ -1407,6 +1442,21 @@ describe("引擎发之前再核一遍", () => {
     expect(during).toEqual(["sending"]);
     expect(rows(h)[0]).toMatchObject({ status: "sent", by: "you" });
     expect(rows(h)[0]!.sentAt).toBeTruthy();
+  });
+
+  it("排队后做事方式降回 normal：引擎发之前拦下，不发", async () => {
+    const h = setup();
+    yours(h, "", "mode", "yolo");
+    chief(h, "reply", "queue", "1", "--policy");
+    chief(h, "rules", "mode", "normal");
+    edit(h, due);
+    await engineIn(h, async (e, sent, notes) => {
+      await e.sendDue();
+      expect(sent).toHaveLength(0);
+      expect(notes.join()).toContain("要你确认");
+    });
+    expect(rows(h)[0]).toMatchObject({ status: "failed" });
+    expect(rows(h)[0]!.error).toContain("要你确认");
   });
 
   it("发的时候出错：failed，写明为什么，弹通知", async () => {

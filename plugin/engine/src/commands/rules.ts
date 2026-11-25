@@ -109,7 +109,7 @@ export async function rules(args: string[], given?: RulesOpts): Promise<void> {
     p.style.forEach((x, i) => lines.push(`${i + 1}. ${x}`));
     lines.push("", `Slack 回复放哪（对方本来在 thread 里说的总是回 thread）：${(Object.keys(p.placement) as Audience[]).map((k) => `${AUDIENCE_LABELS[k]} ${p.placement[k] === "thread" ? "回到 thread" : "直接回在对话里"}`).join("，")}。个别回复要不一样，reply add 时加 --in thread|inline。`);
     lines.push("", `替我发到 Slack 的话，正文上方会自动加一行灰色小字署名：${p.signature ? `${p.signature} · confirmed by @我` : "（不加）"}（署名不在正文里，你写回复时不用自己加）`);
-    lines.push("", "规矩没说到的：往保守了办，对外发的东西先给我确认。");
+    lines.push("", p.mode === "normal" ? "规矩没说到的：往保守了办，对外发的东西先给我确认。" : p.mode === "auto" ? "规矩没说到的：approve 别人的 PR、回我自己 PR 上的话你自己办；回别人的话往保守了办，先给我确认。" : "规矩没说到的：按我过去的决定和规矩自己定，事后告诉我；「一定问我」名单里的先问我。");
     process.stdout.write(`${lines.join("\n")}\n`);
     return;
   }
@@ -122,7 +122,7 @@ export async function rules(args: string[], given?: RulesOpts): Promise<void> {
     }
     if (!MODES_LIST.includes(to as Mode)) fail("chief rules mode normal|auto|yolo");
     const next = to as Mode;
-    if (MODES_LIST.indexOf(next) > MODES_LIST.indexOf(p.mode) && !yours) return proposeLoosen(argv, "", `做事方式改成 ${next}（${next === "auto" ? "少问你：Slack 以外的回复直接发" : "全部由助理代决策，只有「一定问我」名单拦得住"}）`);
+    if (MODES_LIST.indexOf(next) > MODES_LIST.indexOf(p.mode) && !yours) return proposeLoosen(argv, "", `做事方式改成 ${next}（${next === "auto" ? "少问你：approve 别人的 PR、回你自己 PR 上的话直接发" : "全部由助理代决策，只有「一定问我」名单拦得住"}）`);
     updatePolicy((pp) => {
       pp.mode = next;
     });
