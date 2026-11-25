@@ -44,7 +44,7 @@ Three pages for the three questions you ask, plus Setup. When everything is fine
 - **For you** — everything that needs you, one card per thing, most urgent first:
   - A session stuck on a dialog (Allow, a choice): **Go click** jumps straight to it.
   - Questions for you: each one has **OK / Disagree… / Skip it**; **Go with all remaining suggestions** when you agree with all of them. A decision can be undone for two minutes.
-  - Replies waiting for your OK: send, edit, and under ⋯ rewrite or don't send. Sends can be undone for 5 seconds.
+  - Replies waiting for your OK: send, edit, and under ⋯ rewrite or don't send. After you press send, the card collapses at once and shows "sending"; if the send fails, the card comes back with the reason. Sends can be undone for 5 seconds.
   - chief's own issues: the send key was changed, the engine, hub or a source is down, the plugin was updated and the hub should **Reload rules**, rules the hub proposes. Each comes with a button that fixes it.
   - At the bottom, one line on what chief did today.
 - **Progress** — one row per thing with a status tag first (session waiting, overdue, blocked are coloured); open a row for the next step and results; ⋯ has ask for progress, **Later** (snooze: `chief thing snooze T --until 2h` / `tomorrow 09:00` / `next monday 09:00`), note and drop. Search past things at the top (`chief search <text>`). Below: snoozed, done, and **What it did in the last 7 days**: mark each judgment right or wrong (wrong becomes a rule proposal), save it as a drill case, undo "just note" / "ignore" calls; sent replies are listed there too (`chief undo --list`).

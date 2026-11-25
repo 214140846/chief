@@ -222,6 +222,8 @@ declare module 'claude-code' {
       tab: Tab
       // 你在待发出里改了还没发的稿子：回复号 → 改后的文字。
       edits: Record<string, string>
+      // 点了发送、命令还没跑完的回复：回复号 → 点的时间。面板先把这些卡片收起、显示「正在发」。
+      sending: Record<string, number>
       // 展开着的行（事情、判断）。
       open: string[]
       // 设置页里看的最近日志。

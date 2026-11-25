@@ -7,6 +7,18 @@ import { DATA_HEALTH } from '../engine/src/shared/rules'
 import type { AskRow, ReplyRow, Snapshot, ThingRow } from '../types'
 import { daysLeft, live, snoozed, startOfToday } from './ui'
 
+// 点了发送、命令还没跑完的回复（回复号 → 点的时间）超过这么久还没跑完就不再算（命令卡死、会话重启）。
+export const SENDING_MS = 60_000
+
+// 点了发送、命令还没跑完：文件里还是 pending / failed 的先显示成「正在发」，卡片马上收起。
+// 已经 queued / sending / sent 的以文件为准（撤回按钮、已发出、失败原因都照常）。
+export function overlaySending(replies: ReplyRow[], clicked: Record<string, number>, now: number): ReplyRow[] {
+  return replies.map(r => {
+    const at = clicked[String(r.id)]
+    return at !== undefined && now - at < SENDING_MS && (r.status === 'pending' || r.status === 'failed') ? { ...r, status: 'sending' } : r
+  })
+}
+
 export type SysItem =
   | { kind: 'key'; at: string; what: 'reset' | 'set' }
   | { kind: 'corrupt'; why: string }
