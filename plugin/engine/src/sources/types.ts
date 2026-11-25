@@ -27,6 +27,8 @@ export interface SourceItem {
   asks?: Ask[];
   // 是谁在找你（GitHub 的登录名、Jira 的显示名）：「一定问我」名单按它拦。来源认不出人就不填。
   from?: string | null;
+  // 这条动态里说话的所有人加上作者：from 只记一个，名单要对每一个。
+  speakers?: string[];
 }
 
 export type Ask = "review" | "assigned" | "mention" | "comment" | "approved" | "changes";

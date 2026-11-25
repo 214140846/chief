@@ -66,6 +66,13 @@ describe("GitHub：事件里记下是谁在找我（「一定问我」名单按�
     expect(eventOfItem("github", items[0]!)?.from).toBe("dacongming0425");
   });
 
+  it("好几个人说话：speakers 记下所有说话的人加作者，from 只是最后一个", async () => {
+    const items = await pollOnce({ prs: [{ number: 11, author: "carol", updated: AFTER, comments: 2 }], issueComments: { 11: [{ id: 1, user: user("alice"), body: `@${ME} 看下`, created_at: AFTER }, { id: 2, user: user("bob"), body: "+1", created_at: AFTER }] } });
+    const e = eventOfItem("github", items[0]!)!;
+    expect(e.from).toBe("bob");
+    expect([...(e.speakers ?? [])].sort()).toEqual(["alice", "bob", "carol"]);
+  });
+
   it("别人评论我的 PR：from 是最后说话的人", async () => {
     const items = await pollOnce({ prs: [{ number: 9, author: ME, updated: AFTER, comments: 2 }], issueComments: { 9: [{ id: 1, user: user("bob"), body: "a", created_at: AFTER }, { id: 2, user: user("carol"), body: "b", created_at: AFTER }] } });
     expect(eventOfItem("github", items[0]!)?.from).toBe("carol");

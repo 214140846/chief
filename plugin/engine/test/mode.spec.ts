@@ -103,11 +103,11 @@ describe("磁盘上的 mode", () => {
 
 // 真实的 GitHub / Jira 事件由 eventOfItem 造：from 取自来源里的人。名单拦得住，才算数。
 describe("「一定问我」名单拦真实的 GitHub、Jira 事件", () => {
-  const real = (source: "github" | "jira", from: string | null, asks: string[]): ChiefEvent => ({
+  const real = (source: "github" | "jira", from: string | null, asks: string[], speakers?: string[]): ChiefEvent => ({
     id: 1,
     ...eventOfItem(source, {
       externalId: "x", kind: source === "github" ? "github.pr" : "jira.issue", title: "o/r#4 t", url: "https://github.com/o/r/pull/4", summary: "o/r#4 https://github.com/o/r/pull/4", at: "t",
-      payload: { key: "PROJ-1", repo: "o/r", number: 4 }, mine: true, asks: asks as never, from,
+      payload: { key: "PROJ-1", repo: "o/r", number: 4 }, mine: true, asks: asks as never, from, ...(speakers ? { speakers } : {}),
     })!,
   } as ChiefEvent);
   const approve = reply("github", { ref: "o/r#4" }, { kind: "approve", body: "" });
@@ -127,5 +127,25 @@ describe("「一定问我」名单拦真实的 GitHub、Jira 事件", () => {
       expect(autoReason(r as never, pol("yolo", [who]), e)).toBeNull();
       expect(autoReason(r as never, pol("yolo"), e)).toBe("模式 yolo");
     }
+  });
+
+  it("好几个人说话：名单里是其中任何一个（不只是最后说话的）都问", () => {
+    // alice @ 我，bob 后面跟一句 +1：from 是 bob，名单写 alice 也要拦；作者 carol 也要拦。
+    const e = real("github", "bob", ["mention"], ["carol", "alice", "bob"]);
+    for (const who of ["alice", "bob", "carol"]) {
+      expect(autoReason(reply("github", { ref: "o/r#4" }) as never, pol("yolo", [who]), e)).toBeNull();
+    }
+    expect(autoReason(reply("github", { ref: "o/r#4" }) as never, pol("yolo", ["dave"]), e)).toBe("模式 yolo");
+    const j = real("jira", "Bob Ng", ["comment"], ["Carol Li", "Alice Wu", "Bob Ng"]);
+    expect(autoReason(reply("jira", { key: "PROJ-1" }) as never, pol("yolo", ["Alice Wu"]), j)).toBeNull();
+  });
+
+  it("白名单只管 Slack：GitHub、Jira 事件的人和白名单同名，normal 下仍要问", () => {
+    const trust = { ...pol("normal"), trusted: ["alice", "Alice Wu"], scenarios: { ...pol("normal").scenarios } };
+    expect(autoReason(reply("github", { ref: "o/r#4" }) as never, trust, real("github", "alice", ["mention"]))).toBeNull();
+    expect(autoReason(reply("jira", { key: "PROJ-1" }) as never, trust, real("jira", "Alice Wu", ["comment"]))).toBeNull();
+    // Slack 上的白名单照旧。
+    const s = { ...ev("slack"), from: "alice", fromId: undefined };
+    expect(autoReason(reply("slack", { channel: "D0BOB1234", ts: "1.1" }) as never, trust, s as never)).toBe("白名单");
   });
 });

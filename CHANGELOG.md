@@ -4,7 +4,7 @@
 
 ## 0.4.1（未发布）
 
-- 修「一定问我」名单拦不住 GitHub、Jira 的事件：事件里现在记下是谁在找你（GitHub 登录名、Jira 显示名），名单按它拦，auto / yolo 下也一样。Notion 的评论看不出是谁写的，名单仍拦不住 Notion 的事件。
+- 修「一定问我」名单拦不住 GitHub、Jira 的事件：事件里现在记下说话的人（GitHub 登录名、Jira 显示名），名单对这条事件里说话的每个人和作者都查，auto / yolo 下也一样；GitHub 写登录名，Jira 写显示名。白名单只管 Slack 的事件，不再按 GitHub、Jira 的名字认人。Notion 的评论看不出是谁写的，名单拦不住 Notion 的事件（chief 对 Notion 是只读，回复发不出去）。
 - 面板「规矩」页顶部加「做事方式」：normal / auto / yolo。升到 auto / yolo 在面板上点（带钥匙），降回 normal 不用；auto 只放开 approve 别人的 PR 和回自己 PR 上的话；README 写明三种方式和 yolo 的风险。
 - 面板点发送后卡片马上收起、显示「正在发」，不用等命令跑完；发送失败卡片回来并写明原因。
 - Slack 发送的截止时间从 30 秒放宽到 90 秒，慢网络上正常的发送不再被判超时；真超时了提示「Slack 可能已经收到，先去确认再重发」（中英文都有）。
