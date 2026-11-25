@@ -239,7 +239,13 @@ export interface CustomScenario extends ScenarioRule {
   when: string;
 }
 
+// 三种做事方式：normal 规矩没放行的都等你点；auto 少让你点（GitHub、Jira 等的回复不再问，Slack 仍按规矩）；yolo 全部由助理代决策（只有「一定问我」名单拦得住）。
+export type Mode = "normal" | "auto" | "yolo";
+export const MODES_LIST: readonly Mode[] = ["normal", "auto", "yolo"];
+
 export interface Policy {
+  // 缺这一项就是 normal。升到 auto / yolo 算放宽发送，要钥匙（见 commands/rules.ts）。
+  mode: Mode;
   scenarios: Record<Scenario, ScenarioRule>;
   custom: CustomScenario[];
   nextCustom: number;

@@ -1532,3 +1532,43 @@ describe("引擎发之前再核一遍", () => {
     expect(rows(h)[0]!.error).toContain("引擎重启");
   });
 });
+
+describe("做事方式（chief rules mode）", () => {
+  const mode = (h: string) => (JSON.parse(chief(h, "rules", "json")) as { mode: string }).mode;
+
+  it("没配过是 normal；主会话（不带钥匙）升不了，只记成提议；你带钥匙升了生效；降回去不用钥匙", () => {
+    const h = home();
+    expect(mode(h)).toBe("normal");
+    expect(chief(h, "rules", "mode")).toContain("normal");
+    // 主会话改：不生效，记成提议。
+    expect(chief(h, "rules", "mode", "yolo")).toContain("没改");
+    expect(chief(h, "rules", "mode", "auto")).toContain("没改");
+    expect(mode(h)).toBe("normal");
+    expect((JSON.parse(chief(h, "rules", "json")) as { proposals: unknown[] }).proposals).toHaveLength(2);
+    // 你在面板上改（带钥匙）：生效。
+    yours(h, "", "mode", "yolo");
+    expect(mode(h)).toBe("yolo");
+    // 降级不用钥匙。
+    chief(h, "rules", "mode", "auto");
+    expect(mode(h)).toBe("auto");
+    chief(h, "rules", "mode", "normal");
+    expect(mode(h)).toBe("normal");
+    expect(chiefFails(h, "rules", "mode", "wild")).toContain("normal|auto|yolo");
+  });
+
+  it("钥匙不对：升不了", () => {
+    const h = home();
+    yours(h, "", "mode", "auto");
+    expect(() => withStdin(h, JSON.stringify({ key: "cd".repeat(32), text: "" }), "rules", "--yours", "mode", "yolo")).toThrow(/钥匙对不上/);
+    expect(mode(h)).toBe("auto");
+  });
+
+  it("采纳提议才升（面板带钥匙采纳）", () => {
+    const h = home();
+    chief(h, "rules", "mode", "yolo");
+    const id = String((JSON.parse(chief(h, "rules", "json")) as { proposals: { id: number }[] }).proposals[0]!.id);
+    expect(chiefFails(h, "rules", "accept", id)).toContain("面板上点采纳");
+    yours(h, "", "accept", id);
+    expect(mode(h)).toBe("yolo");
+  });
+});

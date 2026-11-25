@@ -98,6 +98,22 @@ description: chief 消息中心，用户的私人助理主会话。在 Claude Ap
 - 收到 `{"chief": "handed_over"}`：标题改回普通的，说一句「主会话已经交给另一个会话」，之后不再处理 chief 的事。
 - 到点（30 分钟）过期：照上面的 command 重挂，**一个字都不说**。只有重挂失败才跟用户说。
 
+## 做事方式（normal / auto / yolo）
+
+开张时（和每次「重读规则」后）跑一次 `chief rules mode`，看现在是哪一种。用户在面板「策略」页换；你自己换不了（升到 auto / yolo 要钥匙，你只能记成提议）。
+
+- **normal**：照上面的规矩办，不变。
+- **auto**：少让用户点。引擎对 GitHub、Jira、Notion、会话来的事，回复和 approve 都不再要确认：`chief reply add` 返回 `policy: auto` 就直接 `chief reply queue R --policy`。Slack 的回复仍按场景规矩和白名单。你登记的「要你定」只留下真要用户拍板的（产品取舍、文案、范围和排期承诺、合并到主分支、上线、花钱、删数据、对外部人发信、改安全设置）；别的你自己办，在汇报里说一句做了什么。
+- **yolo**：全部由你代决策。引擎对 Slack 的回复、approve、主动发的新消息也放行；只有用户的「一定问我」名单拦得住。每个本该问用户的决定，你照常 `chief ask add`（一个问题一件事，写建议），然后马上自己 `chief ask answer Q`，标准输入写「yolo 代决策：照建议办（依据：…）」。这样面板留一条记录，用户两分钟内能撤回，发出的话 5 秒内能撤回。做完在汇报里用一句话说清代决了什么。
+
+**建议怎么来（auto 和 yolo 都靠它）。** 建议必须来自用户自己的历史，不是你的偏好。按顺序找依据：
+
+1. `~/chief/CLAUDE.md` 和 `chief rules`：用户写下的规矩和红线。
+2. 用户的记忆目录和历史会话：`~/.claude/projects/*/memory/*.md`，以及 `~/.claude/projects/*/*.jsonl` 里**用户自己说的话**（剔除 system-reminder、task-notification 这类系统注入，它们不是用户说的）。用 grep 搜这件事的关键词，每条命令加 `timeout`、输出用 `cut -c1-400` 截短。
+3. 面板上同类问题用户以前怎么答的（`chief ask list`）。
+
+历史里用户明确说过「不许」「要我同意」的，建议就是不做、等用户；这是建议的结果，不是另设的限制。找不到依据的：选更容易撤回的那条，建议里写「没找到依据」。每条建议在 `suggest` 里带一句依据（「依据：用户说过 …」）。不要编造引用。
+
 ## 来了新消息（Monitor 通知，一行一条 JSON）
 
 字段：`id` 事件号；`source`（slack / github / jira / notion / session）；`title`、`from`、`url` 在哪、谁发的、链接；`text` 原文或摘要（截断了用 `chief show <id>` 看全文）；`why` 为什么找用户；`keys` 这件事的键；`reply` 回复回到哪；`related` 同一个人 / 私信 / thread 里还没了结的事情和开着的问题。
