@@ -104,7 +104,18 @@ const DM_CATCH_UP_MAX_CONVERSATIONS = 40;
 
 const defaultCreateClient = (stateDir: string | undefined) => async (cookieD: string): Promise<GabrielClientLike> => {
   const { GabrielClient, FileStateStore } = await import("gabriel-slack");
-  return GabrielClient.fromCookie({ cookieD, ...(stateDir ? { stateStore: new FileStateStore({ dir: stateDir }) } : {}) }) as unknown as GabrielClientLike;
+  // 发一条的截止时间：库默认 30 秒，装不下一次请求超时（15 秒）后的重试，慢网络上正常的发送也会被判超时。
+  return GabrielClient.fromCookie({ cookieD, chat: { itemDeadlineMs: 90_000 }, ...(stateDir ? { stateStore: new FileStateStore({ dir: stateDir }) } : {}) }) as unknown as GabrielClientLike;
+};
+
+// 发出去没成功时写给你看的话。这三种错是 gabriel-slack 自己认为「Slack 可能已经收下了、只是回应没等到」的：
+// 别让人以为没发出去就直接重发，先到 Slack 看一眼。其它错照旧给原文。
+const MAYBE_SENT_CODES = new Set(["NETWORK_TIMEOUT", "SERVER_ERROR", "CANCELLED"]);
+export const describeSendError = (e: unknown): string => {
+  const raw = e instanceof Error ? e.message : String(e);
+  const code = typeof e === "object" && e !== null ? (e as { code?: unknown }).code : undefined;
+  if (typeof code === "string" && MAYBE_SENT_CODES.has(code)) return `网络超时，Slack 可能已经收到。请先到 Slack 确认；确实没有再点重发。（原文：${raw.slice(0, 120)}）`;
+  return raw.slice(0, 200);
 };
 
 // 验一个 Cookie。domain：它登的工作区（子域名）；换得到 token 就有，SSO 没走完也有，登录窗口靠它跳到工作区地址。

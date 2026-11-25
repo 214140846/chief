@@ -18,7 +18,7 @@ import { keysOf } from "./keys";
 import { DATA_HEALTH } from "./shared/rules";
 import { DIGEST_LABELS, dueDigests, type DigestTimes } from "./shared/schedule";
 import { SOURCE_LABELS, type SourceId } from "./shared/sources";
-import { SlackPlugin, SLACK_COOKIE_D, sentThreadKey, type SlackAttribution } from "./slack/plugin";
+import { SlackPlugin, SLACK_COOKIE_D, describeSendError, sentThreadKey, type SlackAttribution } from "./slack/plugin";
 import type { ChannelStatus, InboundMessage } from "./slack/types";
 import { DESCRIPTORS, SOURCES, descriptorOf } from "./sources/registry";
 import type { Source, SourceItem } from "./sources/types";
@@ -550,7 +550,7 @@ export class Engine {
         try {
           out = await (this.deps.send ?? ((x: Reply) => this.sendOne(x)))(r);
         } catch (error) {
-          const why = error instanceof Error ? error.message.slice(0, 200) : String(error);
+          const why = r.source === "slack" ? describeSendError(error) : error instanceof Error ? error.message.slice(0, 200) : String(error);
           if (!this.record(r.id, { status: "failed", error: why })) log(`回复 ${r.id} 没发出去，结果也没记上（下次引擎启动会标成要你看一眼）`);
           log(`回复 ${r.id} 没发出去：${why}`);
           notify(msg().replyFailedTitle, `${r.context.who ?? r.context.where}${msg().colon}${why}`);
