@@ -6,6 +6,7 @@
 
 import { readFileSync } from "node:fs";
 import type { ChannelContext, ChannelPlugin, SecretCheck, SecretSpec } from "./types";
+import { msg } from "../messages";
 import { scrubTokens } from "./api";
 import { classifyCreated, classifyDeleted, classifyUpdated, directOf, type Classified, type GabrielChannel, type GabrielDeleteEvent, type GabrielMessageEvent } from "./classify";
 
@@ -114,7 +115,7 @@ const MAYBE_SENT_CODES = new Set(["NETWORK_TIMEOUT", "SERVER_ERROR", "CANCELLED"
 export const describeSendError = (e: unknown): string => {
   const raw = e instanceof Error ? e.message : String(e);
   const code = typeof e === "object" && e !== null ? (e as { code?: unknown }).code : undefined;
-  if (typeof code === "string" && MAYBE_SENT_CODES.has(code)) return `网络超时，Slack 可能已经收到。请先到 Slack 确认；确实没有再点重发。（原文：${raw.slice(0, 120)}）`;
+  if (typeof code === "string" && MAYBE_SENT_CODES.has(code)) return msg().replyMaybeSent(raw.slice(0, 120));
   return raw.slice(0, 200);
 };
 

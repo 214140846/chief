@@ -124,6 +124,7 @@ describe("通知的语言（config.json 的 locale）", () => {
     recordSkip(new Date().toISOString(), [1, 2, 3]);
     recordDrop(new Date().toISOString(), { id: 1, title: "PROJ-123 load test" }, "doing");
     expect(loadUndo().items.map((x) => x.label)).toEqual(["Skipped 3 backlog messages", "Dropped: PROJ-123 load test"]);
+    expect(msg().replyMaybeSent("chat.postMessage exceeded itemDeadlineMs")).toBe("Network timeout: Slack may have received it. Check in Slack first; resend only if it is not there. (Original: chat.postMessage exceeded itemDeadlineMs)");
     setConfig("locale", "zh");
     expect(msg().wokeTitle).toBe("chief · 稍后再说的事到点了");
   });

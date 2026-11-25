@@ -143,7 +143,7 @@ export async function setEdit($: Engine, id: number, text: string) {
 const claimed = new Map<string, number>()
 
 // 发送：点下去卡片先收起，命令跑完（成功、失败都算）再按文件里的真实状态画。
-// 同一条已经在发就不再发（输入框回车和按钮会各触发一次）。
+// 同一条已经在发就不再发（连点两下只发一次）。
 export async function send($: Engine, r: ReplyRow, typed?: string) {
   const id = String(r.id)
   const at = Date.now()
