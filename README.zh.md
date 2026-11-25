@@ -94,6 +94,18 @@ chief 的东西都在 `~/chief` 里，消息中心也开在这里：
 - 开机自启：`~/Library/LaunchAgents/dev.chief.engine.plist`。
 - 插件本身和插件的存储（Claude 的插件目录）：面板用来确认「是你点的发送」的钥匙原文放在插件存储里，`~/chief/data` 里只有它的指纹。
 
+## 做事方式：normal / auto / yolo
+
+主会话能替你决定多少。在面板「规矩」页最上面选。
+
+- **normal**：现状，哪些直接发、哪些问你，都按规矩。
+- **auto**：少让你点。approve 别人的 PR（「PR 请我 review」的事件）、回你自己 PR 上的话（别人评论、approve、要求修改）不再要你确认。回别人的话（Slack、GitHub、Jira、Notion 上的）、approve 别处提到的 PR、新消息，仍按场景规矩和白名单。approve 只管第一次收到的 review 请求。机器人的评论本来就不报，没有要回的。
+- **yolo**：全部由助理代决策。Slack 回复和 approve 都不再问你，场景规矩和你加的情况也不再管；只有「一定问我」名单拦得住。主动发起的新消息（发到频道、个人、私信、邮箱）任何模式都仍问你：那是助理自己起的话头，不是回应。
+
+升到 auto / yolo 是放宽发送，必须在面板上点（带钥匙）；主会话自己切不了，只能提议。降回 normal 不用钥匙。
+
+yolo 的风险：回复和 approve 都会直接发出去。发出的话在撤回时间内能撤回（默认 5 秒，`undoSeconds`），「要你定」的代决策两分钟内能撤回，但撤回只改回答，已发出的话、已点的 approve 收不回。做决定时，助理会读你在过去 Claude 会话里自己敲的话（`~/.claude/projects/*/*.jsonl`）和记忆笔记，只引一句概述；工具结果和别人的话不算依据。开之前，先把不放心的人和对话加进「一定问我」名单。
+
 ## 设置
 
 引擎的设置在 `~/chief/config.json`。`chief config` 列出所有设置项和当前值，`chief config set <项> <值>` 改。规矩（`rules.json`）不在这里改，用面板的「规矩」页或跟消息中心说。

@@ -5,6 +5,7 @@ import { REPLY_MODE_LABELS } from "../shared/rules";
 import { DESCRIPTORS } from "../sources/registry";
 import type { ImportItem } from "../sources/types";
 import { AUDIENCE_LABELS, HANDLE_LABELS, SCENARIOS, loadEnabled, loadPolicy, loadThings, paths, readJson, updateJson, withLock, writeJson, type Audience, type CustomScenario, type Handle, type Placement, type Policy, type ReplyMode, type Reviews, type Scenario, type ScenarioRule } from "../store";
+import { MODES_LIST, type Mode } from "../shared/types";
 import { eventById } from "./events";
 import { keyMatches } from "./key";
 
@@ -87,7 +88,7 @@ export async function rules(args: string[], given?: RulesOpts): Promise<void> {
   const missing = Object.keys(SCENARIOS).some((k) => !(k in (onDisk.scenarios ?? {})));
   if (!existsSync(paths().policy) || onDisk.custom === undefined || missing || onDisk.placement === undefined || onDisk.style === undefined || onDisk.trusted === undefined || onDisk.askAlways === undefined || onDisk.bots === undefined || onDisk.quick === undefined) updatePolicy(() => undefined);
   if (sub === undefined || sub === "show") {
-    const lines = ["# 我的规矩（chief rules）", "", "## 我加的情况（先对这些，对上了就照它办，比下面的场景表优先）", ""];
+    const lines = ["# 我的规矩（chief rules）", "", `做事方式：${p.mode}（normal 规矩没放行的都问我；auto 少问我；yolo 全部代我决策，只有「一定问我」名单拦得住）`, "", "## 我加的情况（先对这些，对上了就照它办，比下面的场景表优先）", ""];
     if (p.custom.length === 0) lines.push("（没有）");
     for (const c of p.custom) lines.push(`- custom:${c.id} 当「${c.when}」：${ruleLine(c)}`);
     lines.push("", "## 每个场景怎么办", "");
@@ -108,8 +109,24 @@ export async function rules(args: string[], given?: RulesOpts): Promise<void> {
     p.style.forEach((x, i) => lines.push(`${i + 1}. ${x}`));
     lines.push("", `Slack 回复放哪（对方本来在 thread 里说的总是回 thread）：${(Object.keys(p.placement) as Audience[]).map((k) => `${AUDIENCE_LABELS[k]} ${p.placement[k] === "thread" ? "回到 thread" : "直接回在对话里"}`).join("，")}。个别回复要不一样，reply add 时加 --in thread|inline。`);
     lines.push("", `替我发到 Slack 的话，正文上方会自动加一行灰色小字署名：${p.signature ? `${p.signature} · confirmed by @我` : "（不加）"}（署名不在正文里，你写回复时不用自己加）`);
-    lines.push("", "规矩没说到的：往保守了办，对外发的东西先给我确认。");
+    lines.push("", p.mode === "normal" ? "规矩没说到的：往保守了办，对外发的东西先给我确认。" : p.mode === "auto" ? "规矩没说到的：approve 别人的 PR、回我自己 PR 上的话你自己办；回别人的话往保守了办，先给我确认。" : "规矩没说到的：按我过去的决定和规矩自己定，事后告诉我；「一定问我」名单里的先问我。");
     process.stdout.write(`${lines.join("\n")}\n`);
+    return;
+  }
+  // chief rules mode [normal|auto|yolo]：换做事方式。升到 auto / yolo 是放宽发送：要钥匙（面板上改），主会话改不了，只能记成提议；降回去不用钥匙。
+  if (sub === "mode") {
+    const to = args.shift();
+    if (to === undefined) {
+      process.stdout.write(`${p.mode}\n`);
+      return;
+    }
+    if (!MODES_LIST.includes(to as Mode)) fail("chief rules mode normal|auto|yolo");
+    const next = to as Mode;
+    if (MODES_LIST.indexOf(next) > MODES_LIST.indexOf(p.mode) && !yours) return proposeLoosen(argv, "", `做事方式改成 ${next}（${next === "auto" ? "少问你：approve 别人的 PR、回你自己 PR 上的话直接发" : "全部由助理代决策，只有「一定问我」名单拦得住"}）`);
+    updatePolicy((pp) => {
+      pp.mode = next;
+    });
+    process.stdout.write(`做事方式：${next}\n`);
     return;
   }
   if (sub === "json") {

@@ -258,6 +258,12 @@ export async function setScenario($: Engine, target: string, field: 'handle' | '
   await act($, t().act.setScenario, ['rules', '--yours', 'set', target, `${field}=${value}`], await rulesFromPanel($))
 }
 
+// 升到 auto / yolo 是放宽发送，带钥匙；降回 normal 不用。
+export async function setMode($: Engine, value: 'normal' | 'auto' | 'yolo') {
+  if (value === 'normal') await act($, t().act.setMode, ['rules', 'mode', 'normal'])
+  else await act($, t().act.setMode, ['rules', '--yours', 'mode', value], await rulesFromPanel($))
+}
+
 export async function addCustom($: Engine, when: string) {
   await act($, t().act.addCustom, ['rules', 'custom', 'add'], when)
 }

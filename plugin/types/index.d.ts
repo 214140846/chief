@@ -99,6 +99,8 @@ export type PolicyFile = {
   // 一定问我：这些人、对话的回复引擎一律不直接发（比白名单优先）。
   askAlways?: string[]
   placement?: Record<Audience, Placement>
+  // 做事方式：缺省 normal。
+  mode?: 'normal' | 'auto' | 'yolo'
   // change：放宽发送的改动（主会话没带钥匙改的），你采纳才生效。
   proposals: { id: number; text: string; basis: string; at: string; change?: { args: string[]; input: string } }[]
 }

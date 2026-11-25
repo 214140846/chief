@@ -338,6 +338,7 @@ export function isTrusted(trusted: readonly string[], from: string | null | unde
 export function defaultPolicy(): Policy {
   const scenarios = Object.fromEntries(Object.entries(SCENARIO_META).map(([k, m]): [string, ScenarioRule] => [k, { handle: m.handle, reply: m.reply ?? "ask", ...(m.brief ? { brief: m.brief } : {}) }])) as Record<Scenario, ScenarioRule>;
   return {
+    mode: "normal",
     scenarios,
     signature: DEFAULT_SIGNATURE,
     trusted: [],
@@ -369,6 +370,7 @@ export function loadPolicy(): Policy {
   const base = defaultPolicy();
   const p = readJson<Partial<Policy>>(paths().policy, {});
   return {
+    mode: p.mode === "auto" || p.mode === "yolo" ? p.mode : "normal",
     scenarios: { ...base.scenarios, ...(p.scenarios ?? {}) }, notes: p.notes ?? base.notes, signature: p.signature ?? base.signature,
     style: p.style ?? base.style,
     trusted: p.trusted ?? base.trusted,

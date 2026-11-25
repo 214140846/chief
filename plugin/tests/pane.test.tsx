@@ -232,6 +232,14 @@ test('面板：主会话状态、要你定、待发出；按钮各做各的', as
 
   // 规矩：改场景、加情况、加交代；人；它做得怎么样。
   await ui.press({ key: 'tab-policy' })
+  // 做事方式：显示当前方式；升级带钥匙，降回 normal 不带。
+  await want(ui, { type: 'Text', text: '做事方式' })
+  await ui.select({ key: 'mode', value: 'yolo' })
+  expect(runs.at(-1)?.argv.slice(1).join(' ')).toBe('rules --yours mode yolo')
+  expect(JSON.parse(runs.at(-1)?.stdin ?? '{}').key).toMatch(/^[0-9a-f]{64}$/)
+  await ui.select({ key: 'mode', value: 'normal' })
+  expect(runs.at(-1)?.argv.slice(1).join(' ')).toBe('rules mode normal')
+  expect(runs.at(-1)?.stdin).toBeUndefined()
   await ui.select({ key: 'h-custom:1', value: 'dispatch' })
   expect(runs.at(-1)?.argv.slice(1).join(' ')).toBe('rules --yours set custom:1 handle=dispatch')
   // 改规矩带插件的钥匙：放宽发送的才能直接生效。
