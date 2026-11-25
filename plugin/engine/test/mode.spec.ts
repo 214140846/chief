@@ -47,11 +47,11 @@ describe("做事方式 normal / auto / yolo 对发送的影响", () => {
     expect(autoReason(message as never, pol("auto"), null)).toBeNull();
   });
 
-  it("yolo：回复、approve、主动发的新消息都直接发", () => {
+  it("yolo：回复、approve 直接发；主动发的新消息仍问", () => {
     expect(autoReason(slackReply as never, pol("yolo"), slack as never)).toBe("模式 yolo");
     expect(autoReason(ghReply as never, pol("yolo"), gh as never)).toBe("模式 yolo");
     expect(autoReason(approve as never, pol("yolo"), gh as never)).toBe("模式 yolo");
-    expect(autoReason(message as never, pol("yolo"), null)).toBe("模式 yolo");
+    expect(autoReason(message as never, pol("yolo"), null)).toBeNull();
   });
 
   it("「一定问我」名单任何模式都拦（人、对话、新消息的去处）", () => {
@@ -62,15 +62,13 @@ describe("做事方式 normal / auto / yolo 对发送的影响", () => {
         if (entry !== "D0BOB1234") expect(autoReason(ghReply as never, pol(mode, [entry]), gh as never)).toBeNull();
       }
     }
-    // 新消息按去处的编号对名单（目标是 target.to）。
+    // 新消息（频道、人、私信、邮箱）任何模式都问。
     expect(autoReason(message as never, pol("yolo", ["C0NEWCHAN1"]), null)).toBeNull();
     const toUser = reply("slack", { to: "U0NEWUSER1" }, { kind: "message" });
-    // 发给某个人、私信：名单对不上人（用户编号、私信编号、显示名各不相同），一律问。
     expect(autoReason(toUser as never, pol("yolo"), null)).toBeNull();
     expect(autoReason(toUser as never, pol("yolo", ["U0OTHERUSER"]), null)).toBeNull();
     expect(autoReason(reply("slack", { to: "D0NEWDM001" }, { kind: "message" }) as never, pol("yolo"), null)).toBeNull();
     expect(autoReason(reply("slack", { to: "bob@example.com" }, { kind: "message" }) as never, pol("yolo"), null)).toBeNull();
-    // 去处不是 Slack 编号（认不出是谁）：宁可问。
     expect(autoReason(reply("slack", { to: "general" }, { kind: "message" }) as never, pol("yolo"), null)).toBeNull();
   });
 

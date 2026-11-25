@@ -1170,15 +1170,14 @@ describe("谁能让回复发出去：引擎把关，不靠主会话自觉", () =
     const ap = JSON.parse(chief(h, "reply", "approve", "--event", "2", "--ref", "o/r#7")) as { id: number; policy: string };
     expect(ap.policy).toBe("auto");
     expect(chief(h, "reply", "queue", String(ap.id), "--policy")).toContain("模式 auto（别人的 PR）");
-    // yolo：Slack 回复也放；新消息放；名单里的去处照样问。
+    // yolo：Slack 回复也放；主动发的新消息仍问（频道、人都一样）。
     yours(h, "", "mode", "yolo");
     const s = add(1);
     expect(s.policy).toBe("auto");
     expect(chief(h, "reply", "queue", String(s.id), "--policy")).toContain("模式 yolo");
     const fresh = JSON.parse(chief(h, "reply", "new", "--to", "C0NEWCHAN1", "--file", draft(h, "n1.md", "新话题"))) as { id: number; policy: string };
-    expect(fresh.policy).toBe("auto");
-    expect(chief(h, "reply", "queue", String(fresh.id), "--policy")).toContain("模式 yolo");
-    // 发给某个人：名单对不上人，仍问。
+    expect(fresh.policy).toBe("ask");
+    expect(chiefFails(h, "reply", "queue", String(fresh.id), "--policy")).toContain("要你确认");
     const toUser = JSON.parse(chief(h, "reply", "new", "--to", "U0SOMEONE99", "--file", draft(h, "n3.md", "私下说一句"))) as { id: number; policy: string };
     expect(toUser.policy).toBe("ask");
     expect(chiefFails(h, "reply", "queue", String(toUser.id), "--policy")).toContain("要你确认");

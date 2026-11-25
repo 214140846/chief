@@ -97,7 +97,7 @@ How much the hub may decide for you. Set it at the top of the panel's Rules tab.
 
 - **normal**: today's behaviour; the rules decide what is sent directly and what asks you.
 - **auto**: fewer clicks. Approving other people's PRs (a "review requested from me" event) and replying on your own PRs (comments, approvals, requested changes) no longer ask you. Replies to other people on Slack, GitHub, Jira and Notion, approvals of PRs mentioned elsewhere, and new messages still follow the scenario rules and the trusted list. The approval case covers only the first notice of a review request. Comments from bots are never reported, so there is nothing to answer.
-- **yolo**: the assistant decides everything. Slack replies, approvals and new channel messages it starts all go out without asking, and neither the scenario rules nor your custom cases apply any more; only the "Always ask me" list can stop it. New messages to a person, a DM or an email address still ask you, because the list cannot reliably match them (one person has a user id, a DM id and a display name).
+- **yolo**: the assistant decides everything. Slack replies and approvals go out without asking, and neither the scenario rules nor your custom cases apply any more; only the "Always ask me" list can stop it. New messages the assistant starts itself (to a channel, a person, a DM or an email address) still ask you in every mode, because they are not a response to anything.
 
 Switching up to auto or yolo loosens sending, so it must be clicked in the panel (it carries the confirm key); the hub cannot switch it itself and can only propose it. Switching back to normal needs no key.
 

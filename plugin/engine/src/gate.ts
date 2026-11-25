@@ -1,6 +1,6 @@
 // 谁能让回复发出去。命令行（chief reply queue --policy）放行前算一遍，引擎发之前再算一遍（见 engine.ts 的 sendDue）。
 import { createHash } from "node:crypto";
-import { isSlackId, isTrusted, mustAsk, scenarioOf, SCENARIOS, type ChiefEvent, type Policy, type Reply } from "./store";
+import { isTrusted, mustAsk, scenarioOf, SCENARIOS, type ChiefEvent, type Policy, type Reply } from "./store";
 
 // 一条事件自己的 PR（owner/repo#号，小写）：GitHub 的事件就是它回到的那个 PR；
 // 别的（比如 Slack 里有人贴了 PR 链接）是引擎从原文里认出来的 PR 链接。
@@ -22,11 +22,11 @@ function sameTarget(r: Reply, event: ChiefEvent): boolean {
 }
 
 // 规矩允许直接发（--policy）：引擎自己按规矩再算一遍，算出来要问你的发不出去，主会话怎么理解都没用。
-// 返回放行的理由；null 是这条要你确认。只放行回答收到的消息、回到那条消息自己的地方；主动发的新消息（reply new）默认问你，yolo 下发到频道的除外（见下面）。
+// 返回放行的理由；null 是这条要你确认。只放行回答收到的消息、回到那条消息自己的地方；主动发的新消息（reply new）任何模式都问你。
 // 模式放宽的是「哪些回复不用你点」。三道不放宽：「一定问我」名单、approve 只能是这条消息自己的 PR、回复只回到这条消息自己的地方。
 // auto 只放开两种：approve 别人的 PR（GitHub 上「PR 请我 review」的事件，PR 不是我的）；回自己 PR 上的话（别人评论、approve、要求修改）。
 // 回别人的话（Slack、GitHub、Jira、Notion 上的）、approve 原文里提到的 PR、主动发的新消息，仍按场景规矩和白名单。
-// GitHub 上机器人的评论引擎本来就不报，没有要回的。yolo：全部不问，包括 approve 和主动发的新消息。
+// GitHub 上机器人的评论引擎本来就不报，没有要回的。yolo：回复和 approve 全部不问；主动发的新消息仍问你。
 const OWN_PR = new Set<string>(["github_comment", "github_approved", "github_changes"]);
 function byMode(pol: Policy, event: ChiefEvent): string | null {
   if (pol.mode === "yolo") return "模式 yolo";
@@ -38,13 +38,8 @@ function approveByMode(pol: Policy, event: ChiefEvent): string | null {
 }
 
 export function autoReason(r: Reply, pol: Policy, event: ChiefEvent | null): string | null {
-  // 主动发的新消息（reply new，目标是 target.to）：只有 yolo 放行，而且只放发到频道（C…、G…）的：
-  // 人（U…）、私信（D…）、邮箱的编号和名单里写的名字对不上（同一个人有用户编号、私信编号、显示名），名单拦不住，所以仍问你。在名单里的频道照样问。
-  if (r.kind === "message") {
-    const to = (r.target.to ?? "").trim();
-    if (pol.mode !== "yolo" || !isSlackId(to) || !/^[CG]/.test(to)) return null;
-    return mustAsk(pol.askAlways, { from: "", fromId: to, reply: { channel: to } }) ? null : "模式 yolo";
-  }
+  // 主动发的新消息（reply new）：是 agent 自己起的话头，不是回应，任何模式都问你。
+  if (r.kind === "message") return null;
   if (event === null || r.event !== event.id) return null;
   // 「一定问我」名单里的人和对话：什么规矩都不放行（模式也不行）。
   if (mustAsk(pol.askAlways, event)) return null;
