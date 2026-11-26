@@ -42,7 +42,7 @@ const ARCHIVE_MS = 24 * 3600_000;
 
 // 漏掉的消息：交出去（firstSeen 记着引擎第一次看到它没判断的时间）过了 MISSED_MS 还没判断。演练消息和提醒本身不算。
 export function missedEvents(events: readonly ChiefEvent[], handled: Record<string, unknown>, firstSeen: Map<number, number>, now: number): ChiefEvent[] {
-  const open = events.filter((e) => !handled[e.id] && !e.dryrun && e.kind !== "chief.missed");
+  const open = events.filter((e) => !handled[e.id] && !e.dryrun && e.kind !== "chief.missed" && e.kind !== "chief.sent");
   const ids = new Set(open.map((e) => e.id));
   for (const id of [...firstSeen.keys()]) if (!ids.has(id)) firstSeen.delete(id);
   for (const e of open) if (!firstSeen.has(e.id)) firstSeen.set(e.id, now);
@@ -233,7 +233,7 @@ export class Engine {
         }
       }
       // 主会话掉线了、又有消息等着：叫你。引擎刚起来的头几分钟不算（主会话可能还没挂上）。
-      const waiting = events.filter((e) => !handled[e.id] && !e.dryrun).length;
+      const waiting = events.filter((e) => !handled[e.id] && !e.dryrun && e.kind !== "chief.sent").length;
       if (down && waiting > 0 && now - this.startedAt >= HUB_DOWN_MS && now - this.lastHubNag >= HUB_NAG_MS) {
         this.lastHubNag = now;
         log(`主会话没在听，有 ${waiting} 条消息等着`);
@@ -375,6 +375,12 @@ export class Engine {
         }
         log(`回复 ${r.id} 发出去了（${r.source}）`);
         if (!this.record(r.id, { status: "sent", sentAt: new Date().toISOString(), ...(out.url ? { url: out.url } : {}) })) this.unrecorded.set(r.id, out);
+        // 告诉主会话：回复已经真的发出去了（右边面板能看到，左边对话也要有一句）。
+        const to = r.context.who ?? r.context.where ?? r.source;
+        this.emit({
+          at: new Date().toISOString(), source: r.source, kind: "chief.sent", title: `已发出：回复 #${r.id} → ${to}`.slice(0, 200), url: out.url, from: null,
+          text: `回复 #${r.id}（${r.kind === "approve" ? "approve" : "给 " + to}）已经发出去了。`, why: ["sent"], keys: [`reply:${r.id}`], reply: {},
+        }, `sent:${r.id}`);
       }
     } catch (error) {
       log(`发回复出错：${error instanceof Error ? error.message : String(error)}`);
